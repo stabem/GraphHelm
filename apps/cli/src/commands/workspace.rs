@@ -1545,12 +1545,50 @@ pub(crate) fn target_counts(root: &Path) -> (Value, Value) {
 
 /// Content, never ancestry, proves a squash-merged worktree has nothing left to land.
 /// The caller holds the build slot throughout eligibility and deletion. Any uncertainty keeps it.
+/// Entries the recent-build check looked at. Test-only: lets a test prove the walk stays bounded.
+#[cfg(test)]
+pub(crate) static RECENT_CHECK_VISITS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Refuses a target that may be in use: its root or a direct entry was written in the last 30
+/// minutes. It looks at the root and its direct entries only and never recurses, so a sweep never
+/// walks into `target/` (#2557). A live build creates new files, which moves a directory's mtime.
+fn recent_build_check(target: &Path, now: SystemTime) -> Result<(), &'static str> {
+    let cutoff = now
+        .checked_sub(std::time::Duration::from_secs(30 * 60))
+        .ok_or("merged_recent")?;
+    let root = std::fs::symlink_metadata(target).map_err(|_| "merged_recent")?;
+    if is_link(&root) {
+        return Err("linked_path");
+    }
+    if root.modified().map_err(|_| "merged_recent")? >= cutoff {
+        return Err("merged_recent");
+    }
+    if !root.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(target).map_err(|_| "merged_recent")? {
+        let path = entry.map_err(|_| "merged_recent")?.path();
+        #[cfg(test)]
+        RECENT_CHECK_VISITS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let metadata = std::fs::symlink_metadata(&path).map_err(|_| "merged_recent")?;
+        if is_link(&metadata) {
+            return Err("linked_path");
+        }
+        if metadata.modified().map_err(|_| "merged_recent")? >= cutoff {
+            return Err("merged_recent");
+        }
+    }
+    Ok(())
+}
+
 fn merged_target(
     root: &Path,
     rule: &TargetRule,
     lane: &str,
     name: &str,
     worktree: &Path,
+    status: &Outcome,
 ) -> Result<(), (String, String)> {
     let keep = |reason: &str| (reason.to_owned(), String::new());
     check_target(root, rule, lane, name).map_err(|reason| keep(&reason))?;
@@ -1611,10 +1649,10 @@ fn merged_target(
             return Err(keep("merged_busy"));
         }
     }
-    let status = super::workspace_slot::run_status(root);
     let data = status
         .output
         .data
+        .as_ref()
         .filter(|_| status.exit_code == 0)
         .ok_or_else(|| keep("merged_busy"))?;
     let waiting = data["waiting"]
@@ -1631,32 +1669,8 @@ fn merged_target(
     }) {
         return Err(keep("merged_busy"));
     }
-    let cutoff = SystemTime::now()
-        .checked_sub(std::time::Duration::from_secs(30 * 60))
-        .ok_or_else(|| keep("merged_recent"))?;
-    let mut pending = vec![target];
-    let mut seen = 0usize;
-    while let Some(path) = pending.pop() {
-        seen += 1;
-        if seen > 1_000_000 {
-            return Err(keep("merged_recent"));
-        }
-        let metadata = std::fs::symlink_metadata(&path).map_err(|_| keep("merged_recent"))?;
-        if is_link(&metadata) {
-            return Err(keep("linked_path"));
-        }
-        if metadata.modified().map_err(|_| keep("merged_recent"))? >= cutoff {
-            return Err(keep("merged_recent"));
-        }
-        if metadata.is_dir() {
-            for entry in std::fs::read_dir(path).map_err(|_| keep("merged_recent"))? {
-                pending.push(entry.map_err(|_| keep("merged_recent"))?.path());
-                if pending.len() > 1_000_000 {
-                    return Err(keep("merged_recent"));
-                }
-            }
-        }
-    }
+    let target = target_dir(rule, lane, name);
+    recent_build_check(&target, SystemTime::now()).map_err(|reason| keep(reason))?;
     let version = strict_git(&["--version"])?;
     let mut parts = version
         .strip_prefix("git version ")
@@ -1709,6 +1723,9 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
                 .ok()
         })
         .filter(|file| file.try_lock().is_ok());
+    // Read the slot's waiters once per sweep, after slot.lock is taken: no build is admitted while
+    // this snapshot is used, so one read serves every target (#2557).
+    let slot_status = super::workspace_slot::run_status(root);
     for (lane, name, worktree) in all_target_records(root) {
         let entry = |reason: &str| json!({"lane": lane, "name": name, "reason": reason});
         if let Some((active, current)) = held_lane
@@ -1735,7 +1752,9 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
                 kept.push(entry("worktree_unreadable"));
                 continue;
             }
-            if let Err((reason, message)) = merged_target(root, rule, &lane, &name, &worktree) {
+            if let Err((reason, message)) =
+                merged_target(root, rule, &lane, &name, &worktree, &slot_status)
+            {
                 let mut item = entry(&reason);
                 if !message.is_empty() {
                     item["message"] = json!(message);
@@ -1781,8 +1800,12 @@ fn sweep_targets(root: &Path, apply: bool, held_lane: Option<(&str, &Path)>) -> 
 
 #[derive(Clone, Copy)]
 enum LiveSizeMode {
+    /// Sized read with the linked-ancestor guard (`list --sizes`, HTTP `sizes=1`).
     Include,
+    /// Plain list: the legacy view, sized without the ancestor guard.
     Omit,
+    /// Sweep candidate scan: no size walk at all; sizes are measured only for removals.
+    Skip,
 }
 
 fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant) -> Value {
@@ -1799,12 +1822,17 @@ fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant)
         Ok(false)
     };
     let blocked = ancestry.unwrap_or(true);
+    // The sweep scan reads git state only for released records: keep_reason decides every other
+    // state (swept, not_released) before head or dirty are looked at, so those git calls are waste.
+    let inspect_git = !matches!(size_mode, LiveSizeMode::Skip) || record["state"] == "released";
     let (head, dirty, status_error) = if blocked {
         (
             None,
             Some(true),
             Some("workspace path is linked or cannot be inspected".to_owned()),
         )
+    } else if !inspect_git {
+        (None, None, None)
     } else {
         match git_before(&worktree, &["rev-parse", "HEAD"], deadline) {
             Ok(head) => match git_before(&worktree, &["status", "--porcelain"], deadline) {
@@ -1822,7 +1850,9 @@ fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant)
             .any(|p| std::fs::symlink_metadata(p).is_ok_and(|m| is_link(&m)));
     let slash = |p: &Path| p.to_string_lossy().replace('\\', "/");
     let mut scan_error = None;
-    let link_in_worktree = if blocked || linked {
+    // The sweep scan (`Skip`) defers this full walk: `run_sweep` runs it only for candidates
+    // that already pass the cheap checks, so kept workspaces never pay for it.
+    let link_in_worktree = if blocked || linked || matches!(size_mode, LiveSizeMode::Skip) {
         None
     } else {
         match first_link(&worktree, &worktree) {
@@ -1834,10 +1864,17 @@ fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant)
         }
     };
     json!({"lane": lane, "task": task, "branch": record["branch"], "state": record["state"],
-        "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
-        "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
-        "statusError": status_error,
-        "releasedHead": record["releasedHead"], "sizeBytes": if blocked { 0 } else { size_of(&dir) }})
+    "linked": linked, "linkInWorktree": link_in_worktree, "scanError": scan_error,
+    "path": dir.to_string_lossy(), "exists": dir.exists(), "head": head, "dirty": dirty,
+    "statusError": status_error,
+    "releasedHead": record["releasedHead"],
+    "sizeBytes": match size_mode {
+        // Sizing walks the whole workspace (target/ included), so the sweep scan skips it and
+        // `run_sweep` sizes only the workspaces it is about to remove.
+        LiveSizeMode::Skip => Value::Null,
+        LiveSizeMode::Include if blocked => json!(0),
+        LiveSizeMode::Include | LiveSizeMode::Omit => json!(size_of(&dir)),
+    }})
 }
 
 /// Inspect parents from the filesystem root down, so even an intermediate junction is not entered.
@@ -2031,6 +2068,7 @@ fn sweep_lock(root: &Path) -> Result<std::fs::File, String> {
 
 pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     const COMMAND: &str = "workspace.sweep";
+    let workspaces_started = Instant::now();
     let _sweep_lock = if apply {
         match sweep_lock(root) {
             Ok(lock) => Some(lock),
@@ -2049,10 +2087,10 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     let mut removed = Vec::new();
     let mut kept = Vec::new();
     for mut record in records(root) {
-        let view = live(
+        let mut view = live(
             root,
             &record,
-            LiveSizeMode::Omit,
+            LiveSizeMode::Skip,
             Instant::now() + GIT_TIMEOUT,
         );
         let (lane, task) = (
@@ -2060,6 +2098,21 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             view["task"].as_str().unwrap_or_default().to_owned(),
         );
         let incomplete = record["state"] == "remove_incomplete";
+        // Only released records can be removed, so only they pay for the link scan. It runs before
+        // the keep decision, as it always has: a link in a released worktree must still be named.
+        if !incomplete && record["state"] == "released" {
+            let worktree = workspace_dir(root, &lane, &task).join("wt");
+            match first_link(&worktree, &worktree) {
+                Ok(Some(found)) => {
+                    view["linkInWorktree"] = json!(found.to_string_lossy().replace('\\', "/"));
+                }
+                Ok(None) => {}
+                Err((at, error)) => {
+                    view["scanError"] =
+                        json!({"path": at.to_string_lossy().replace('\\', "/"), "error": error});
+                }
+            }
+        }
         if let Some(reason) = (!incomplete).then(|| keep_reason(&view)).flatten() {
             if reason != "already_swept" {
                 kept.push(json!({"lane": lane, "task": task, "reason": reason,
@@ -2067,12 +2120,13 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             }
             continue;
         }
-        if !apply {
-            removed.push(json!({"lane": lane, "task": task, "sizeBytes": view["sizeBytes"]}));
-            continue;
-        }
         let dir = workspace_dir(root, &lane, &task);
         let worktree = dir.join("wt");
+        if !apply {
+            removed.push(json!({"lane": lane, "task": task, "sizeBytes": Value::Null}));
+            continue;
+        }
+        let size = size_of(&dir);
         // `git worktree remove` without --force refuses a dirty tree: a second check at the act.
         let common = if incomplete {
             Ok(String::new())
@@ -2131,10 +2185,8 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         record["state"] = json!("swept");
         record["sweptAt"] = json!(now());
         let _ = write_record(&ledger_file(root, &lane, &task), &record);
-        removed.push(
-            json!({"lane": lane, "task": task, "sizeBytes": view["sizeBytes"],
-            "notRemoved": failed}),
-        );
+        removed.push(json!({"lane": lane, "task": task, "sizeBytes": size,
+            "notRemoved": failed}));
     }
     let leftover = kept.iter().any(|k| {
         matches!(
@@ -2144,8 +2196,13 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
     }) || removed
         .iter()
         .any(|r| r["notRemoved"].as_array().is_some_and(|n| !n.is_empty()));
+    let workspaces_ms = workspaces_started.elapsed().as_millis() as u64;
+    let targets_started = Instant::now();
+    let targets = sweep_targets(root, apply, None);
+    let targets_ms = targets_started.elapsed().as_millis() as u64;
     let data = json!({"root": root.to_string_lossy(), "applied": apply, "removed": removed, "kept": kept,
-        "targets": sweep_targets(root, apply, None)});
+        "targets": targets,
+        "timing": {"workspacesMs": workspaces_ms, "targetsMs": targets_ms}});
     if leftover {
         // Something stayed on disk: a failure that names what stayed, not a success (#1504).
         return Outcome {
@@ -2378,4 +2435,42 @@ fn sweep_removes_the_leftover_of_a_failed_worktree_removal_and_reports_it() {
         "the leftover of a failed removal stayed on disk"
     );
     assert!(outcome.output.ok, "a finished sweep must report success");
+}
+
+#[cfg(test)]
+mod recent_build_walk_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    /// #2557: the sweep never walks into a target tree. A target with a deep tree is checked by
+    /// its root and direct entries only, so the visit count is the number of direct entries.
+    #[test]
+    fn recent_build_check_visits_only_direct_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        for branch in 0..3 {
+            let deep = target.join(format!("debug{branch}")).join("deps");
+            std::fs::create_dir_all(&deep).unwrap();
+            for file in 0..100 {
+                std::fs::write(deep.join(format!("f{file}.rlib")), b"x").unwrap();
+            }
+        }
+        // Judged "now" one day ahead, so every entry is older than the 30 minute cutoff.
+        let later = SystemTime::now() + std::time::Duration::from_secs(24 * 60 * 60);
+        RECENT_CHECK_VISITS.store(0, Ordering::Relaxed);
+        assert_eq!(recent_build_check(&target, later), Ok(()));
+        assert_eq!(RECENT_CHECK_VISITS.load(Ordering::Relaxed), 3);
+    }
+
+    /// A recently written direct entry still keeps the build directory.
+    #[test]
+    fn recent_build_check_keeps_a_fresh_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        std::fs::create_dir_all(target.join("debug")).unwrap();
+        assert_eq!(
+            recent_build_check(&target, SystemTime::now()),
+            Err("merged_recent")
+        );
+    }
 }

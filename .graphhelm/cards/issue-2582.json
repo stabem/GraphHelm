@@ -8,7 +8,7 @@
   ],
   "plan": {
     "issue": 2582,
-    "owner": "Minato (plan); Sasuke (Runtime/CLI contract); Itachi (independent audit)",
+    "owner": "Minato (plan); Sasuke (Runtime/CLI contract, received); Itachi (independent audit, pending)",
     "exists": [
       "core/execution/src/briefing.rs next_step(): returns NextStep for execution graph nodes only (approve, claim, clear, diagnose, finished), no skill, not delivery steps.",
       "GET /v1/executions/<id>/tasks: already returns stalls[] (block_unanswered, awaiting_verdict, awaiting_merge), owner and liveness.owes. Gives who-owes-what, without skill.",
@@ -25,6 +25,20 @@
       "Wake payload is only id plus 'use graphhelm-work': the loop depends on next being correct; a wrong next stalls every agent, so the demo task is the gate."
     ],
     "measuredGain": "none claimed",
-    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan."
+    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan.",
+    "contract": {
+      "shape": "next: {step, skill, actor, because}; step is a fixed enum (claim, implement, review, merge, cleanup, done, diagnose); skill is a name from the transition table or null (null yields OBSERVER_MISSING); actor is an OpenBot actor id or 'owner'; because is a fixed reason code plus the record id it came from.",
+      "where": "new task-level function next_task_step(TaskState) in core/execution/src/tasks.rs, called from status/briefing and as a per-task field in GET /v1/executions/<id>/tasks. briefing.rs next_step stays for execution nodes; the two stay separate.",
+      "reads": [
+        "claimed: claim key, lane, branch",
+        "pr_opened: pr, head_sha",
+        "review_verdict: round verdicts, review_activity, current_reviewer",
+        "merged: merge_sha, completion_recorded",
+        "blocked: blocked_by (+ cause, unblocker, where from #2531)",
+        "stall reason: existing enum"
+      ],
+      "one_model": "blocked is the owner heartbeat with cause, unblocker, where; next.step for a blocked task is review or implement by the named unblocker; the #2524 wake carries the same next block. Names agreed with #2531; reason stays the stall enum.",
+      "source": "Sasuke contract proposal on #2582, no code"
+    }
   }
 }

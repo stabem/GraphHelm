@@ -70,7 +70,7 @@
     "measuredGain": "none claimed",
     "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan.",
     "skill_list_for_implementation": {
-      "note": "Every SKILL.md that the implementation edits, with its plugin owner. Verified on main by ls-tree.",
+      "note": "Every SKILL.md that the implementation edits, with its owner. Shikamaru decision: the five builtin skills are owned in this card by Minato.",
       "graphhelm (owner: GraphHelm plugin)": [
         "plugins/graphhelm/skills/graphhelm-work/SKILL.md (new)",
         "plugins/graphhelm/skills/graphhelm-guide/SKILL.md",
@@ -92,9 +92,14 @@
         "plugins/keel/.claude-plugin/plugin.json",
         "plugins/keel/.codex-plugin/plugin.json"
       ],
-      "unresolved_owner": [
-        "task-plan, implement, blind-review, keel-review, merge (graphhelm-development-contracts) and journey-prove (graphhelm-jpd): their SKILL.md files are not under plugins/ on main; locate and name the owning plugin before implementation edits"
-      ]
+      "builtin (owner: Minato, per Shikamaru decision)": [
+        "extensions/builtin/graphhelm-development-contracts/skills/task-plan/SKILL.md",
+        "extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md",
+        "extensions/builtin/graphhelm-development-contracts/skills/blind-review/SKILL.md",
+        "extensions/builtin/graphhelm-development-contracts/skills/merge/SKILL.md",
+        "extensions/builtin/graphhelm-jpd/skills/journey-prove/SKILL.md"
+      ],
+      "declared_follow_up": "If these five should also ship as plugin skills, that is a separate card, not a blocker of #2582."
     }
   }
 }

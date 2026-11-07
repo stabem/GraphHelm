@@ -120,3 +120,6 @@ tools/token-bench/doless/surfaces/** text eol=lf
 apps/studio/src/** text eol=lf
 docs/design/studio/** text eol=lf
 .graphhelm/cards/*.json text eol=lf
+
+# #2583: this card was merged with CRLF and Tsunade accepted it as merged. Keep its bytes exact.
+.graphhelm/cards/issue-2582.json -text

@@ -113,3 +113,18 @@ tools/journey-driver/*.mjs text eol=lf
 # drael-v1 cross-method pins (control-digests.json crossMethod.surfaceFileSha256) bind raw LF
 # bytes of these pinned method surfaces; driver_cross.verify_pins() hashes the file as checked out.
 tools/token-bench/doless/surfaces/** text eol=lf
+
+# #2561: the Studio sources, the design evidence pages and the card fixture are text; LF in the
+# index and in every checkout. Recorded artifacts (docs/acceptance, docs/keel/benchmark-evidence)
+# and digest-pinned JSON are deliberately not listed here.
+apps/studio/src/** text eol=lf
+docs/design/studio/** text eol=lf
+.graphhelm/cards/*.json text eol=lf
+
+# #2583: this card was merged with CRLF and Tsunade accepted it as merged. Keep its bytes exact.
+.graphhelm/cards/issue-2582.json -text
+
+# Binary assets under the studio/design text globs above: byte-exact, never normalized (19 PNG, 1 WebP, 2 WOFF2).
+*.png binary
+*.webp binary
+*.woff2 binary

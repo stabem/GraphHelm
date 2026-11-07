@@ -2148,7 +2148,7 @@ fn play(
             2,
         ));
     }
-    let mut base = flow["base"].as_str().unwrap().to_owned();
+    let mut base = run_base(flow);
     // The app under test is started when it is down, and stopped when the preview ends. An
     // isolated launcher always starts its own on free ports (#585), and the preview plays there.
     let mut launched: Option<Launched> =
@@ -2245,6 +2245,24 @@ fn play(
 
 /// Starts the project's launcher for `flow`. How to stop it is recorded before `up` returns, since
 /// a dead runner cannot clean up itself, even if it dies before up returns.
+/// #2587: the base a preview plays on. The flow's own `base` is the approved content (its
+/// approval digest binds it); a fixture may name its own Studio at run time through
+/// `GRAPHHELM_FIXTURE_BASE`, so the tracked flow file is not edited and the digest stays put.
+fn run_base(flow: &Value) -> String {
+    run_base_with(
+        flow,
+        std::env::var("GRAPHHELM_FIXTURE_BASE").ok().as_deref(),
+    )
+}
+
+/// The pure choice behind [`run_base`]: the flow's `base`, unless a non-empty override is given.
+fn run_base_with(flow: &Value, fixture: Option<&str>) -> String {
+    match fixture.map(str::trim).filter(|base| !base.is_empty()) {
+        Some(base) => base.to_owned(),
+        None => flow["base"].as_str().unwrap_or_default().to_owned(),
+    }
+}
+
 fn start_app(
     project: &Path,
     base: &str,
@@ -5141,6 +5159,23 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
     /// reaper cells supply a completed launch record and miss this window. Cost: a child test
     /// process, a shell and temp files; no browser/network, at most 15 seconds waiting for up.
     #[test]
+    /// #2587: the flow's own base is the default; a fixture's run-time override replaces it for
+    /// the preview only; an empty override is ignored. The flow's `base` value is never edited.
+    #[test]
+    fn run_base_is_the_flows_own_base_unless_a_fixture_overrides_it() {
+        let flow = json!({"base": "http://127.0.0.1:5184"});
+        assert_eq!(super::run_base_with(&flow, None), "http://127.0.0.1:5184");
+        assert_eq!(
+            super::run_base_with(&flow, Some("http://127.0.0.1:5199")),
+            "http://127.0.0.1:5199"
+        );
+        assert_eq!(
+            super::run_base_with(&flow, Some("  ")),
+            "http://127.0.0.1:5184"
+        );
+        assert_eq!(flow["base"], "http://127.0.0.1:5184");
+    }
+
     fn a_preview_records_its_fixture_before_up_returns() {
         use std::process::Stdio;
         use std::sync::{Arc, Mutex};

@@ -99,7 +99,9 @@ up)
   export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
   cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
   # #1905, #2077: every studio2 flow played on this fixture names this fixture's Studio as its base.
-  . "$(dirname "$0")/rebase_flows.sh"; rebase_flows "$dir/project/.graphhelm/journeys" "$sport"
+  # #2587: the copied journeys stay byte-identical (their approval digests bind `base`); the Studio
+  # port is named at run time for the preview instead, so no tracked flow file is edited.
+  export GRAPHHELM_FIXTURE_BASE="http://127.0.0.1:$sport"
   # #1041: the files the flows name in `scope`, so a fixture preview is not refused flow.scope_path_missing.
   node "$(dirname "$0")/copy_scope.mjs" "$repo" "$dir/project" > /dev/null
   # #1635: an owner approval needs a preview recorded at the flow's scope commit, the last commit

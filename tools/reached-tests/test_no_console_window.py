@@ -44,6 +44,18 @@ def _target(node: ast.Call, modules, functions) -> tuple[str, str] | None:
     return None
 
 
+# A test file in these scopes may exempt itself with this marker (the same rule as #2585 in the Rust
+# guard). Any other occurrence still fails: the marker never exempts a non-test file.
+MARKER = "# graphhelm:intentional-visible-window \u2014".encode("utf-8")
+EXEMPT_SCOPES = (("plugins", "graphhelm", "hooks"), ("tools", "no-window"))
+
+
+def _exempt(parts: tuple, source: bytes) -> bool:
+    name = parts[-1]
+    scoped = any(parts[:len(scope)] == scope for scope in EXEMPT_SCOPES)
+    return name.startswith("test_") and scoped and MARKER in source
+
+
 def offenders(root: Path) -> list[str]:
     found = []
     for path in sorted(root.rglob("*.py")):
@@ -51,6 +63,8 @@ def offenders(root: Path) -> list[str]:
         if SKIP & set(parts) or parts[:2] == (".graphhelm", "observers"):
             continue
         source = path.read_bytes()
+        if _exempt(parts, source):
+            continue
         if source.startswith(b"\xef\xbb\xbf"):
             found.append(f"{path.relative_to(root)}:1 UTF-8 BOM is not allowed")
         with warnings.catch_warnings():
@@ -76,6 +90,27 @@ def offenders(root: Path) -> list[str]:
 class NoConsoleWindow(unittest.TestCase):
     def test_every_tool_spawn_site_hides_its_console_window(self):
         self.assertEqual(offenders(REPO), [])
+
+    def test_the_marker_exempts_only_a_test_file_in_a_scoped_directory(self):
+        import tempfile
+        bare = "import subprocess\nsubprocess.run(['git'])\n"
+        marked = "# graphhelm:intentional-visible-window \u2014 negative control\n" + bare
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            scoped = root / "plugins" / "graphhelm" / "hooks"
+            scoped.mkdir(parents=True)
+            (scoped / "test_ok.py").write_text(marked, encoding="utf-8")
+            (scoped / "helper.py").write_text(marked, encoding="utf-8")
+            (scoped / "test_unmarked.py").write_text(bare, encoding="utf-8")
+            (root / "tools" / "other").mkdir(parents=True)
+            (root / "tools" / "other" / "test_elsewhere.py").write_text(marked, encoding="utf-8")
+            (root / "app.py").write_text(marked, encoding="utf-8")
+            self.assertEqual([o.replace("\\", "/") for o in offenders(root)], [
+                "app.py:3 subprocess.run without creationflags=NO_WINDOW",
+                "plugins/graphhelm/hooks/helper.py:3 subprocess.run without creationflags=NO_WINDOW",
+                "plugins/graphhelm/hooks/test_unmarked.py:2 subprocess.run without creationflags=NO_WINDOW",
+                "tools/other/test_elsewhere.py:3 subprocess.run without creationflags=NO_WINDOW",
+            ])
 
     def test_the_guard_reports_a_utf8_bom_without_crashing(self):
         import tempfile

@@ -6,6 +6,7 @@ helper. A DETACHED_PROCESS child has no console, so the console program it start
 window; the shipped flags must carry CREATE_NO_WINDOW and must not carry DETACHED_PROCESS.
 Skipped off Windows.
 """
+# graphhelm:intentional-visible-window — the job-breakaway test spawns the parent that owns the job; its Popen has no creationflags by design.
 import ctypes
 import importlib.util
 import time

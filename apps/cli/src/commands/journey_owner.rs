@@ -386,11 +386,20 @@ pub(crate) fn approved(project: &Path, flow: &str, digest: &str) -> Result<bool,
 /// approval. The flag is an argument, not a thread-local: `journey flows` checks flows on worker
 /// threads (#1972), which would not see a thread-local set on the caller's thread.
 pub(crate) fn owner_store_on_this_computer(project: &Path, studio: bool) -> bool {
-    let records = owner_history(project).is_ok_and(|history| !history.is_empty());
+    // #2589: in the Studio view only an owner-key approval counts. A preview record
+    // (`journey-previewed-*`) written by a Studio run is not a signature and must not make this
+    // machine the owner store.
+    let records = owner_history(project).is_ok_and(|history| {
+        history.iter().any(|event| {
+            matches!(&event.kind, EventKind::SignalRecorded(signal)
+                if signal.signal_id.as_str().starts_with("journey-approved-"))
+        })
+    });
     if studio {
         return records;
     }
-    records || project.join(".graphhelm/events.token").exists()
+    owner_history(project).is_ok_and(|history| !history.is_empty())
+        || project.join(".graphhelm/events.token").exists()
 }
 
 /// Whether a reviewer agent recorded its blind review of `flow` at exactly `digest` (#1130).

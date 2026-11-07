@@ -33,10 +33,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Walked(walked) => {
             execution::finish(WALKED_COMMAND, run_walked(walked), recorded)
         }
-        JourneyCommand::Validate(validate) => {
-            super::journey_owner::set_studio_view(validate.studio_view);
-            journey_validate::run(validate)
-        }
+        JourneyCommand::Validate(validate) => journey_validate::run(validate),
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
         JourneyCommand::Reject(reject) => super::journey_flow::run_reject(reject),
@@ -53,10 +50,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Preview(preview) => super::journey_preview::start(preview),
         JourneyCommand::Explore(explore) => super::journey_explore::run(explore),
         JourneyCommand::Report(report) => super::journey_report::run(report),
-        JourneyCommand::Flows(flows) => {
-            super::journey_owner::set_studio_view(flows.studio_view);
-            super::journey_flow::run_flows(flows)
-        }
+        JourneyCommand::Flows(flows) => super::journey_flow::run_flows(flows),
     }
 }
 

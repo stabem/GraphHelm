@@ -927,7 +927,7 @@ fn mark_signature(flow: &Value, edge: &Value, index: usize, project: &Path) -> V
 /// #534: a YAML approval counts only with the owner's record for its exact digest in the
 /// project's owner store. Without the record the flow is unsigned (an agent could have written
 /// the YAML); without a readable store the approval cannot be verified at all.
-fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
+fn owner_signature(value: &Value, project: &Path, studio: bool) -> Vec<Finding> {
     if value["status"] != "approved" {
         return vec![];
     }
@@ -937,7 +937,7 @@ fn owner_signature(value: &Value, project: &Path) -> Vec<Finding> {
     };
     // #2537: a checkout with no owner records (fresh clone, worktree) cannot tell a forgery from an
     // approval signed on another machine; it says so as a warning, never as a flow to fix.
-    if !super::journey_owner::owner_store_on_this_computer(project) {
+    if !super::journey_owner::owner_store_on_this_computer(project, studio) {
         return vec![Finding::new(
             "flow.approval_unverifiable",
             "/approved",
@@ -1023,10 +1023,10 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
     Ok(text)
 }
 
-pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
+pub(crate) fn check(file: &Path, project: &Path, studio: bool) -> Vec<Finding> {
     match read(file) {
         Ok((text, value)) => {
-            let mut findings = check_snapshot(file, &text, &value, project);
+            let mut findings = check_snapshot(file, &text, &value, project, studio);
             // #1955: a draft must explain itself before it is approved; an approved flow written
             // before the rule keeps its `flow.unexplained` warning.
             if value["status"] != "approved" {
@@ -1043,7 +1043,7 @@ pub(crate) fn check(file: &Path, project: &Path) -> Vec<Finding> {
 /// replay, without the approval requirement. Watching proves nothing and writes nothing.
 pub(crate) fn read_for_watch(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
     let (text, value) = read(file)?;
-    let mut findings = check_snapshot(file, &text, &value, project);
+    let mut findings = check_snapshot(file, &text, &value, project, false);
     // #490: watch plays the flow's own acts and never reads its generated contract, so a stale
     // or absent `<id>.json` (git-ignored output, often left over from an earlier compile) is no
     // reason to refuse it. `validate` still reports it.
@@ -1068,7 +1068,7 @@ pub(crate) fn read_for_preview_source(
     project: &Path,
 ) -> Result<(Value, String), Vec<Finding>> {
     let (text, mut value) = read(file)?;
-    let mut findings = check_snapshot(file, &text, &value, project);
+    let mut findings = check_snapshot(file, &text, &value, project, false);
     findings.retain(|f| {
         !matches!(
             f.code,
@@ -1090,7 +1090,7 @@ pub(crate) fn read_for_preview_source(
 /// Replay consumes exactly the validated source snapshot, never a second unchecked read.
 pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
     let (text, value) = read(file)?;
-    let mut findings = check_snapshot(file, &text, &value, project);
+    let mut findings = check_snapshot(file, &text, &value, project, false);
     if value["status"] != "approved" {
         findings.push(Finding::new(
             "flow.not_approved",
@@ -1109,9 +1109,15 @@ pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<
     }
 }
 
-fn check_snapshot(file: &Path, text: &str, value: &Value, project: &Path) -> Vec<Finding> {
+fn check_snapshot(
+    file: &Path,
+    text: &str,
+    value: &Value,
+    project: &Path,
+    studio: bool,
+) -> Vec<Finding> {
     let mut findings = semantic(file, value, project);
-    findings.extend(owner_signature(value, project));
+    findings.extend(owner_signature(value, project, studio));
     if text != canonical(value, false) {
         findings.push(Finding::new(
             "flow.not_canonical",
@@ -1289,7 +1295,7 @@ pub(crate) fn projected_flows(project: &Path) -> ProjectedFlows {
         // #534: an approval with no owner record for its digest is a draft to keel plan too.
         // #1287 follow-up: a weak approved flow is not proof to keel either; it plans as a draft.
         if flow["status"] != "approved"
-            || owner_signature(&flow, project)
+            || owner_signature(&flow, project, false)
                 .iter()
                 .any(|f| !f.is_warning())
             || !weak_journey(&flow, true).is_empty()
@@ -1697,19 +1703,16 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
     // #1972: the entries are built on a few threads, order kept, so one flow's `git log`
     // (`preview_gate`) does not wait for every flow before it.
     let width = files.len().div_ceil(FLOWS_THREADS).max(1);
-    // #2556: the Studio view is a thread-local, so each worker sets it from the request's flag
-    // (a scoped worker does not inherit the caller's thread-local).
-    let studio_view = args.studio_view;
+    let studio = args.studio_view;
     let flows: Vec<Value> = std::thread::scope(|threads| {
         let jobs: Vec<_> = files
             .chunks(width)
             .map(|chunk| {
                 let project = &project;
                 threads.spawn(move || {
-                    crate::commands::journey_owner::set_studio_view(studio_view);
                     chunk
                         .iter()
-                        .map(|file| flow_entry(file, project))
+                        .map(|file| flow_entry(file, project, studio))
                         .collect::<Vec<_>>()
                 })
             })
@@ -1725,10 +1728,10 @@ pub(crate) fn run_flows(args: &crate::args::JourneyFlowsArgs) -> Outcome {
 const FLOWS_THREADS: usize = 8;
 
 /// One `journey flows` entry for one flow source.
-fn flow_entry(file: &Path, project: &Path) -> Value {
+fn flow_entry(file: &Path, project: &Path, studio: bool) -> Value {
     let name = file.file_name().unwrap_or_default().to_string_lossy();
     let id = name.trim_end_matches(".journey.yaml");
-    let findings = check(file, project);
+    let findings = check(file, project, studio);
     let listed: Vec<Value> = findings
         .iter()
         .map(|f| {
@@ -1872,7 +1875,7 @@ pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outc
             continue;
         }
         let id = flow["id"].as_str().unwrap_or_default().to_owned();
-        let findings = check_snapshot(&file, &text, &flow, &project);
+        let findings = check_snapshot(&file, &text, &flow, &project, false);
         if !findings.iter().any(|f| f.code == "flow.approval_unsigned") {
             continue;
         }
@@ -2661,6 +2664,51 @@ mod tests {
                 .any(|f| f.code == "flow.purpose_missing" && !f.is_warning()),
             "{:?}",
             refused.iter().map(|f| f.code).collect::<Vec<_>>()
+        );
+    }
+
+    /// #2556: the Studio's flow list counts owner records only, across the threaded entry path.
+    /// Defect named: the flag was a thread-local, so the worker threads of `journey flows` never
+    /// saw it and an approval read as `approval_unsigned` (a flow to fix) where the Studio should
+    /// say "approval not on this computer". Cost: one tempdir; no Runtime or network.
+    #[test]
+    fn the_studio_view_reads_an_approval_on_a_computer_without_owner_records_as_unverifiable() {
+        let project = tempfile::tempdir().unwrap();
+        let flow: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let dir = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("checkout.journey.yaml");
+        let mut approved = flow.clone();
+        approved["status"] = json!("approved");
+        let digest = approval_digest(&approved);
+        approved["approved"] = json!({"revision": "a".repeat(40), "digest": digest});
+        std::fs::write(&file, canonical(&approved, false)).unwrap();
+        // A Studio's Runtime writes the token; there are no owner records on this computer.
+        std::fs::write(project.path().join(".graphhelm/events.token"), "token").unwrap();
+        let codes = |studio_view: bool| -> Vec<String> {
+            let listed = run_flows(&crate::args::JourneyFlowsArgs {
+                project: Some(project.path().to_path_buf()),
+                studio_view,
+            });
+            listed.output.data.unwrap()["flows"][0]["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["code"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert!(
+            codes(true).contains(&"flow.approval_unverifiable".to_owned()),
+            "{:?}",
+            codes(true)
+        );
+        assert!(
+            !codes(true).contains(&"flow.approval_unsigned".to_owned()),
+            "{:?}",
+            codes(true)
         );
     }
 

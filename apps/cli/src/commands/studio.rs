@@ -1911,10 +1911,14 @@ mod tests {
     fn the_launcher_says_at_once_when_the_runtime_it_started_exits() {
         use std::net::TcpListener;
         let first = TcpListener::bind("127.0.0.1:0").unwrap();
-        let second = TcpListener::bind("127.0.0.1:0").unwrap();
         let bind_port = first.local_addr().unwrap().port();
-        let studio_port = second.local_addr().unwrap().port();
-        drop((first, second));
+        drop(first);
+        // #2539: the Studio port comes from a fixed range below the OS ephemeral range, which the
+        // bind-to-zero tests draw from. An ephemeral pick could be taken by a neighbouring test
+        // before the launcher runs, and the launcher would then report "already in use".
+        let studio_port = (31_000..31_200)
+            .find(|port| TcpListener::bind(("127.0.0.1", *port)).is_ok())
+            .expect("a free port in the test range");
         let root = std::env::temp_dir().join(format!("gh studio exits {}", std::process::id()));
         let events = root.join("events");
         std::fs::create_dir_all(&events).unwrap();

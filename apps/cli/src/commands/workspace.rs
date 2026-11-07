@@ -1670,7 +1670,7 @@ fn merged_target(
         return Err(keep("merged_busy"));
     }
     let target = target_dir(rule, lane, name);
-    recent_build_check(&target, SystemTime::now()).map_err(|reason| keep(reason))?;
+    recent_build_check(&target, SystemTime::now()).map_err(&keep)?;
     let version = strict_git(&["--version"])?;
     let mut parts = version
         .strip_prefix("git version ")

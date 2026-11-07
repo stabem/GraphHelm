@@ -24,7 +24,9 @@
     "skill_transitions (conformance test, apps/cli/tests/skill_transitions.rs, run by cargo test -p graphhelm-cli)"
   ],
   "proof": "PLAN ONLY. Proof at implementation: (a) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml covers every mapping with one edge each, each edge reading next for its own fixture task id (fixture-claimed, fixture-awaiting-verdict, fixture-block-on-head, fixture-approved, fixture-merged, fixture-blocked, fixture-diagnose, fixture-no-skill), seeded in the isolated fixture; replays green. (b) demo task end to end in an isolated fixture repo and execution, run by agents that received only graphhelm-work; the observer is neither Minato (planner) nor Sasuke (contract author); each receipt is bound to the head sha it observed; the agent's report for a missing skill is recorded in the receipt; the fixture is not resumed and is not product proof. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill, on a mismatch with the Runtime next mapping, and on a blind-review brief that carries the author's reasoning or an expected verdict. It also fails when a skill's 'If in doubt' index is missing, differs byte-for-byte from the canonical index, or names a skill that does not exist. (e) graphhelm-guide explains the whole flow in prose with a mermaid diagram of the states and transitions; the conformance test fails if the diagram omits a state or a transition in the Runtime mapping. (d) break-once: drop one transition row, conformance must fail; the failure shows the test name skill_transitions in the cargo test output, since apps/cli/Cargo.toml has autotests = false and the module is wired through tests/cli.rs.",
-  "journeys": ["skill-driven-delivery"],
+  "journeys": [
+    "skill-driven-delivery"
+  ],
   "plan": {
     "issue": 2582,
     "owner": "Minato (plan); Sasuke (Runtime/CLI contract, received); Itachi (independent audit, pending). Implementation card must enumerate every plugins/*/skills/*/SKILL.md it edits, with its plugin owner, before any edit.",
@@ -66,6 +68,33 @@
     "index_rules": "The canonical index lives in one file, plugins/graphhelm/skills/graphhelm-work/references/if-in-doubt.md. Each step skill copies it byte-for-byte; the conformance test compares the copies to that file. Versioning: the index carries no minVersion of its own; a plugin version bump that changes the index must bump every copy in the same change, which means the plugin manifests of graphhelm, keel and graphhelm-development-contracts are added to scopePaths in the implementation card before any edit. Size limit: the index is at most 40 lines per skill; (c) fails above it.",
     "cli_wiring": "apps/cli/tests/cli.rs gets one line, mod skill_transitions, because apps/cli/Cargo.toml has autotests = false and cli.rs is the only [[test]] target.",
     "measuredGain": "none claimed",
-    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan."
+    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan.",
+    "skill_list_for_implementation": {
+      "note": "Every SKILL.md that the implementation edits, with its plugin owner. Verified on main by ls-tree.",
+      "graphhelm (owner: GraphHelm plugin)": [
+        "plugins/graphhelm/skills/graphhelm-work/SKILL.md (new)",
+        "plugins/graphhelm/skills/graphhelm-guide/SKILL.md",
+        "plugins/graphhelm/skills/graphhelm-team/SKILL.md",
+        "plugins/graphhelm/skills/graphhelm-kickoff/SKILL.md",
+        "plugins/graphhelm/skills/graphhelm-resume/SKILL.md",
+        "plugins/graphhelm/skills/graphhelm-setup/SKILL.md",
+        "plugins/graphhelm/plugin.json",
+        "plugins/graphhelm/.claude-plugin/plugin.json",
+        "plugins/graphhelm/.codex-plugin/plugin.json"
+      ],
+      "keel (owner: Keel plugin)": [
+        "plugins/keel/skills/keel/SKILL.md",
+        "plugins/keel/skills/keel-exec/SKILL.md",
+        "plugins/keel/skills/keel-plan/SKILL.md",
+        "plugins/keel/skills/keel-review/SKILL.md",
+        "plugins/keel/skills/keel-merge/SKILL.md",
+        "plugins/keel/skills/keel-journey-qa/SKILL.md",
+        "plugins/keel/.claude-plugin/plugin.json",
+        "plugins/keel/.codex-plugin/plugin.json"
+      ],
+      "unresolved_owner": [
+        "task-plan, implement, blind-review, keel-review, merge (graphhelm-development-contracts) and journey-prove (graphhelm-jpd): their SKILL.md files are not under plugins/ on main; locate and name the owning plugin before implementation edits"
+      ]
+    }
   }
 }

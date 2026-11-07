@@ -3256,6 +3256,9 @@ Options:
       --json
           Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
 
+      --studio-view
+          #2556: the Studio's view: an approval counts only with an owner record on this computer
+
   -h, --help
           Print help
 
@@ -3696,6 +3699,9 @@ Options:
 
       --json
           Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
+      --studio-view
+          #2556: the Studio's view: an approval counts only with an owner record on this computer
 
       --project <PROJECT>
           The repository root that `scopePaths` are relative to. Defaults to the current directory

@@ -39,6 +39,7 @@ mod registration {
 
 #[path = "adoption_apply.rs"]
 mod adoption_apply;
+mod skill_transitions;
 #[path = "adoption_backup.rs"]
 mod adoption_backup;
 #[path = "adoption_hosts.rs"]

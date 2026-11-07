@@ -77,6 +77,13 @@ case "$cmd" in
 up)
   # A healthy pre-existing listener is never a fixture owned by this invocation.
   if curl -fsS --max-time 1 "http://127.0.0.1:$rport/health" >/dev/null 2>&1; then echo 'fixture: Runtime port already occupied' >&2; exit 2; fi
+  # #2527: a port that already accepts connections fails here, by name, before any setup runs; a
+  # busy Studio port used to be found only after the npm setup, so the Studio waited for the cap.
+  for busy in "$rport" "$sport"; do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$busy") 2>/dev/null; then
+      echo "fixture: port $busy already occupied (busy port; choose another)" >&2; exit 2
+    fi
+  done
   # Record the launcher first: down must stop it before it can spawn any more children.
   mkdir -p "$dir/.graphhelm"
   echo "up $$ $(cat /proc/$$/winpid 2> /dev/null || true)" > "$pids"

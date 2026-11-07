@@ -129,6 +129,9 @@ fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcom
         "watch.launch_failed" => {
             "the project's launcher did not bring the app under test up on the flow's base in time"
         }
+        "watch.port_busy" => {
+            "the launcher found a port it needs already in use (its name is in the launch log); free that port or choose another, then watch again"
+        }
         "watch.state_not_seeded" => {
             "the project's launcher did not confirm the flow's state (GRAPHHELM_JOURNEY_STATE) in <dir>/.graphhelm/state, so that state is not observed"
         }
@@ -1444,6 +1447,13 @@ pub(super) fn launch_within(
             let _ = writeln!(file, "{why}");
         }
         record_launch_log(flow, &log_path);
+        // #2527: the fixture names a busy port before it does any setup; say so by name.
+        let busy = std::fs::read(&log_path)
+            .map(|bytes| String::from_utf8_lossy(&bytes).contains("already occupied"))
+            .unwrap_or(false);
+        if busy {
+            return Err(failure("watch.port_busy", "/launcher", 1));
+        }
         return Err(failure("watch.launch_failed", "/launcher", 1));
     }
     let _ = std::fs::remove_file(&log_path);

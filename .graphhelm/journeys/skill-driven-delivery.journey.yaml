@@ -1,0 +1,119 @@
+schema: graphhelm.journey-flow/1
+id: skill-driven-delivery
+title: next names each delivery state's step, skill and actor
+purpose: "For each delivery state, graphhelm tasks next names the step, skill, actor and minimum skill version a session must follow, from the task's records alone."
+status: draft
+base: http://127.0.0.1:8794
+actors: [author, reviewer, approver, merger, owner]
+secrets: []
+risks: [recovery, permissions]
+screens:
+  - id: entry
+    title: A session opens on a claimed task and reads its next
+    url: /tasks/entry
+    state: stable
+    expect: [{role: exit, name: "0", because: "the entry act ran against the claimed fixture task"}]
+    scope: unknown
+  - id: claimed
+    title: A claimed task says implement, names its author and the minimum skill version
+    url: /tasks/claimed
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a claimed task has no PR yet"}, {role: stdout, name: "\"role\": \"author\"", because: "the claimant is the author"}, {role: stdout, name: "\"minVersion\"", because: "the agent can judge whether it has the skill it is told to load"}]
+    scope: unknown
+  - id: awaiting_verdict
+    title: An open PR without verdict says review by a blind reviewer
+    url: /tasks/awaiting-verdict
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"review\"", because: "a PR with no verdict on head waits for review"}, {role: stdout, name: "\"role\": \"reviewer\"", because: "the author never reviews own work"}]
+    scope: unknown
+  - id: block_on_head
+    title: A BLOCK on head sends the author back to implement
+    url: /tasks/block-on-head
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a BLOCK returns the work to the author"}, {role: stdout, name: "BLOCK on head", because: "the reason names the defect"}]
+    scope: unknown
+  - id: approved
+    title: An APPROVE sends the merge to the approver
+    url: /tasks/approved
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"merge\"", because: "an approved head waits for merge"}, {role: stdout, name: "\"role\": \"approver\"", because: "merge is done by the approving reviewer"}]
+    scope: unknown
+  - id: merged
+    title: A merged task sends cleanup to the merger
+    url: /tasks/merged
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"cleanup\"", because: "the merger removes PR worktrees right after merge"}, {role: stdout, name: "\"role\": \"merger\"", because: "cleanup has a named actor"}]
+    scope: unknown
+  - id: blocked
+    title: A blocked task names its unblocker
+    url: /tasks/blocked
+    state: stable
+    expect: [{role: stdout, name: "\"unblocker\"", because: "the unblocker from #2531 is named"}, {role: stdout, name: "\"step\": \"review\"", because: "a blocked task resumes at the named unblocker's step"}]
+    scope: unknown
+  - id: diagnose
+    title: A block no unblocker resolves goes to the owner
+    url: /tasks/diagnose
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"diagnose\"", because: "diagnose is entered only when no unblocker resolves the block"}, {role: stdout, name: "\"role\": \"owner\"", because: "the owner decides the diagnosis"}]
+    scope: unknown
+  - id: no_skill
+    title: The Runtime returns a null skill as OBSERVER_MISSING
+    url: /tasks/no-skill
+    state: stable
+    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a null skill is reported, never success"}]
+    scope: unknown
+edges:
+  - id: entry.claimed
+    from: entry
+    to: claimed
+    why: "A session opening on a claimed task reads its next: implement, the author, and the minimum skill version."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-claimed --json}
+  - id: claim.review
+    from: claimed
+    to: awaiting_verdict
+    why: "The author opens the PR; next moves to review by a blind reviewer."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-awaiting-verdict --json}
+  - id: review.block
+    from: awaiting_verdict
+    to: block_on_head
+    why: "The reviewer blocks on head; next returns the author to implement."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-block-on-head --json}
+  - id: review.approve
+    from: awaiting_verdict
+    to: approved
+    why: "The reviewer approves on head; next sends the merge to the approver."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-approved --json}
+  - id: approve.merge
+    from: approved
+    to: merged
+    why: "The approver merges; next sends cleanup to the merger."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-merged --json}
+  - id: review.blocked
+    from: awaiting_verdict
+    to: blocked
+    why: "A stall with a named unblocker; next follows the unblocker."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-blocked --json}
+  - id: blocked.diagnose
+    from: blocked
+    to: diagnose
+    why: "No unblocker resolves the block; next goes to the owner."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-diagnose --json}
+  - id: claim.no_skill
+    from: claimed
+    to: no_skill
+    why: "A task whose next has a null skill is reported OBSERVER_MISSING by the Runtime."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-no-skill --json}
+paths:
+  main: [entry.claimed, claim.review, review.approve, approve.merge]
+  block: [review.block]
+  blocked: [review.blocked, blocked.diagnose]
+  missing_skill: [claim.no_skill]
+drift: []

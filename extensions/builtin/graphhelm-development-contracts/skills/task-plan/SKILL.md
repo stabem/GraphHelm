@@ -75,3 +75,23 @@ and it names paths, promise, proof and skills. A plan with no proof kind is not 
 
 A plan is not the change. Next, invoke the `implement` skill and follow it; a task that stops
 after the plan, or writes code without `implement`, has skipped step 2.
+
+## What comes next
+
+| After this | Next skill | Who acts |
+|---|---|---|
+| One keel.plan record names paths, promise, proof and skills | implement | author |
+| Plan missing a proof kind | task-plan | author, again |
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

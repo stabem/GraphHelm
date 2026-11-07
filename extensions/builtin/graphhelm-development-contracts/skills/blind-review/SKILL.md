@@ -62,3 +62,24 @@ approve) the `merge` skill has run.
 When you actually decide to suspend an assigned review or merge for an external condition, read the current task binding and its `reviewContextSequence` / `reviewActivityRevision`. Generate your own `task.review_activity` with `tools/task-record/task_record.py --lane <you> review_activity --issue <issue> --repo <owner/repo> --pr <pr> --head <full-head> --review-context-sequence <current-context> --revision <watermark+1> --activity waiting --reason <observed-reason> --dry-run`, then submit through MCP `signal` with your own lane credential. Confirm task readback before saying it was recorded. Preserve verdict, approval, head, author and assignment; never manufacture a BLOCK or author heartbeat for a wait.
 
 When you actually resume, use the current binding and next revision with `--activity resumed` and no reason. Keep the exact envelope/key for response-loss retries. A historical duplicate acknowledgement does not prove its old reason remains current. On sequence conflict, read back and make at most one same-envelope retry only if the binding still applies; abandon a stale statement instead of silently rebinding it. An older Runtime refusing this kind is unsupported: report missing task evidence, with no fallback write. Do not automatically repeat waits to maintain freshness, infer dependency resolution from text, or sign as another reviewer. This records a deliberate decision; it does not wake an idle host or prove a worker is running.
+
+## What comes next
+
+| After this | Next skill | Who acts |
+|---|---|---|
+| APPROVE or APPROVE-WITH-RISK on the head | merge | the approving reviewer merges; the author never does |
+| BLOCK on the head | implement on the same branch, then a new review on the new head | author |
+| Cannot run the proof (no observer) | report OBSERVER_MISSING to the coordinator | reviewer |
+
+## If in doubt
+
+| Situation | Skill |
+|---|---|
+| New task, no plan yet | task-plan |
+| Writing code for a claimed task | implement |
+| Proving a journey | journey-prove |
+| Asked to review a PR | blind-review |
+| Got a BLOCK on your head | implement (same branch) |
+| Approved and you are the reviewer | merge |
+| Unsure what the next step is | graphhelm-work (asks GraphHelm next) |
+| Unsure about the whole flow | graphhelm-guide |

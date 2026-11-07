@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: skill-driven-delivery
-title: An agent given only graphhelm-work finishes each delivery state from next
-purpose: "An agent given only graphhelm-work asks GraphHelm for next, loads next.skill, and moves each task through every delivery state without holding the flow in memory."
+title: next names each delivery state's step, skill and actor
+purpose: "For each delivery state, graphhelm tasks next names the step, skill, actor and minimum skill version a session must follow, from the task's records alone."
 status: draft
 base: http://127.0.0.1:8794
 actors: [author, reviewer, approver, merger, owner]
@@ -51,10 +51,10 @@ screens:
     expect: [{role: stdout, name: "\"step\": \"diagnose\"", because: "diagnose is entered only when no unblocker resolves the block"}, {role: stdout, name: "\"role\": \"owner\"", because: "the owner decides the diagnosis"}]
     scope: unknown
   - id: no_skill
-    title: A step with no skill is refused, and the agent reports the missing skill
+    title: The Runtime returns a null skill as OBSERVER_MISSING
     url: /tasks/no-skill
     state: stable
-    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a missing skill is reported, never success"}, {role: stdout, name: "\"skill\": \"graphhelm-work\"", because: "the agent names the skill it could not load in its report"}]
+    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a null skill is reported, never success"}]
     scope: unknown
 edges:
   - id: claim.review
@@ -62,43 +62,43 @@ edges:
     to: awaiting_verdict
     why: "The author opens the PR; next moves to review by a blind reviewer."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-claimed --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-awaiting-verdict --json}
   - id: review.block
     from: awaiting_verdict
     to: block_on_head
     why: "The reviewer blocks on head; next returns the author to implement."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-awaiting-verdict --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-block-on-head --json}
   - id: review.approve
     from: awaiting_verdict
     to: approved
     why: "The reviewer approves on head; next sends the merge to the approver."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-awaiting-verdict --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-approved --json}
   - id: approve.merge
     from: approved
     to: merged
     why: "The approver merges; next sends cleanup to the merger."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-approved --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-merged --json}
   - id: review.blocked
     from: awaiting_verdict
     to: blocked
     why: "A stall with a named unblocker; next follows the unblocker."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-blocked --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-blocked --json}
   - id: blocked.diagnose
     from: blocked
     to: diagnose
     why: "No unblocker resolves the block; next goes to the owner."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-diagnose --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-diagnose --json}
   - id: claim.no_skill
     from: claimed
     to: no_skill
-    why: "next names a skill the agent cannot load; the agent reports OBSERVER_MISSING and stops."
+    why: "A task whose next has a null skill is reported OBSERVER_MISSING by the Runtime."
     acts:
-      - {kind: cli, role: exec, name: graphhelm task next --task fixture-no-skill --json}
+      - {kind: cli, role: exec, name: graphhelm tasks next --task fixture-no-skill --json}
 paths:
   main: [claim.review, review.approve, approve.merge]
   block: [review.block]

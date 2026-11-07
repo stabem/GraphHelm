@@ -3,7 +3,7 @@
   "scopePaths": [
     "core/execution/src/tasks.rs",
     "core/execution/src/briefing.rs",
-    "apps/cli/src/commands/task.rs",
+    "apps/cli/src/commands/tasks.rs",
     "plugins/graphhelm/skills/graphhelm-work/SKILL.md",
     "plugins/graphhelm/skills/graphhelm-team/SKILL.md",
     "plugins/keel/skills/keel-exec/SKILL.md",
@@ -12,9 +12,9 @@
     ".graphhelm/journeys/skill-driven-delivery.journey.yaml"
   ],
   "exportedSymbols": [
-    "next_task_step (core/execution/src/tasks.rs)",
-    "graphhelm-work (skill)",
-    "graphhelm task next (CLI)"
+    "next_task_step",
+    "graphhelm-work",
+    "graphhelm tasks next"
   ],
   "proof": "PLAN ONLY. Proof at implementation: (a) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml covers every mapping with one edge each, each edge reading next for its own fixture task id (fixture-claimed, fixture-awaiting-verdict, fixture-block-on-head, fixture-approved, fixture-merged, fixture-blocked, fixture-diagnose, fixture-no-skill), seeded in the isolated fixture; replays green. (b) demo task end to end in an isolated fixture repo and execution, run by agents that received only graphhelm-work; the observer is neither Minato (planner) nor Sasuke (contract author); each receipt is bound to the head sha it observed; the agent's report for a missing skill is recorded in the receipt; the fixture is not resumed and is not product proof. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill, on a mismatch with the Runtime next mapping, and on a blind-review brief that carries the author's reasoning or an expected verdict. (d) break-once: drop one transition row, conformance must fail.",
   "journeys": ["skill-driven-delivery"],

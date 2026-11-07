@@ -1,0 +1,50 @@
+schema: graphhelm.journey-flow/1
+id: skill-driven-delivery
+title: A new session learns its next step and skill from the task alone
+purpose: "A session that wakes up on a task reads its next step, the skill to load and the actor who acts, from GraphHelm, with nothing held in its own memory."
+status: draft
+base: http://127.0.0.1:8794
+actors: [author, reviewer, approver]
+secrets: []
+risks: [recovery, permissions]
+screens:
+  - id: claimed
+    title: A claimed task says implement and names its author
+    url: /tasks/claimed
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a claimed task has no PR yet, so the next step is implement"}, {role: stdout, name: "\"skill\": \"graphhelm-development-contracts:implement\"", because: "the implement skill is the one that owns that step"}]
+    scope: unknown
+  - id: awaiting_verdict
+    title: An open PR without verdict says review by the assigned reviewer
+    url: /tasks/awaiting-verdict
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"review\"", because: "a PR with no verdict on head is waiting for review"}, {role: stdout, name: "\"actor\": \"reviewer\"", because: "the author must not review own work"}]
+    scope: unknown
+  - id: block_on_head
+    title: A BLOCK on head sends the author back to implement
+    url: /tasks/block-on-head
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"implement\"", because: "a BLOCK returns the work to the author"}, {role: stdout, name: "\"because\": \"BLOCK on head", because: "the reason names the defect, not only the state"}]
+    scope: unknown
+  - id: approved
+    title: An APPROVE sends the merge to the approver
+    url: /tasks/approved
+    state: stable
+    expect: [{role: stdout, name: "\"step\": \"merge\"", because: "an approved head is waiting for merge"}, {role: stdout, name: "\"actor\": \"approver\"", because: "merge is done by the approving reviewer, not the author"}]
+    scope: unknown
+  - id: no_skill
+    title: A step with no skill is refused, not treated as done
+    url: /tasks/no-skill
+    state: stable
+    expect: [{role: stdout, name: "OBSERVER_MISSING", because: "a missing skill or observer is reported, never success"}]
+    scope: unknown
+edges:
+  - id: observe.next_step
+    from: claimed
+    to: awaiting_verdict
+    why: "The task moves from claimed to a PR waiting for review; each stop names its next step, skill and actor."
+    acts:
+      - {kind: cli, role: exec, name: graphhelm task next --task 2582 --json}
+paths:
+  main: [observe.next_step]
+drift: []

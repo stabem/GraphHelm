@@ -1,0 +1,26 @@
+{
+  "promise": "A session that asks GraphHelm for a task's status or briefing gets next: {step, skill, actor, because} derived from the task's own records (claimed, pr_opened, review_verdict, merged). Every step skill ends with a transition table naming who acts next. A step with no skill or no observer returns OBSERVER_MISSING, never success.",
+  "scopePaths": [],
+  "proof": "PLAN ONLY, no code in this PR. Proof at implementation time: (a) a journey (.graphhelm/journeys/skill-driven-delivery.journey.yaml) replays green: a claimed task reports next.step=implement; a PR without verdict reports review by the assigned reviewer; a BLOCK on head reports the author back to implement with the named defect; an APPROVE reports merge by the approver; merged reports cleanup. (b) a conformance test reads every SKILL.md and fails when a transition names a missing skill or when the transition tables and the Runtime next mapping disagree. (c) break-once: remove one transition row and the conformance test must fail.",
+  "exportedSymbols": [],
+  "journeys": ["skill-driven-delivery"],
+  "plan": {
+    "issue": 2582,
+    "owner": "Minato (plan); Sasuke (Runtime/CLI contract); Itachi (independent audit)",
+    "exists": [
+      "core/execution/src/briefing.rs next_step(): returns NextStep for execution graph nodes only (approve, claim, clear, diagnose, finished), no skill, not delivery steps.",
+      "GET /v1/executions/<id>/tasks: already returns stalls[] (block_unanswered, awaiting_verdict, awaiting_merge), owner and liveness.owes. Gives who-owes-what, without skill.",
+      "keel.plan record: lists skills, not mapped per step or state.",
+      "#2524 (chaser, deadline, wake) and #2531 (cause, unblocker, where): same task-state model; the wake payload should carry next step and skill. This card must not fork that model."
+    ],
+    "cost": "Estimate, not measured: next is derived from the task's records for one task, O(records of that task). No scan over all tasks per request.",
+    "risks": [
+      "New public surface: the next field in status/briefing and the tasks endpoint. Needs a named caller (the step skills and Studio).",
+      "Compatibility: older clients ignore next; the field is additive.",
+      "Idempotency: next is read-only; no write added.",
+      "Authority: the author never approves or merges own work; the derivation must not let a claimant see a verdict slot it owns."
+    ],
+    "measuredGain": "none claimed",
+    "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan."
+  }
+}

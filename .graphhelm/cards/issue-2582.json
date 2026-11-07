@@ -1,9 +1,11 @@
 {
-  "promise": "A session that asks GraphHelm for a task's status or briefing gets next: {step, skill, actor, because} derived from the task's own records (claimed, pr_opened, review_verdict, merged). Every step skill ends with a transition table naming who acts next. A step with no skill or no observer returns OBSERVER_MISSING, never success.",
+  "promise": "The orchestrator hands an agent one entry skill, graphhelm-work. That skill loops: ask GraphHelm next, load next.skill, do the step, record, ask again. A task's status/briefing returns next: {step, skill, actor, because} derived from the task's records. Every step skill ends with its transition table and 'go back to graphhelm-work'. The #2524 wake carries only the task id and 'use graphhelm-work'. A step with no skill or observer returns OBSERVER_MISSING, never success.",
   "scopePaths": [],
-  "proof": "PLAN ONLY, no code in this PR. Proof at implementation time: (a) a journey (.graphhelm/journeys/skill-driven-delivery.journey.yaml) replays green: a claimed task reports next.step=implement; a PR without verdict reports review by the assigned reviewer; a BLOCK on head reports the author back to implement with the named defect; an APPROVE reports merge by the approver; merged reports cleanup. (b) a conformance test reads every SKILL.md and fails when a transition names a missing skill or when the transition tables and the Runtime next mapping disagree. (c) break-once: remove one transition row and the conformance test must fail.",
+  "proof": "PLAN ONLY. Proof at implementation: (a) end-to-end demo task run by agents that received ONLY graphhelm-work: claim -> PR -> review -> BLOCK -> fix -> APPROVE -> merge -> cleanup, each step taken from next, not from memory. (b) journey .graphhelm/journeys/skill-driven-delivery.journey.yaml replays green for each next mapping. (c) conformance test reads every SKILL.md and fails on a transition naming a missing skill or on a mismatch with the Runtime next mapping. (d) break-once: drop one transition row, conformance must fail.",
   "exportedSymbols": [],
-  "journeys": ["skill-driven-delivery"],
+  "journeys": [
+    "skill-driven-delivery"
+  ],
   "plan": {
     "issue": 2582,
     "owner": "Minato (plan); Sasuke (Runtime/CLI contract); Itachi (independent audit)",
@@ -11,14 +13,16 @@
       "core/execution/src/briefing.rs next_step(): returns NextStep for execution graph nodes only (approve, claim, clear, diagnose, finished), no skill, not delivery steps.",
       "GET /v1/executions/<id>/tasks: already returns stalls[] (block_unanswered, awaiting_verdict, awaiting_merge), owner and liveness.owes. Gives who-owes-what, without skill.",
       "keel.plan record: lists skills, not mapped per step or state.",
-      "#2524 (chaser, deadline, wake) and #2531 (cause, unblocker, where): same task-state model; the wake payload should carry next step and skill. This card must not fork that model."
+      "#2524 (chaser, deadline, wake) and #2531 (cause, unblocker, where): same task-state model; the wake payload should carry next step and skill. This card must not fork that model.",
+      "Owner comment on #2582: entry skill graphhelm-work; #2524 wake carries task id only."
     ],
     "cost": "Estimate, not measured: next is derived from the task's records for one task, O(records of that task). No scan over all tasks per request.",
     "risks": [
       "New public surface: the next field in status/briefing and the tasks endpoint. Needs a named caller (the step skills and Studio).",
       "Compatibility: older clients ignore next; the field is additive.",
       "Idempotency: next is read-only; no write added.",
-      "Authority: the author never approves or merges own work; the derivation must not let a claimant see a verdict slot it owns."
+      "Authority: the author never approves or merges own work; the derivation must not let a claimant see a verdict slot it owns.",
+      "Wake payload is only id plus 'use graphhelm-work': the loop depends on next being correct; a wrong next stalls every agent, so the demo task is the gate."
     ],
     "measuredGain": "none claimed",
     "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan."

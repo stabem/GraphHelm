@@ -1,7 +1,7 @@
 schema: graphhelm.journey-flow/1
 id: skill-driven-delivery
 title: A new session learns its next step and skill from the task alone
-purpose: "A session that wakes up on a task reads its next step, the skill to load and the actor who acts, from GraphHelm, with nothing held in its own memory."
+purpose: "An agent given only graphhelm-work asks GraphHelm for next, loads next.skill, and finishes a demo task from claim to cleanup without holding the flow in memory."
 status: draft
 base: http://127.0.0.1:8794
 actors: [author, reviewer, approver]

@@ -29,6 +29,46 @@ Every task runs the same steps after its issue, in any agent host, each a skill 
 
 Installing this plugin exposes guidance. It does not install the CLI, start the Runtime, rewrite host customization, activate extension packages, or certify an execution. The `graphhelm-setup` skill covers installing and starting.
 
+## The whole flow, in order
+
+Planned, not shipped (#2582). The plan: one entry skill, `graphhelm-work`, drives every task. A session handed a task would load it, ask GraphHelm for `next`, load the skill it names, do that step, record it, and ask again. Until the Runtime ships `next`, `graphhelm-work` reports `OBSERVER_MISSING` and stops. The planned `next` would be derived from the task's records (`claimed`, `pr_opened`, `review_verdict`, `merged`, `blocked`).
+
+The planned `next` has four fields: `step` (one of `claim`, `implement`, `review`, `merge`, `cleanup`, `done`, `diagnose`), `skill` (the skill to load, or null), `actor` (`{id, role}`; the role is `author`, `reviewer`, `approver`, `merger` or `owner`) and `because` (a fixed reason code plus the record it came from). A null skill would be reported as `OBSERVER_MISSING`, never as success: the session would stop and name the missing skill.
+
+```mermaid
+stateDiagram-v2
+    [*] --> claim: task opened
+    claim --> implement: claimed, no PR yet
+    implement --> review: PR opened on head
+    review --> implement: BLOCK on head (same branch)
+    review --> merge: APPROVE on head
+    merge --> cleanup: merged
+    cleanup --> done: worktrees removed
+    review --> diagnose: blocked, no unblocker resolves it
+    diagnose --> implement: owner names the fix
+    diagnose --> done: owner closes it
+    done --> [*]
+```
+
+Read the diagram as the plan: each arrow is a planned `next` answer, and its label is the record that would cause it. Ids are meant to match the `step` enum and the journey edge ids; the conformance check that enforces this is planned, not yet run.
+
+Who acts at each state, as planned (the author never reviews or merges their own work). The skill names are planned; only the ones in the plugin folder exist as files, the rest live in extension folders or are still to write:
+
+| State | Acts | Skill |
+|---|---|---|
+| `claim` | the author takes the task | `task-plan` |
+| `implement` | the author writes and pushes the change | `implement` |
+| `review` | one blind reviewer on the pinned head | `blind-review` |
+| `merge` | the approving reviewer merges the pinned head | `merge` |
+| `cleanup` | the merger removes the PR's worktrees and local branch | `merge` |
+| `diagnose` | the owner decides why the task is stuck | none; owner decides |
+
+A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owner heartbeat). The unblocker's step becomes the next step, so a BLOCK on a PR sends the author back to `implement` on the same branch with the named defect, and a stall that only the owner can clear goes to `diagnose`.
+
+Every step skill ends with its own transition table (what its record leads to, and who acts next) and sends the session back to `graphhelm-work`. If a session is unsure, it reads the "If in doubt" index at the end of its skill, which is the same in every skill.
+
+The planned proof (not run) is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. A planned conformance test would fail when a skill's transition names a skill that does not exist, or when the diagram omits a state or transition the Runtime maps. Neither exists yet.
+
 ## Prefer the GraphHelm MCP tools
 
 When the `graphhelm` MCP server is connected, read live state through its tools rather than shelling out (they show as `mcp__graphhelm__*` or `mcp__plugin_graphhelm_graphhelm__*`, depending on the host): `briefing`, `status`, `events`, `evidence`, `resume` and `memory_status`. If neither is connected, use the `graphhelm` CLI with `--json`, and say which source you used. `graphhelm init` registers a project-aware MCP command; `graphhelm setup --resolve home/.claude.json=register-mcp` can install one user-scope entry that resolves the active project by identity. Explicit `--url` and `--token-file` remain available for a deliberately pinned Runtime.

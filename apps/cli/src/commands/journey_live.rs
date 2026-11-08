@@ -2281,6 +2281,7 @@ mod launch_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
     fn a_configured_port_pair_is_read_and_an_invalid_one_is_refused() {
         use super::configured_ports;
         let ok = serde_json::json!({"ports": {"runtime": 8800, "app": 5190}});

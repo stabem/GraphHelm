@@ -474,13 +474,14 @@ notification is not an observed wake; report the gap and retain the fallback rou
 **Bridge rule until #2643 lands.** GraphHelm does not yet wake the next lane. Until #2643 does,
 whoever produces the next event messages its owner directly, and that message is the wake. Examples:
 an author pushes a head and messages the assigned reviewer; a reviewer posts a verdict and messages
-the author (BLOCK) or the merger (APPROVE); a merge is reported to the leader. This rule ends when
-#2643 replaces it with GraphHelm-driven wakes; then remove this paragraph.
+the author, for APPROVE too (see "Every verdict goes to two places" later in this file). An approving reviewer merges
+(DELIVERY.md §5) and then messages the author. This rule ends when #2643 replaces it with
+GraphHelm-driven wakes; then remove this paragraph.
 
 **The bounded waiter is not a persistent process.** The `wake-wait` sidecar in step 4 is armed per
-lease, exits on ring (0) or timeout (3), and is re-armed each turn. It is a bounded rewake, not a
-per-agent daemon. Step 4's "keep the sidecar running" means keep it running for the current lease.
-
+lease, exits on ring (0) or timeout (3), and is re-armed after every exit. It is a bounded rewake, not
+a per-agent daemon. Step 4's "Keep the co-located sidecar running as a background task" applies to the
+current lease only.
 
 Studio's **Ask for status** appends an `operator_note` addressed with `to: <lane>` on the
 team execution. SendMessage is not its delivery mechanism. Every active lane must maintain

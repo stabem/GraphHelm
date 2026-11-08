@@ -924,6 +924,17 @@ fn studio_start_plan(
     }
 }
 
+/// #2539: the start-port decision `start` makes, on `base`. `start` passes the default port; the
+/// test passes a port of its own so it never touches the owner's Studio.
+fn pick_studio_port(project: &Path, base: u16) -> Result<(u16, bool), String> {
+    studio_start_plan(
+        studio_is_running(base),
+        || check_studio_project(project, base).is_ok(),
+        free_studio_port,
+        base,
+    )
+}
+
 /// Register the project with the local Studio before opening a reusable deep link.
 fn check_studio_project(project: &Path, port: u16) -> Result<String, String> {
     let expected = super::execution::delivery::project_id(project)
@@ -1177,12 +1188,7 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     // started (or reused) and the project registers with that Studio. #2539: a Studio on the port
     // that refuses this project belongs to another project; this project then takes the next free
     // port and starts its own Studio there, and that Studio is not touched.
-    let (studio_port, joining) = match studio_start_plan(
-        studio_is_running(STUDIO_PORT),
-        || check_studio_project(&project, STUDIO_PORT).is_ok(),
-        free_studio_port,
-        STUDIO_PORT,
-    ) {
+    let (studio_port, joining) = match pick_studio_port(&project, STUDIO_PORT) {
         Ok(plan) => plan,
         Err(message) => return refused(message, "/port"),
     };
@@ -1266,6 +1272,63 @@ mod tests {
             "{after} is held by this test"
         );
         drop((held_default, held_next));
+    }
+
+    /// #2539: the wiring `start` runs, over real sockets. A fake Studio holds the base port and
+    /// refuses this project (the identity probe says session required, registration is 403). The
+    /// pick must be the next free port, never a join, and the held Studio must see only the probe
+    /// and the registration. The base comes from its own reserved range (32400-32800), not the
+    /// one the held-port test uses, so the two tests never race for a port.
+    #[test]
+    fn start_wiring_takes_the_next_free_port_when_another_project_holds_the_base() {
+        use std::io::{Read, Write};
+        let base = (32_400..32_800)
+            .find(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok())
+            .expect("a free port in the reserved test range");
+        let listener = std::net::TcpListener::bind(("127.0.0.1", base)).unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        // The fake Studio serves until the test process exits; it is never joined.
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().map_while(Result::ok) {
+                let mut buf = vec![0u8; 16 * 1024];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let line = request.lines().next().unwrap_or_default().to_owned();
+                let body = if line.starts_with("GET /__studio/identity ") {
+                    r#"{"reason":"session_required"}"#
+                } else {
+                    r#"{"error":"another project"}"#
+                };
+                log.lock().unwrap().push(line);
+                let reply = format!(
+                    "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+        });
+
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm").join("events.token"),
+            "test-credential",
+        )
+        .unwrap();
+
+        let (port, joining) = pick_studio_port(project.path(), base).expect("a free port");
+        assert!(!joining, "another project's Studio must not be joined");
+        assert!(port > base && port <= base + STUDIO_PORT_SCAN, "{port}");
+        let seen = seen.lock().unwrap();
+        assert!(
+            !seen.is_empty()
+                && seen.iter().all(|line| {
+                    line.starts_with("GET /__studio/identity ")
+                        || line.starts_with("POST /__studio/register ")
+                }),
+            "the held Studio saw more than the probe and the registration: {seen:?}"
+        );
     }
 
     /// #1143: the bar's total counts the lockfile's packages, and only cargo's

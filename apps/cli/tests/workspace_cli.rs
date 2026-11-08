@@ -188,7 +188,7 @@ fn interrupted_worktree_setup_is_recoverable_without_touching_lane_data() {
     graphhelm_process_tree::configure(&mut command);
     let mut child = command.spawn().unwrap();
     let group = graphhelm_process_tree::create(&child).unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + support::time_scale::scaled(std::time::Duration::from_secs(10));
     while !hook_marker.is_file() && std::time::Instant::now() < deadline {
         if child.try_wait().unwrap().is_some() {
             break;
@@ -346,7 +346,7 @@ fn interrupted_ref_creation_removes_only_the_claim_owned_branch_and_allows_retry
     graphhelm_process_tree::configure(&mut command);
     let mut child = command.spawn().unwrap();
     let group = graphhelm_process_tree::create(&child).unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + support::time_scale::scaled(std::time::Duration::from_secs(10));
     while !hook_marker.is_file() && std::time::Instant::now() < deadline {
         if child.try_wait().unwrap().is_some() {
             break;

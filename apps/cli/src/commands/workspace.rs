@@ -2529,7 +2529,6 @@ mod recent_build_walk_tests {
 #[cfg(test)]
 mod process_hold_tests {
     use super::{run_claim, run_release};
-    use std::process::Command;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         let status = graphhelm_process::command("git")
@@ -2569,7 +2568,7 @@ mod process_hold_tests {
             c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 120"]);
             c
         } else {
-            let mut c = Command::new("sleep");
+            let mut c = graphhelm_process::command("sleep");
             c.arg("120");
             c
         };

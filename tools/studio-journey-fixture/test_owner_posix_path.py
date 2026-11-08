@@ -1,4 +1,4 @@
-"""#2607: a Runtime whose command line carries the Git Bash path of the fixture is owned by it.
+﻿"""#2607: a Runtime whose command line carries the Git Bash path of the fixture is owned by it.
 
 Calls the fixture's own `fixture_listeners` (a function in fixture.sh) against a listener this test
 starts, with `dir` set the way fixture.sh sets it (`cd ... && pwd`), and expects that PID back.
@@ -6,6 +6,7 @@ Needs bash and PowerShell, not Node or Docker.
 """
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -46,8 +47,19 @@ def posix_path(windows_path):
     return "/" + windows_path[0].lower() + windows_path[2:].replace("\\", "/")
 
 
+def _posix_host_missing():
+    """The name of a POSIX tool this test needs and this host lacks, or None (#2640)."""
+    for tool in ("bash", "cygpath", "ps"):
+        if shutil.which(tool) is None:
+            return tool
+    return None
+
+
 class OwnerPosixPath(unittest.TestCase):
     def test_a_listener_started_with_the_posix_path_is_owned(self):
+        missing = _posix_host_missing()
+        if missing:
+            self.skipTest(f"needs a POSIX host: '{missing}' not found on PATH (#2640)")
         fixture = tempfile.mkdtemp(prefix="fx-")
         project = os.path.join(fixture, "project")
         os.makedirs(project)

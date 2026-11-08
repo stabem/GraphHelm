@@ -319,8 +319,10 @@ findings, whether Approve would be accepted, and its screens and edges. Approve 
 nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
 
 **Recorded delegation.** Gabriel (the owner) gave a standing delegation of journey-contract approval to
-`keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`. The record is
-verbatim from Gabriel's answer in Shikamaru's chat, 2026-11-08 (structured question):
+`keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`. Two dates record it:
+its origin is the owner order of 2026-10-25, cited at `plugins/keel/skills/keel-journey-qa/SKILL.md:20`, and
+Gabriel reaffirmed it on 2026-11-08. The 2026-11-08 record is verbatim from his answer in Shikamaru's chat
+(structured question):
 
 - Question: "A jornada 'studio2-open' do Studio ainda é rascunho, então o teste dela não roda. Pela regra do projeto, só você aprova jornadas, ou o revisor de jornadas (keel-journey-qa) se você deixar. O que você prefere?"
 - Option 1: "Deixar o revisor (Recomendado)": "O keel-journey-qa passa a aprovar as jornadas por você. Você não precisa olhar cada uma."
@@ -329,6 +331,8 @@ verbatim from Gabriel's answer in Shikamaru's chat, 2026-11-08 (structured quest
 - Scope, as stated by Shikamaru (message e321ba95-79ea-4ab7-b01e-bdaf23f4a696, 2026-11-08): "The scope is GENERAL, covering all journey contracts." The earlier phrase "starting with `studio2-open`" named the first use, not a limit.
 
 The delegation covers only the `keel-journey-qa` CLI route above, and only when all seven of its points pass.
+A text delegation grants no CLI capability (#2522): if `graphhelm journey approve` needs the owner's token,
+that is a separate blocker, and this record does not remove it.
 
 Writers take a nonblocking project lock, preflight all destinations, replace each file
 through a synced temporary file and restore earlier files when a later write fails.

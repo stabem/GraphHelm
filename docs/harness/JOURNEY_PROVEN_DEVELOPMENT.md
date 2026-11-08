@@ -318,6 +318,11 @@ findings, whether Approve would be accepted, and its screens and edges. Approve 
 `graphhelm journey approve <id>` on the Runtime's `--project`; a flow with findings is refused and
 nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
 
+**Recorded delegation.** Gabriel (the owner) delegated journey-contract approval to `keel-journey-qa`,
+starting with `studio2-open`. Source: chat with Shikamaru, 2026-11-08 (message 46ab5ef2). Exact wording
+from Gabriel's chat: `[PENDING: exact text from Shikamaru, not yet confirmed]`. This delegation covers only
+the `keel-journey-qa` CLI route above, and only when all seven of its points pass.
+
 Writers take a nonblocking project lock, preflight all destinations, replace each file
 through a synced temporary file and restore earlier files when a later write fails.
 The batch is not crash-atomic across files: a process or host failure can require

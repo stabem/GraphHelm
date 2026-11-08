@@ -539,6 +539,23 @@ wake merely because a lease exists. Reload the installed plugin to use the new S
 - **Every verdict goes to two places:** the comment on the PR, and a one-line `SendMessage` to the
   author. A verdict the author never hears about is not delivered.
 
+### No idle lanes: mandatory work loop
+
+Owner order (2026-11-08, #2636). An idle lane is a defect. Every lane runs this loop on every
+turn, through GraphHelm, without waiting for a push from the coordinator:
+
+1. Read `briefing` and `status` for the team execution (`graphhelm-openbot-ops`) as your own
+   lane, through the `mcp__graphhelm__*` tools or the `graphhelm` CLI.
+2. If you hold a task: `resume` it, do the next step, and record `evidence` after every step
+   (test run, PR, review verdict, merge).
+3. If you hold none: `start` the next eligible item in your area (current-wave first, no claimed
+   owner), record the claim, and begin.
+4. Waiting is not idle. Record the wait as evidence naming who and what you wait for, then take
+   another eligible item in parallel or review an open PR your role allows.
+5. Never end a turn without a GraphHelm record of what you did and what comes next.
+
+The coordinator sweeps `status` every 30 minutes; a lane with no record in 30 minutes is given
+a task. This loop does not override idle windows, the build slot, or the token rules.
 ## 6. Never
 
 - GitHub Actions: do not enable, run or rely on a workflow.

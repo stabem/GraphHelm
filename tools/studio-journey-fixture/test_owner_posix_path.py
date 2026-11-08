@@ -1,0 +1,76 @@
+"""#2607: a Runtime whose command line carries the Git Bash path of the fixture is owned by it.
+
+Calls the fixture's own `fixture_listeners` (a function in fixture.sh) against a listener this test
+starts, with `dir` set the way fixture.sh sets it (`cd ... && pwd`), and expects that PID back.
+Needs bash and PowerShell, not Node or Docker.
+"""
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(HERE, "fixture.sh")
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def function_source(name):
+    text = open(SCRIPT, encoding="utf-8").read()
+    start = text.index(f"{name}() {{\n")
+    # The function ends with its own `}` line after the bare PS terminator of its heredoc.
+    ps = text.index("\nPS\n", start) + len("\nPS\n")
+    return text[start:text.index("\n}\n", ps) + 3]
+
+
+def bash_pwd(windows_path):
+    """The path the way bash's `pwd` names it, which is the form the launcher hands the Runtime."""
+    out = subprocess.run(["bash", "-c", f'cd "{windows_path.replace(chr(92), "/")}" && pwd'],
+                         capture_output=True, text=True, timeout=30, creationflags=NO_WINDOW)
+    return out.stdout.strip()
+
+
+def posix_path(windows_path):
+    return "/" + windows_path[0].lower() + windows_path[2:].replace("\\", "/")
+
+
+class OwnerPosixPath(unittest.TestCase):
+    def test_a_listener_started_with_the_posix_path_is_owned(self):
+        fixture = tempfile.mkdtemp(prefix="fx-")
+        project = os.path.join(fixture, "project")
+        os.makedirs(project)
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import http.server,socketserver\n"
+             "class H(http.server.BaseHTTPRequestHandler):\n"
+             " def do_GET(self):\n  self.send_response(200);self.end_headers()\n"
+             f"socketserver.TCPServer(('127.0.0.1',{port}),H).serve_forever()",
+             bash_pwd(os.path.abspath(project))],
+            creationflags=NO_WINDOW,
+        )
+        try:
+            time.sleep(2)
+            win_fixture = os.path.abspath(fixture).replace("\\", "/")
+            win_repo = os.path.abspath(os.path.join(HERE, "..", "..")).replace("\\", "/")
+            script = (
+                function_source("fixture_listeners")
+                + f'\ndir=$(cd "{win_fixture}" && pwd)\nrepo="{win_repo}"\n'
+                + f"fixture_listeners record {port}\n"
+            )
+            run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                                 timeout=90, creationflags=NO_WINDOW)
+            out = run.stdout + run.stderr
+            self.assertIn(str(child.pid), out, f"owner not found for pid {child.pid}: {out!r}")
+        finally:
+            child.kill()
+            child.wait()
+
+
+if __name__ == "__main__":
+    unittest.main()

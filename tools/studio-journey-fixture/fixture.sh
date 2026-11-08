@@ -32,10 +32,12 @@ rt="$dir/project/.graphhelm"
 fixture_listeners() {
   local action=$1; shift
   if [ -r /proc/$$/winpid ]; then
-    GH_FIXTURE_DIR="$(cygpath -am "$dir")" GH_FIXTURE_REPO="$(cygpath -am "$repo")" \
+    GH_FIXTURE_DIR="$(cygpath -am "$dir")" GH_FIXTURE_REPO="$(cygpath -am "$repo")" GH_FIXTURE_DIR_POSIX="${dir#/}" \
       GH_FIXTURE_PORTS="$*" GH_FIXTURE_ACTION="$action" powershell.exe -NoProfile -NonInteractive -Command "$(cat <<'PS'
 $ErrorActionPreference = 'Stop'
 $fixtureDir = $env:GH_FIXTURE_DIR.Replace('\','/').ToLowerInvariant().TrimEnd('/') + '/'
+# Git Bash rewrites an env value that starts with / into a Windows path, so it is passed without the slash.
+$fixtureDirPosix = '/' + $env:GH_FIXTURE_DIR_POSIX.ToLowerInvariant().TrimEnd('/') + '/'
 $vite = $env:GH_FIXTURE_REPO.Replace('\','/').ToLowerInvariant().TrimEnd('/') + '/apps/studio/'
 $ports = @($env:GH_FIXTURE_PORTS -split ' ' | Where-Object { $_ -match '^\d+$' -and $_ -notin @('5196','8793') })
 $processes = @{}
@@ -43,13 +45,15 @@ Get-CimInstance Win32_Process | ForEach-Object { $processes[[string]$_.ProcessId
 $listeners = netstat -ano | Where-Object { $_ -match 'LISTENING' }
 foreach ($line in $listeners) {
     $fields = $line.Trim() -split '\s+'
-    if ($fields[1] -notmatch '^127\.0\.0\.1:(\d+)$' -or $Matches[1] -notin $ports) { continue }
-    $port = $Matches[1]
+    # #2607: -notmatch does not set $Matches, so the port is read only after a positive -match.
+    if ($fields[1] -match '^127\.0\.0\.1:(\d+)$') { $port = $Matches[1] } else { continue }
+    if ($port -notin $ports) { continue }
     $listenerId = $fields[-1]
     $commandLine = $processes[$listenerId]
     if (-not $commandLine) { continue }
     $commandLine = $commandLine.Replace('\','/').ToLowerInvariant()
-    $owned = $commandLine.Contains($fixtureDir) -or ($commandLine.Contains($vite) -and $commandLine.Contains('/vite/bin/vite.js') -and $commandLine -match (('--port\s+{0}\s+--strictport(?:\s|$)' -f $port)))
+    # #2607: a Runtime started with the Git Bash form of the path (/d/...) is this fixture's too.
+    $owned = $commandLine.Contains($fixtureDir) -or $commandLine.Contains($fixtureDirPosix) -or ($commandLine.Contains($vite) -and $commandLine.Contains('/vite/bin/vite.js') -and $commandLine -match (('--port\s+{0}\s+--strictport(?:\s|$)' -f $port)))
     if (-not $owned) { continue }
     if ($env:GH_FIXTURE_ACTION -eq 'kill') {
         & taskkill.exe /PID $listenerId /T /F 2>$null | Out-Null

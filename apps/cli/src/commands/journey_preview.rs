@@ -5448,3 +5448,119 @@ mod start_lock_tests {
         assert!(!path.exists(), "lock removed when its start returns");
     }
 }
+
+#[cfg(test)]
+mod start_lock_wiring_tests {
+    use super::{JourneyPreviewArgs, Liveness, dir_of, flow_and_key, save_state, start_with};
+    use serde_json::json;
+
+    const ID: &str = "studio-add-project";
+
+    /// A project with the demo journey and its two components, as the start path reads them.
+    fn fixture_project() -> tempfile::TempDir {
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        std::fs::write(
+            journeys.join("studio-add-project.journey.yaml"),
+            include_bytes!("testdata/studio-add-project.journey.yaml"),
+        )
+        .unwrap();
+        for path in [
+            "apps/studio/src/components/addproject.tsx",
+            "apps/studio/src/components/rail.tsx",
+        ] {
+            let target = project.path().join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, "fixture").unwrap();
+        }
+        project
+    }
+
+    fn start_args(project: &std::path::Path) -> JourneyPreviewArgs {
+        JourneyPreviewArgs {
+            id: ID.into(),
+            project: Some(project.to_path_buf()),
+            force: false,
+            read: false,
+            run: false,
+            confirm: false,
+            events: None,
+            execution: None,
+            keyring: None,
+            key_id: None,
+            validation_dir: None,
+            state: None,
+            confirm_digest: None,
+            token_file: None,
+            owner: false,
+        }
+    }
+
+    fn lock_path(project: &std::path::Path) -> std::path::PathBuf {
+        project
+            .join(".graphhelm")
+            .join(format!("preview-start-{ID}.lock"))
+    }
+
+    /// #2555 risk 2: the start path itself takes the per-flow lock. While another start holds it,
+    /// `start_with` answers `preview.busy` and never probes a runner or touches the state.
+    /// Fails if the start path stops taking the lock (the unit test only covers the lock alone).
+    /// Cost: one temp project; no subprocess.
+    #[test]
+    fn the_start_path_refuses_while_another_start_holds_the_flow_lock() {
+        let project = fixture_project();
+        std::fs::write(lock_path(project.path()), "held by another start").unwrap();
+
+        let outcome = start_with(&start_args(project.path()), |_| {
+            panic!("a held lock must refuse before any runner probe")
+        });
+        let answer = outcome.output.data.unwrap();
+
+        assert_eq!(answer["state"], "failed", "{answer}");
+        assert_eq!(answer["reason"], "preview.busy", "{answer}");
+        assert!(
+            answer["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("another start of this journey")),
+            "{answer}"
+        );
+        assert!(
+            lock_path(project.path()).exists(),
+            "the other start's lock is left alone"
+        );
+    }
+
+    /// #2555 risk 3: a start that crashed while holding the lock blocks the flow only until the
+    /// lock timeout. A lock older than 120 s is taken over, the start answers from the stored
+    /// state, and the lock is released when it returns. Fails if a stale lock still refuses.
+    /// Cost: one temp project; no subprocess (the stored `ready` state returns without a run).
+    #[test]
+    fn a_crashed_start_blocks_the_flow_only_until_the_lock_timeout() {
+        let project = fixture_project();
+        let (_, digest, commit) = flow_and_key(project.path(), ID).unwrap();
+        let dir = dir_of(project.path(), ID);
+        std::fs::create_dir_all(&dir).unwrap();
+        let ready = json!({"preview":true,"kind":"preview","digest":digest,"commit":commit,
+            "state":"ready","result":"pass","ranAt":chrono::Utc::now().to_rfc3339(),
+            "screens":{},"edges":{}});
+        save_state(&dir, &ready);
+
+        let lock = lock_path(project.path());
+        std::fs::write(&lock, "crashed start").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(121);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&lock)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        let outcome = start_with(&start_args(project.path()), |_| Liveness::Dead);
+        let answer = outcome.output.data.unwrap();
+
+        assert_ne!(answer["reason"], "preview.busy", "{answer}");
+        assert_eq!(answer["state"], "ready", "{answer}");
+        assert!(!lock.exists(), "the taken-over lock is released on return");
+    }
+}

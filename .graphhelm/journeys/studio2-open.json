@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows no heading \"Open the Studio from your project\", region \"Project demo\"",
+      "statement": "shows heading \"Read the Runtime health\", region \"Project demo\"",
       "statesToObserve": [
         "stable"
       ],

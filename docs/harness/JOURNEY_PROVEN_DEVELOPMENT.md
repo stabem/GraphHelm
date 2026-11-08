@@ -332,7 +332,7 @@ question to Shikamaru, 2026-11-08 (relayed verbatim by Shikamaru). The option te
 - Scope, as stated by Shikamaru (message e321ba95-79ea-4ab7-b01e-bdaf23f4a696, 2026-11-08): "The scope is GENERAL, covering all journey contracts." The earlier phrase "starting with `studio2-open`" named the first use, not a limit.
 
 The delegation covers only the `keel-journey-qa` CLI route above, and only when all seven of its points pass.
-A text delegation grants no CLI capability (#2522): if `graphhelm journey approve` needs the owner's token,
+A text delegation grants no CLI capability (#2522): `graphhelm journey approve` needs the owner's token,
 that is a separate blocker, and this record does not remove it.
 
 Writers take a nonblocking project lock, preflight all destinations, replace each file

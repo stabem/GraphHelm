@@ -170,6 +170,27 @@ fn flow_key_and_source(project: &Path, id: &str) -> Result<(Value, String, Strin
     Ok((flow, digest, commit, source))
 }
 
+/// #2468: the project HEAD and how many commits it is behind origin/main, from local refs only
+/// (a stale origin/main understates the count; the warning says so). Fields, not part of the key.
+pub(crate) fn run_checkout(project: &Path) -> Value {
+    let git = |args: &[&str]| {
+        graphhelm_process::command("git")
+            .arg("-C")
+            .arg(project)
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|text| text.trim().to_owned())
+    };
+    let head = git(&["rev-parse", "HEAD"]).filter(|sha| sha.len() == 40);
+    let behind = git(&["rev-list", "--count", "HEAD..origin/main"]).and_then(|n| n.parse::<u64>().ok());
+    json!({"head": head, "behindOrigin": behind})
+}
+
 /// The flow's scope commit, part of the key (#1309 card 1c): the latest commit that touched the
 /// flow file or any path the flow's screens scope. The same flow on unrelated new code keeps its
 /// preview; a change to what the flow covers is a new preview. The paths are the draft's own, so a
@@ -1911,6 +1932,10 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         state = json!({"preview":true,"digest":digest,"commit":commit,
             "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
             "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+        // #2468: the checkout fields are record fields only; the run key is digest + commit.
+        let checkout = run_checkout(&project);
+        state["head"] = checkout["head"].clone();
+        state["behindOrigin"] = checkout["behindOrigin"].clone();
     }
     state["kind"] = if flow["status"] == "approved" {
         "replay"

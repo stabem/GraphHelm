@@ -1248,11 +1248,11 @@ mod tests {
     /// are skipped. Fails if a taken port is returned again (the old behaviour refused instead).
     #[test]
     fn a_held_studio_port_gives_the_next_free_port() {
-        let base = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        // #2539: the held base comes from a reserved range (32000-32400) that no other test binds;
+        // the OS ephemeral pool is shared with the launcher tests and clashed with them.
+        let base = (32_000..32_400)
+            .find(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok())
+            .expect("a free port in the reserved test range");
         let held_default = std::net::TcpListener::bind(("127.0.0.1", base)).unwrap();
         let next = free_studio_port(base).expect("a free port after the held one");
         assert!(next > base && next <= base + STUDIO_PORT_SCAN, "{next}");

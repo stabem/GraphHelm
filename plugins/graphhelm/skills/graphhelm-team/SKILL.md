@@ -103,6 +103,13 @@ Whenever the orchestrator must send the owner a decision, it arrives complete, i
 
 Keep the decision text generic and free of private project names.
 
+## Turn budget
+
+Every model turn costs context, so cut only the turns that change no code, test or record:
+
+- Cut: status pings and acknowledgements; poll or wait turns inside a session (use one background command with one completion notice); long prose replies between agents.
+- Keep: self-review and test turns, even when they seem redundant. Holdout evidence shows they find defects.
+- Record each cut turn type by name when it is removed, so the before/after comparison in #2422 can read it.
 ## Never
 
 - Open a visible console window per command. On Windows run children hidden

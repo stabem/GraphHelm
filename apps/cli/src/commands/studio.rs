@@ -888,6 +888,42 @@ fn studio_is_running(port: u16) -> bool {
         })
 }
 
+/// #2539: the first port after `base` that nothing answers on and that this machine can bind. The
+/// scan stops after `STUDIO_PORT_SCAN` candidates; `None` when all of them are taken.
+const STUDIO_PORT_SCAN: u16 = 20;
+
+fn free_studio_port(base: u16) -> Option<u16> {
+    (1..=STUDIO_PORT_SCAN).find_map(|step| {
+        let port = base.checked_add(step)?;
+        let bindable = std::net::TcpListener::bind(("127.0.0.1", port)).is_ok();
+        (bindable && !studio_is_running(port)).then_some(port)
+    })
+}
+
+/// #2539: the start-port decision as a pure function, so tests can drive each outcome without a
+/// Studio or a socket. `(port, joining)`: `joining` means this project joins the Studio already on
+/// `port`. `accepts` is asked only when a Studio already answers on `base`; `free` only when that
+/// Studio does not accept this project.
+fn studio_start_plan(
+    running: bool,
+    accepts: impl FnOnce() -> bool,
+    free: impl FnOnce(u16) -> Option<u16>,
+    base: u16,
+) -> Result<(u16, bool), String> {
+    if !running {
+        return Ok((base, false));
+    }
+    if accepts() {
+        return Ok((base, true));
+    }
+    match free(base) {
+        Some(port) => Ok((port, false)),
+        None => Err(format!(
+            "the Studio port {base} belongs to another project and no free port was found after it; pass a port the launcher can use"
+        )),
+    }
+}
+
 /// Register the project with the local Studio before opening a reusable deep link.
 fn check_studio_project(project: &Path, port: u16) -> Result<String, String> {
     let expected = super::execution::delivery::project_id(project)
@@ -1137,12 +1173,30 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
     if args.no_browser {
         launch.arg(flag("NoBrowser"));
     }
-    // #1767: a Studio already serving ANOTHER project on the Studio port keeps it. This project's
-    // Runtime is started (or reused) on its own, and the project then joins that Studio, instead
-    // of the launcher refusing the port or replacing the other project's Studio.
-    let joining = studio_is_running(STUDIO_PORT);
+    // #1767: a Studio already serving THIS project on the Studio port is joined: its Runtime is
+    // started (or reused) and the project registers with that Studio. #2539: a Studio on the port
+    // that refuses this project belongs to another project; this project then takes the next free
+    // port and starts its own Studio there, and that Studio is not touched.
+    let (studio_port, joining) = match studio_start_plan(
+        studio_is_running(STUDIO_PORT),
+        || check_studio_project(&project, STUDIO_PORT).is_ok(),
+        free_studio_port,
+        STUDIO_PORT,
+    ) {
+        Ok(plan) => plan,
+        Err(message) => return refused(message, "/port"),
+    };
+    // #2539: say why the port is not the default one, so a reader is not left guessing.
+    if studio_port != STUDIO_PORT && !joining {
+        eprintln!(
+            "[studio] the Studio port {STUDIO_PORT} belongs to another project; this project's Studio starts on {studio_port} instead"
+        );
+    }
     if joining {
         launch.arg(flag("RuntimeOnly"));
+    }
+    if studio_port != STUDIO_PORT {
+        launch.arg(flag("StudioPort")).arg(studio_port.to_string());
     }
     let launched = match run_forwarding(&mut launch) {
         Ok(status) => status.success(),
@@ -1159,12 +1213,16 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
         "update": freshness,
         "launcherSucceeded": launched,
     });
+    if launched && studio_port != STUDIO_PORT && !joining {
+        data["studioPort"] = json!(studio_port);
+        data["url"] = json!(format!("http://127.0.0.1:{studio_port}/"));
+    }
     if launched && joining {
-        let joined = open_project(&project, STUDIO_PORT, None, args.no_browser);
+        let joined = open_project(&project, studio_port, None, args.no_browser);
         if joined.exit_code != 0 {
             return joined;
         }
-        data["joinedStudioPort"] = json!(STUDIO_PORT);
+        data["joinedStudioPort"] = json!(studio_port);
         if let Some(opened) = joined.output.data {
             data["opened"] = opened["opened"].clone();
             if let Some(url) = opened.get("url") {
@@ -1185,6 +1243,30 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2539: when the default Studio port is held, the next free port is chosen and the held ones
+    /// are skipped. Fails if a taken port is returned again (the old behaviour refused instead).
+    #[test]
+    fn a_held_studio_port_gives_the_next_free_port() {
+        // #2539: the held base comes from a reserved range (32000-32400) that no other test binds;
+        // the OS ephemeral pool is shared with the launcher tests and clashed with them.
+        let base = (32_000..32_400)
+            .find(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok())
+            .expect("a free port in the reserved test range");
+        let held_default = std::net::TcpListener::bind(("127.0.0.1", base)).unwrap();
+        let next = free_studio_port(base).expect("a free port after the held one");
+        assert!(next > base && next <= base + STUDIO_PORT_SCAN, "{next}");
+        let held_next = std::net::TcpListener::bind(("127.0.0.1", next)).unwrap();
+        // #2539: other tests bind ports in this range, so the second port need not be above the
+        // first. The contract is in range and never a port this test holds.
+        let after = free_studio_port(base).expect("a free port past both held ones");
+        assert!(after > base && after <= base + STUDIO_PORT_SCAN, "{after}");
+        assert!(
+            after != base && after != next,
+            "{after} is held by this test"
+        );
+        drop((held_default, held_next));
+    }
 
     /// #1143: the bar's total counts the lockfile's packages, and only cargo's
     /// `compiler-artifact` lines advance it.
@@ -1829,10 +1911,14 @@ mod tests {
     fn the_launcher_says_at_once_when_the_runtime_it_started_exits() {
         use std::net::TcpListener;
         let first = TcpListener::bind("127.0.0.1:0").unwrap();
-        let second = TcpListener::bind("127.0.0.1:0").unwrap();
         let bind_port = first.local_addr().unwrap().port();
-        let studio_port = second.local_addr().unwrap().port();
-        drop((first, second));
+        drop(first);
+        // #2539: the Studio port comes from a fixed range below the OS ephemeral range, which the
+        // bind-to-zero tests draw from. An ephemeral pick could be taken by a neighbouring test
+        // before the launcher runs, and the launcher would then report "already in use".
+        let studio_port = (31_000..31_200)
+            .find(|port| TcpListener::bind(("127.0.0.1", *port)).is_ok())
+            .expect("a free port in the test range");
         let root = std::env::temp_dir().join(format!("gh studio exits {}", std::process::id()));
         let events = root.join("events");
         std::fs::create_dir_all(&events).unwrap();
@@ -2016,5 +2102,39 @@ mod tests {
         assert!(requests.is_empty(), "{requests:?}\n{seen}");
         assert!(seen.contains("[up] starting"), "{seen}");
         assert!(!seen.contains("already serves"), "{seen}");
+    }
+}
+
+#[cfg(test)]
+mod studio_start_plan_tests {
+    use super::studio_start_plan;
+
+    /// #2539: nothing answers on the default port: start there, nothing else is asked.
+    #[test]
+    fn a_free_default_port_starts_here() {
+        let got = studio_start_plan(false, || panic!("not asked"), |_| panic!("not asked"), 5183);
+        assert_eq!(got, Ok((5183, false)));
+    }
+
+    /// #2539: a Studio on the default port accepts this project: join it.
+    #[test]
+    fn a_studio_that_accepts_this_project_is_joined() {
+        let got = studio_start_plan(true, || true, |_| panic!("not asked"), 5183);
+        assert_eq!(got, Ok((5183, true)));
+    }
+
+    /// #2539: another project's Studio holds the default port: start on the next free port.
+    #[test]
+    fn a_studio_that_refuses_this_project_gives_the_next_free_port() {
+        let got = studio_start_plan(true, || false, |base| Some(base + 1), 5183);
+        assert_eq!(got, Ok((5184, false)));
+    }
+
+    /// #2539: another project's Studio holds the default port and no port is free: refuse, naming
+    /// the port.
+    #[test]
+    fn a_studio_that_refuses_with_no_free_port_is_refused() {
+        let got = studio_start_plan(true, || false, |_| None, 5183);
+        assert!(got.as_ref().is_err_and(|m| m.contains("5183")), "{got:?}");
     }
 }

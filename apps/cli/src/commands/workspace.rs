@@ -330,6 +330,40 @@ fn run_claim(
     )
 }
 
+/// #2606: the lane whose workspace holds `place`, when `place` is under `root` (`<root>/<lane>/...`).
+fn lane_of(root: &Path, place: &Path) -> Option<String> {
+    let rel = place.strip_prefix(root).ok()?;
+    rel.components()
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+}
+
+/// #2606: the live processes whose current directory or executable is inside one of `dirs`, one
+/// line each (PID, image name and, when known, the owning lane). `None` when nothing holds them.
+/// Nothing is stopped: a refusal names the holder and the holder's owner stops it.
+fn process_holds(root: &Path, dirs: &[PathBuf]) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for dir in dirs {
+        for holder in graphhelm_process_tree::holders_inside(dir) {
+            let lane = holder
+                .places
+                .iter()
+                .find_map(|place| lane_of(root, place))
+                .unwrap_or_else(|| "unknown".to_owned());
+            let line = format!("pid {} image {} lane {}", holder.pid, holder.image, lane);
+            if !lines.contains(&line) {
+                lines.push(line);
+            }
+        }
+    }
+    (!lines.is_empty()).then(|| {
+        format!(
+            "live processes run inside this workspace; stop them, then release again: {}",
+            lines.join("; ")
+        )
+    })
+}
+
 fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     const COMMAND: &str = "workspace.release";
     if !valid_id(lane) || !valid_id(task) {
@@ -365,6 +399,14 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
     let worktree = workspace.join("wt");
     if worktree_gone(&worktree) {
         return clear_gone(&file, &record, &workspace, lane, task);
+    }
+    if let Some(detail) = process_holds(root, &[worktree.clone(), workspace.join("target")]) {
+        return refuse(
+            COMMAND,
+            crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
+            &detail,
+            "/worktree",
+        );
     }
     let Ok(head) = git(&worktree, &["rev-parse", "HEAD"]) else {
         return refuse(
@@ -2022,6 +2064,9 @@ pub(crate) fn run_list(root: &Path, sizes: bool) -> Outcome {
 
 /// Why a workspace is kept, or `None` when the sweep may remove it.
 fn keep_reason(view: &Value) -> Option<&'static str> {
+    if !view["processHolds"].is_null() {
+        return Some("process_running");
+    }
     if view["state"] == "swept" {
         return Some("already_swept");
     }
@@ -2102,6 +2147,11 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         // the keep decision, as it always has: a link in a released worktree must still be named.
         if !incomplete && record["state"] == "released" {
             let worktree = workspace_dir(root, &lane, &task).join("wt");
+            // #2606: a live process in the worktree or its target keeps the workspace.
+            let target = workspace_dir(root, &lane, &task).join("target");
+            if let Some(detail) = process_holds(root, &[worktree.clone(), target]) {
+                view["processHolds"] = json!(detail);
+            }
             match first_link(&worktree, &worktree) {
                 Ok(Some(found)) => {
                     view["linkInWorktree"] = json!(found.to_string_lossy().replace('\\', "/"));
@@ -2116,7 +2166,8 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         if let Some(reason) = (!incomplete).then(|| keep_reason(&view)).flatten() {
             if reason != "already_swept" {
                 kept.push(json!({"lane": lane, "task": task, "reason": reason,
-                    "link": view["linkInWorktree"], "scanError": view["scanError"]}));
+                    "link": view["linkInWorktree"], "scanError": view["scanError"],
+                    "processes": view["processHolds"]}));
             }
             continue;
         }
@@ -2471,6 +2522,106 @@ mod recent_build_walk_tests {
         assert_eq!(
             recent_build_check(&target, SystemTime::now()),
             Err("merged_recent")
+        );
+    }
+}
+
+#[cfg(test)]
+mod process_hold_tests {
+    use super::{run_claim, run_release};
+    use std::process::Command;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = graphhelm_process::command("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn repo(dir: &std::path::Path) -> std::path::PathBuf {
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "--object-format=sha1"]);
+        std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+        git(&repo, &["add", "-A"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "-m",
+                "init",
+            ],
+        );
+        repo
+    }
+
+    /// A child process whose current directory is inside `dir`, sleeping until killed.
+    fn holder_in(dir: &std::path::Path) -> std::process::Child {
+        let mut command = if cfg!(windows) {
+            let mut c = graphhelm_process::command("powershell");
+            c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 120"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("120");
+            c
+        };
+        command.current_dir(dir).spawn().unwrap()
+    }
+
+    /// #2606: a live process whose cwd is inside a claimed worktree makes `workspace release`
+    /// refuse and list its PID; once the process exits, the same release succeeds. Fails if
+    /// release ignores processes inside the worktree (the incident of 2026-11-07).
+    /// Cost: local temp git repo and one sleep child, killed by the test.
+    #[test]
+    fn release_refuses_while_a_process_runs_inside_the_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        let repo = repo(tmp.path());
+        let claim = run_claim(
+            &root,
+            "lane-a",
+            "2606",
+            &repo,
+            "HEAD",
+            Some("issue-2606-hold"),
+        );
+        assert!(
+            claim.output.ok,
+            "claim failed: {:?}",
+            claim.output.diagnostics
+        );
+        let worktree = root.join("lane-a").join("2606").join("wt");
+
+        let mut child = holder_in(&worktree);
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let pid = child.id();
+
+        let refused = run_release(&root, "lane-a", "2606");
+        let text = serde_json::to_string(&refused.output.diagnostics).unwrap();
+        assert!(
+            !refused.output.ok,
+            "release succeeded with a live process inside: {text}"
+        );
+        assert!(
+            text.contains(&pid.to_string()),
+            "the refusal does not list pid {pid}: {text}"
+        );
+
+        let _ = child.kill();
+        let _ = child.wait();
+        let released = run_release(&root, "lane-a", "2606");
+        assert!(
+            released.output.ok,
+            "release still refused after exit: {:?}",
+            released.output.diagnostics
         );
     }
 }

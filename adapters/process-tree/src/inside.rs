@@ -37,6 +37,60 @@ pub fn processes_inside(dir: &Path) -> Vec<u32> {
         .collect()
 }
 
+/// One process holding a directory: its id, its executable's file name, and every place it has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Holder {
+    pub pid: u32,
+    pub image: String,
+    pub places: Vec<PathBuf>,
+}
+
+/// The processes holding `dir` (see [`processes_inside`]), with the image name and the places
+/// that matched, so a refusal can say which process stands in the way. Nothing is stopped here.
+#[must_use]
+pub fn holders_inside(dir: &Path) -> Vec<Holder> {
+    let me = std::process::id();
+    list_processes()
+        .into_iter()
+        .filter(|&pid| pid != me && pid != 0)
+        .filter_map(|pid| {
+            let places = places_of(pid);
+            let inside: Vec<PathBuf> = places
+                .iter()
+                .filter(|place| path_is_inside(place, dir))
+                .cloned()
+                .collect();
+            if inside.is_empty() {
+                return None;
+            }
+            let image = exe_of(pid)
+                .and_then(|exe| exe.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "unknown".to_owned());
+            Some(Holder {
+                pid,
+                image,
+                places: inside,
+            })
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn exe_of(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+#[cfg(windows)]
+fn exe_of(pid: u32) -> Option<PathBuf> {
+    // On Windows `places_of` lists the executable first.
+    places_of(pid).into_iter().next()
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn exe_of(_pid: u32) -> Option<PathBuf> {
+    None
+}
+
 /// One snapshot of every other process's current directory and executable, for a caller that
 /// asks `processes_inside` about many directories: `path_is_inside` over these places gives the
 /// same answer at the moment of the snapshot, for one process listing instead of one per directory.

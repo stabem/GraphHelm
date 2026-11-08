@@ -466,10 +466,11 @@ that ended without a PR will not open one, so its issue is free at once, not aft
 
 ### Autonomous lane wake loop
 
-Until the doorbell is delivered and its host wake is observed, retain the existing per-agent
-30-minute OpenBot routines. After that, pending work must arm the doorbell before turn end.
-Record the next action, owner and evidence before waiting. An armed lease without host completion
-notification is not an observed wake; report the gap and retain the fallback routines.
+The owner deleted the per-agent OpenBot routines and sweeps (2026-11-08). Do not recreate them,
+and never call `routine_no_update` for lane work. Until #2643 delivers GraphHelm-driven wakes, the
+bridge rule below is the wake. Pending work must arm the doorbell before turn end, and must record
+the next action, owner and evidence before waiting. An armed lease without host completion
+notification is not an observed wake; report the gap and do not substitute a routine.
 
 **Bridge rule until #2643 lands.** GraphHelm does not yet wake the next lane. Until #2643 does,
 whoever produces the next event messages its owner directly, and that message is the wake. Examples:

@@ -1166,6 +1166,7 @@ impl LaunchedStop {
             .arg(&self.script)
             .arg("down")
             .arg(&self.dir)
+            .env("COMPOSE_PROJECT_NAME", compose_project_name(&self.dir))
             .current_dir(&self.project)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -1173,6 +1174,17 @@ impl LaunchedStop {
         let _ = run_within(command, LAUNCH_DOWN);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// #2508: the Compose project name of one launch, derived from its directory alone, so `up`,
+/// `down` and a stop from a recorded directory all agree on it.
+pub(super) fn compose_project_name(dir: &Path) -> String {
+    let run = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("graphhelm-watch-"))
+        .unwrap_or("unknown");
+    format!("graphhelm-{run}")
 }
 
 /// How long a launcher's `down` may take.
@@ -1384,7 +1396,7 @@ pub(super) fn launch_within(
         .arg(&script)
         .arg("up")
         .arg(&dir)
-        .env("COMPOSE_PROJECT_NAME", format!("graphhelm-{run_id}"))
+        .env("COMPOSE_PROJECT_NAME", compose_project_name(&dir))
         .current_dir(project)
         .stdin(Stdio::null());
     // The ml-saas trial: a failed `up` said only `launch_failed`. Its output goes to a log
@@ -2610,6 +2622,63 @@ Connection: close
         assert_ne!(
             names[0], names[1],
             "two parallel launches share one Compose project name: {names:?}"
+        );
+    }
+
+    /// #2508 review (Neji on #2616): teardown must use the same Compose project name as `up`, or a
+    /// fixture that names its project only in `up` leaves containers running after `stop`.
+    /// Fails when `stop` runs `down` under a different name (or none). Cost: two shell launches.
+    #[test]
+    fn stop_tears_down_under_the_same_compose_project_name_as_up() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            r#"{"schema":"graphhelm-journey-fixture/1","script":"name.sh"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("name.sh"),
+            "#!/usr/bin/env bash
+if [ \"$1\" = up ]; then mkdir -p \"$2\" && printf '%s' \"$COMPOSE_PROJECT_NAME\" > \"$2/up-name\"; fi
+if [ \"$1\" = down ]; then printf '%s' \"$COMPOSE_PROJECT_NAME\" > \"down-name\" 2>/dev/null; fi
+",
+        )
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for mut stream in listener.incoming().map_while(Result::ok) {
+                let mut buffer = [0u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK
+Content-Length: 0
+Connection: close
+
+",
+                );
+            }
+        });
+        let launched = launch_within(
+            project.path(),
+            &base,
+            "checkout",
+            None,
+            Duration::from_secs(20),
+            |_| Ok(()),
+        )
+        .expect("the launch succeeds");
+        let dir = launched.dir.clone();
+        // `stop` removes the directory, so the name `up` used is read before teardown.
+        let up = std::fs::read_to_string(dir.join("up-name")).unwrap_or_default();
+        launched.stopper().stop();
+        let down = std::fs::read_to_string(project.path().join("down-name")).unwrap_or_default();
+        assert!(!up.is_empty(), "up saw no Compose project name");
+        assert_eq!(
+            down, up,
+            "teardown ran under a different Compose project name than up"
         );
     }
 }

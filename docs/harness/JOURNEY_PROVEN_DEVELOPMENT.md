@@ -322,8 +322,8 @@ nothing is written. Both routes need owner credentials and a Runtime started wit
 original language on purpose: they are the source record, not prose. Gabriel (the owner) gave a standing
 delegation of journey-contract approval to `keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`. Two dates record it:
 its origin is the owner order of 2026-10-25, cited at `plugins/keel/skills/keel-journey-qa/SKILL.md:20`, and
-Gabriel reaffirmed it on 2026-11-08. The 2026-11-08 record is verbatim from his answer in Shikamaru's chat
-(structured question):
+Gabriel reaffirmed it on 2026-11-08. Attribution of the 2026-11-08 record: owner choice via a structured
+question to Shikamaru, 2026-11-08 (relayed verbatim by Shikamaru). The option text below is the owner's answer:
 
 - Question: "A jornada 'studio2-open' do Studio ainda é rascunho, então o teste dela não roda. Pela regra do projeto, só você aprova jornadas, ou o revisor de jornadas (keel-journey-qa) se você deixar. O que você prefere?"
 - Option 1: "Deixar o revisor (Recomendado)": "O keel-journey-qa passa a aprovar as jornadas por você. Você não precisa olhar cada uma."

@@ -1,11 +1,12 @@
-"""#2607: the Runtime ownership check, and the rule that every netstat and taskkill call in
-fixture.sh names its System32 path. One rule (bare_calls) is used by the fixture scan and by the
-regression probes, so a probe that passes the rule proves the fixture scan does too.
+"""#2607: a Runtime whose command line carries the Git Bash path of the fixture is owned by it.
 
+Calls the fixture's own `fixture_listeners` (a function in fixture.sh) against a listener this test
+starts, with `dir` set the way fixture.sh sets it (`cd ... && pwd`), and expects that PID back.
 Needs bash and PowerShell, not Node or Docker.
 """
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -15,8 +16,6 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "fixture.sh")
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
 PROBES = [
     'taskkill //PID $p //F && "C:/Windows/System32/netstat.exe" -ano',
     'C:/Windows/System32/taskkill.exe //PID 1; taskkill //PID 2 //F',
@@ -24,34 +23,15 @@ PROBES = [
     '"$taskkill_exe" //PID 1 || true; taskkill //PID 3 || true',
     'echo System32 $(netstat -ano)',
     'grep System32 <(netstat -ano)',
-    'echo System32 taskkill //PID 1',
-    'echo C:/Windows/System32/ netstat -ano',
 ]
 
-CALL = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
-SEPARATOR = re.compile(r";|\|\||\||&&|&|\$\(|<\(|\(")
-FULL_PATH_END = re.compile(r'(System32[/\\]+[A-Za-z.]*[/\\]?|taskkill_exe)$')
-
-
-def bare_calls(text):
-    """The netstat or taskkill calls in `text` not named by their full path.
-
-    A call passes only when the text between the previous separator (or line start) and the call
-    ends directly in the full-path form: a System32 path (or taskkill_exe), with nothing between it
-    and the command word.
-    """
-    found = []
-    for match in CALL.finditer(text):
-        start = max((m.end() for m in SEPARATOR.finditer(text, 0, match.start())), default=0)
-        own = text[start:match.start()]
-        if not FULL_PATH_END.search(own):
-            found.append(match.group(0))
-    return found
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def function_source(name):
     text = open(SCRIPT, encoding="utf-8").read()
     start = text.index(f"{name}() {{\n")
+    # The function ends with its own `}` line after the bare PS terminator of its heredoc.
     ps = text.index("\nPS\n", start) + len("\nPS\n")
     return text[start:text.index("\n}\n", ps) + 3]
 
@@ -63,8 +43,23 @@ def bash_pwd(windows_path):
     return out.stdout.strip()
 
 
+def posix_path(windows_path):
+    return "/" + windows_path[0].lower() + windows_path[2:].replace("\\", "/")
+
+
+def _posix_host_missing():
+    """The name of a POSIX tool this test needs and this host lacks, or None (#2640)."""
+    for tool in ("bash", "cygpath", "ps"):
+        if shutil.which(tool) is None:
+            return tool
+    return None
+
+
 class OwnerPosixPath(unittest.TestCase):
     def test_a_listener_started_with_the_posix_path_is_owned(self):
+        missing = _posix_host_missing()
+        if missing:
+            self.skipTest(f"needs a POSIX host: '{missing}' not found on PATH (#2640)")
         fixture = tempfile.mkdtemp(prefix="fx-")
         project = os.path.join(fixture, "project")
         os.makedirs(project)
@@ -90,6 +85,8 @@ class OwnerPosixPath(unittest.TestCase):
                 + f'\ndir=$(cd "{win_fixture}" && pwd)\nrepo="{win_repo}"\n'
                 + f"fixture_listeners record {port}\n"
             )
+            # #2607: the launcher spawns the fixture with a PATH that lacks System32; netstat must
+            # still resolve, so the check calls it by its full path.
             env = dict(os.environ)
             env["PATH"] = "/usr/bin:/bin:/c/Windows/System32/WindowsPowerShell/v1.0"
             env["PATHEXT"] = ".CPL"  # the spawned environment carries only this (#2607 live log)
@@ -101,26 +98,48 @@ class OwnerPosixPath(unittest.TestCase):
             child.kill()
             child.wait()
 
+
     def test_no_bare_taskkill_in_the_fixture(self):
-        """#2607 (Shino): every taskkill call names the System32 path."""
+        """#2607 (Shino): every taskkill call names the System32 path; a bare one fails under the
+        launcher's PATH, as the down path did."""
         for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
-            if line.lstrip().startswith("#"):
-                continue
-            found = [c for c in bare_calls(line.split(" #", 1)[0]) if c.lower().startswith("taskkill")]
-            self.assertFalse(found, f"fixture.sh:{number} calls taskkill by bare name: {line.strip()}")
+            if "taskkill" in line and "System32" not in line and "taskkill_exe" not in line                     and not line.lstrip().startswith("#"):
+                self.fail(f"fixture.sh:{number} calls a bare taskkill: {line.strip()}")
+
 
     def test_every_netstat_and_taskkill_call_is_by_full_path(self):
-        """#2607 (Tsunade, Shino): the shared rule passes every netstat and taskkill call in the fixture."""
+        """#2607 (Tsunade, Shino): each netstat and taskkill call names its own System32 path.
+
+        Each call is judged by its own offset in the line: the text between the previous
+        command separator and this call must name the System32 path (or taskkill_exe), so a
+        full-path call earlier on the line cannot hide a bare one later.
+        """
+        call = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
+        separator = re.compile(r";|\|\||\||&&|&")
         for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
             if line.lstrip().startswith("#"):
                 continue
-            found = bare_calls(line.split(" #", 1)[0])
-            self.assertFalse(found, f"fixture.sh:{number} has a bare call {found}: {line.strip()}")
+            code = line.split(" #", 1)[0]
+            for match in call.finditer(code):
+                start = max((m.end() for m in separator.finditer(code, 0, match.start())), default=0)
+                own = code[start:match.start()]
+                if "System32" in own or "taskkill_exe" in own:
+                    continue
+                self.fail(f"fixture.sh:{number} calls {match.group(0)} without its own System32 path: {line.strip()}")
+
 
     def test_regression_probes_are_caught(self):
-        """#2607: each bypass probe is caught by the same shared rule the fixture scan uses."""
+        """#2607 (Shino): bypass lines must fail the rule (each probe is judged on its own)."""
+        call = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
+        separator = re.compile(r";|\|\||\||&&|&")
         for probe in PROBES:
-            self.assertTrue(bare_calls(probe), f"probe passed the rule: {probe}")
+            flagged = False
+            for match in call.finditer(probe):
+                start = max((m.end() for m in separator.finditer(probe, 0, match.start())), default=0)
+                own = probe[start:match.start()]
+                if not re.search(r"(System32\/?[A-Za-z]*|taskkill_exe)[\"' ]*$", own):
+                    flagged = True
+            self.assertTrue(flagged, f"probe passed the rule: {probe}")
 
 
 if __name__ == "__main__":

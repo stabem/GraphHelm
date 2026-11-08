@@ -42,7 +42,9 @@ $vite = $env:GH_FIXTURE_REPO.Replace('\','/').ToLowerInvariant().TrimEnd('/') + 
 $ports = @($env:GH_FIXTURE_PORTS -split ' ' | Where-Object { $_ -match '^\d+$' -and $_ -notin @('5196','8793') })
 $processes = @{}
 Get-CimInstance Win32_Process | ForEach-Object { $processes[[string]$_.ProcessId] = $_.CommandLine }
-$listeners = netstat -ano | Where-Object { $_ -match 'LISTENING' }
+# #2607: the launcher's PATH may lack System32; call netstat by its full path.
+$netstat = Join-Path $env:SystemRoot 'System32\NETSTAT.EXE'
+$listeners = & $netstat -ano | Where-Object { $_ -match 'LISTENING' }
 foreach ($line in $listeners) {
     $fields = $line.Trim() -split '\s+'
     # #2607: -notmatch does not set $Matches, so the port is read only after a positive -match.
@@ -56,7 +58,7 @@ foreach ($line in $listeners) {
     $owned = $commandLine.Contains($fixtureDir) -or $commandLine.Contains($fixtureDirPosix) -or ($commandLine.Contains($vite) -and $commandLine.Contains('/vite/bin/vite.js') -and $commandLine -match (('--port\s+{0}\s+--strictport(?:\s|$)' -f $port)))
     if (-not $owned) { continue }
     if ($env:GH_FIXTURE_ACTION -eq 'kill') {
-        & taskkill.exe /PID $listenerId /T /F 2>$null | Out-Null
+        & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $listenerId /T /F 2>$null | Out-Null
     } else {
         Write-Output $listenerId
     }

@@ -63,8 +63,12 @@ class OwnerPosixPath(unittest.TestCase):
                 + f'\ndir=$(cd "{win_fixture}" && pwd)\nrepo="{win_repo}"\n'
                 + f"fixture_listeners record {port}\n"
             )
+            # #2607: the launcher spawns the fixture with a PATH that lacks System32; netstat must
+            # still resolve, so the check calls it by its full path.
+            env = dict(os.environ)
+            env["PATH"] = "/usr/bin:/bin:/c/Windows/System32/WindowsPowerShell/v1.0"
             run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                                 timeout=90, creationflags=NO_WINDOW)
+                                 timeout=90, creationflags=NO_WINDOW, env=env)
             out = run.stdout + run.stderr
             self.assertIn(str(child.pid), out, f"owner not found for pid {child.pid}: {out!r}")
         finally:

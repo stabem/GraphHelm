@@ -318,8 +318,9 @@ findings, whether Approve would be accepted, and its screens and edges. Approve 
 `graphhelm journey approve <id>` on the Runtime's `--project`; a flow with findings is refused and
 nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
 
-**Recorded delegation.** Gabriel (the owner) gave a standing delegation of journey-contract approval to
-`keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`. Two dates record it:
+**Recorded delegation.** The quotes below are verbatim Portuguese from the owner's own chat, kept in the
+original language on purpose: they are the source record, not prose. Gabriel (the owner) gave a standing
+delegation of journey-contract approval to `keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`. Two dates record it:
 its origin is the owner order of 2026-10-25, cited at `plugins/keel/skills/keel-journey-qa/SKILL.md:20`, and
 Gabriel reaffirmed it on 2026-11-08. The 2026-11-08 record is verbatim from his answer in Shikamaru's chat
 (structured question):

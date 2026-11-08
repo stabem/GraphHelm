@@ -30,7 +30,7 @@ edges:
   - id: proof.graph
     from: proof
     to: graph
-    intent: Open a saved proof deep link and switch to Graph.
+    intent: "Open a saved proof deep link and switch to Graph. Auth gap, not checked here: the off-loopback no-ticket refusal path; tracked in #2627 (JPD/method)."
     why: "After the owner opens a saved proof link and switches to Graph, the demo run is still there, so nothing has to be set up again."
     acts:
       - {kind: activate, role: tab, name: Graph}

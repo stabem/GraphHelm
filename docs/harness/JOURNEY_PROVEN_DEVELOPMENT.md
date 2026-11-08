@@ -318,6 +318,29 @@ findings, whether Approve would be accepted, and its screens and edges. Approve 
 `graphhelm journey approve <id>` on the Runtime's `--project`; a flow with findings is refused and
 nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
 
+**Recorded delegation (policy only).** Gabriel, the owner, gave a standing delegation of journey-contract
+approval to `keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`.
+Origin: the owner order of 2026-10-25, cited at `plugins/keel/skills/keel-journey-qa/SKILL.md:20`.
+Reaffirmed on 2026-11-08: owner choice via a structured question to Shikamaru, 2026-11-08, relayed verbatim by Shikamaru. The owner's
+original Portuguese wording is kept verbatim in [issue #2618](https://github.com/stabem/GraphHelm/issues/2618).
+The English below is a translation of the Portuguese original, not the original itself.
+
+- Question (translated): "The studio2-open journey of the Studio is still a draft, so its test does not run.
+  Under the project rule, only you approve journeys, or the journey reviewer (keel-journey-qa) if you let it.
+  What do you prefer?"
+- Option 1 (recommended): "Let the reviewer decide. keel-journey-qa approves journeys on your behalf. You
+  do not need to look at each one."
+- Option 2: "I approve myself. I send you the journey to read and approve."
+- Owner's answer: option 1.
+- Scope, as stated by Shikamaru (message e321ba95-79ea-4ab7-b01e-bdaf23f4a696, 2026-11-08): "The scope
+  is GENERAL, covering all journey contracts." The earlier phrase "starting with `studio2-open`" named the
+  first use, not a limit.
+
+This record is policy only. It grants no CLI capability (#2522): `graphhelm journey approve` needs the
+owner's token. The CLI grant that would let keel-journey-qa approve is tracked in #2625; until it lands,
+journey approvals stay pending, and this record does not remove that blocker. The delegation covers only the
+`keel-journey-qa` CLI route above, and only when all seven of its points pass.
+
 Writers take a nonblocking project lock, preflight all destinations, replace each file
 through a synced temporary file and restore earlier files when a later write fails.
 The batch is not crash-atomic across files: a process or host failure can require

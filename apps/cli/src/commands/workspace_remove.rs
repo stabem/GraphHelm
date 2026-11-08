@@ -3,9 +3,9 @@
 //! both recurse through a junction (a worktree's `apps/studio/node_modules`) into the owner's
 //! checkout and delete what it points at.
 //!
-//! A linked git worktree goes through the merge cleanup's own `remove_worktree` (stop the
-//! processes inside, unlink links, save uncommitted work to `<leftovers>/<name>/`, unregister,
-//! link-safe delete). Any other directory: links are unlinked first, then the link-safe
+//! A linked git worktree goes through the merge cleanup's own `remove_worktree` (refuse while a
+//! live process runs inside it, unlink links, save uncommitted work to `<leftovers>/<name>/`,
+//! unregister, link-safe delete). Any other directory: links are unlinked first, then the link-safe
 //! `remove_tree`. A repository's main checkout is refused.
 use std::path::Path;
 

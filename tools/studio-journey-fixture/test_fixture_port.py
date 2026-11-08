@@ -49,13 +49,13 @@ class FixturePortTest(unittest.TestCase):
 
 
     def test_every_studio2_flow_based_on_the_fixture_studio_names_this_fixtures_port(self):
-        # #2077: the rewrite covered only studio2-proof-run*, so confirm, send-fix and stale ended
-        # watch.app_down on an isolated fixture (Studio not on 5184). Run on the real journeys:
-        # every studio2 flow based on 5184 must name the fixture's port, other bases stay.
+        # #2077 / #2587: the live fixture copies the journeys byte-for-byte (their approval digests bind
+        # `base`) and names its Studio at run time through GRAPHHELM_FIXTURE_BASE, which the preview,
+        # replay and live readers all honour. A studio2 flow on 5184 keeps its base in the copy; the
+        # run-time base is the fixture's port. An isolated fixture (not 5184) must not end watch.app_down.
         import shutil
 
         root = pathlib.Path(__file__).resolve().parents[2]
-        shell = r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else "bash"
         source = root / ".graphhelm" / "journeys"
         default = "base: http://127.0.0.1:5184\n"
         with tempfile.TemporaryDirectory() as parent:
@@ -65,17 +65,12 @@ class FixturePortTest(unittest.TestCase):
             on_default = {n for n, t in before.items() if n.startswith("studio2-") and default in t}
             for flow in ("studio2-proof-confirm", "studio2-proof-send-fix", "studio2-proof-stale"):
                 self.assertIn(f"{flow}.journey.yaml", on_default, "control: the flow is based on 5184")
-            result = subprocess.run(
-                [shell, "-c", '. "$1"; rebase_flows "$2" 5341', "rebase",
-                 (root / "tools/studio-journey-fixture/rebase_flows.sh").as_posix(), journeys.as_posix()],
-                capture_output=True, text=True, timeout=60, check=False, creationflags=NO_WINDOW)
-            self.assertEqual(result.returncode, 0, result.stderr)
+            fixture = (root / "tools/studio-journey-fixture/fixture.sh").read_text(encoding="utf-8")
+            self.assertIn('export GRAPHHELM_FIXTURE_BASE="http://127.0.0.1:$sport"', fixture)
+            self.assertNotIn("rebase_flows", fixture, "the copy is never rewritten")
             for name, text in before.items():
                 after = (journeys / name).read_text(encoding="utf-8")
-                if name in on_default:
-                    self.assertEqual(after, text.replace(default, "base: http://127.0.0.1:5341\n"), name)
-                else:
-                    self.assertEqual(after, text, f"{name} must not change")
+                self.assertEqual(after, text, f"{name} must not change in the copy")
 
     def test_the_fixture_project_carries_every_file_its_flows_scope(self):
         # #1041: fixture.sh copies the journeys into a disposable project (#585) and the Runtime

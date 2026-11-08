@@ -754,7 +754,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     };
     observer_ready(&project)?;
     let output = TemporaryOutput::create()?;
-    let mut base = flow["base"].as_str().unwrap().to_owned();
+    let mut base = super::journey_preview::run_base(&flow);
     // The owner only clicks Watch: when the app under test is down, the project's declared
     // launcher brings it up (and the host stops it when the watch ends). An isolated launcher
     // always brings up its own, on free ports (#585).

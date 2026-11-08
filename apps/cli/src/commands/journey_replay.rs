@@ -1842,7 +1842,8 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
         path_data["outcome"] = "running".into();
         data["paths"][index] = path_data.clone();
         let mut driver = Driver::start(&project, temporary.path(), &secrets)?;
-        let base = flow["base"].as_str().unwrap();
+        let base = super::journey_preview::run_base(&flow);
+        let base = base.as_str();
         let mut open = with_declared(
             json!({"base":format!("{}{}",base.trim_end_matches('/'),screens[first]["url"].as_str().unwrap()),"viewport":viewport,"allowOrigins":args.allow_origin,"survive":args.heal}),
             declared.as_ref(),

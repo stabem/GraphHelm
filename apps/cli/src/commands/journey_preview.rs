@@ -2248,7 +2248,7 @@ fn play(
 /// #2587: the base a preview plays on. The flow's own `base` is the approved content (its
 /// approval digest binds it); a fixture may name its own Studio at run time through
 /// `GRAPHHELM_FIXTURE_BASE`, so the tracked flow file is not edited and the digest stays put.
-fn run_base(flow: &Value) -> String {
+pub(crate) fn run_base(flow: &Value) -> String {
     run_base_with(
         flow,
         std::env::var("GRAPHHELM_FIXTURE_BASE").ok().as_deref(),

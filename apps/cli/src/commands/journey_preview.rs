@@ -5564,3 +5564,34 @@ mod start_lock_wiring_tests {
         assert!(!lock.exists(), "the taken-over lock is released on return");
     }
 }
+
+#[cfg(test)]
+mod run_checkout_fields_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        assert!(Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success());
+    }
+
+    /// Red: `run_checkout` does not exist yet. Card #2468: the run records the project HEAD
+    /// (`head`) and how many commits it was behind origin/main (`behindOrigin`), as fields only.
+    #[test]
+    fn a_run_records_head_and_behind_origin_as_fields_outside_the_key() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one"]);
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "two"]);
+        let head = String::from_utf8(
+            Command::new("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().unwrap().stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        let checkout = run_checkout(dir);
+        assert_eq!(checkout["head"], head.as_str());
+        assert_eq!(checkout["behindOrigin"], 0);
+    }
+}

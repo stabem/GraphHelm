@@ -1290,6 +1290,30 @@ pub(super) fn take_launch_log(flow: &str) -> Option<Value> {
     LAST_LAUNCH_LOG.lock().ok()?.as_mut()?.remove(flow)
 }
 
+/// #2604: the launcher's own cap on how long `up` may take, `"readySeconds"` in the launcher file, from
+/// 10 to 120. Lowering it is safe because the caller's wait is sized from `LAUNCH_READY`; raising it
+/// would need that wait sized from the file too, so a larger value is refused, not silently capped.
+/// Absent means `LAUNCH_READY`.
+pub(super) fn configured_ready(project: &Path) -> std::result::Result<Duration, ()> {
+    let declared = project.join(FIXTURE_FILE);
+    let fixture: Value = match std::fs::read(&declared)
+        .ok()
+        .filter(|bytes| bytes.len() <= FRAME)
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    {
+        Some(value) => value,
+        None => return Ok(LAUNCH_READY),
+    };
+    match fixture.get("readySeconds") {
+        None => Ok(LAUNCH_READY),
+        Some(value) => value
+            .as_u64()
+            .filter(|seconds| (10..=120).contains(seconds))
+            .map(Duration::from_secs)
+            .ok_or(()),
+    }
+}
+
 /// Starts the declared app under test and waits until the flow's base answers.
 pub(super) fn launch(
     project: &Path,
@@ -1298,7 +1322,9 @@ pub(super) fn launch(
     state: Option<&str>,
     before_up: impl FnOnce(&LaunchedStop) -> Result<()>,
 ) -> Result<Launched> {
-    launch_within(project, base, flow, state, LAUNCH_READY, before_up)
+    let ready = configured_ready(project)
+        .map_err(|()| failure("watch.launcher_invalid", "/launcher/readySeconds", 2))?;
+    launch_within(project, base, flow, state, ready, before_up)
 }
 
 /// #1784: the state the launcher wrote to `<dir>/.graphhelm/state` once it seeded it, or `None`
@@ -2190,6 +2216,30 @@ mod launch_tests {
     /// #585: an isolated launch plays the flow on the port it was given, keeping the flow's
     /// scheme, host and path; a base the code cannot rewrite safely is refused, never guessed.
     /// Cost: microseconds.
+    #[test]
+    fn a_configured_ready_cap_only_lowers_the_wait() {
+        use super::{LAUNCH_READY, configured_ready};
+        let dir = std::env::temp_dir().join(format!("gh-ready-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".graphhelm")).unwrap();
+        let file = dir.join(".graphhelm/journey-fixture.json");
+        let cases: [(&str, Result<std::time::Duration, ()>); 6] = [
+            ("{}", Ok(LAUNCH_READY)),
+            (
+                "{\"readySeconds\": 30}",
+                Ok(std::time::Duration::from_secs(30)),
+            ),
+            ("{\"readySeconds\": 120}", Ok(LAUNCH_READY)),
+            ("{\"readySeconds\": 121}", Err(())),
+            ("{\"readySeconds\": 5}", Err(())),
+            ("{\"readySeconds\": \"30\"}", Err(())),
+        ];
+        for (text, want) in cases {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(configured_ready(&dir), want, "{text}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_isolated_launch_rewrites_only_the_port_of_the_base() {
         use super::base_on_port;

@@ -77,5 +77,13 @@ class OwnerPosixPath(unittest.TestCase):
             child.wait()
 
 
+    def test_no_bare_taskkill_in_the_fixture(self):
+        """#2607 (Shino): every taskkill call names the System32 path; a bare one fails under the
+        launcher's PATH, as the down path did."""
+        for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
+            if "taskkill" in line and "System32" not in line and "taskkill_exe" not in line                     and not line.lstrip().startswith("#"):
+                self.fail(f"fixture.sh:{number} calls a bare taskkill: {line.strip()}")
+
+
 if __name__ == "__main__":
     unittest.main()

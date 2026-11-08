@@ -846,8 +846,10 @@ down)
   if [ "$(uname -s | cut -c1-5)" = "MINGW" ] || [ "$(uname -s | cut -c1-6)" = "CYGWIN" ]; then
     # The first record is up: kill its tree before the children, so no new child escapes.
     winpids=$(awk '$1 != "ports" && $3 != "" {print $3}' "$pids")
+    # #2607: the launcher's PATH lacks System32, so taskkill is called by its full path.
+    taskkill_exe="$(cygpath -u "${SystemRoot:-C:/Windows}")/System32/taskkill.exe"
     for pid in $winpids; do
-      taskkill //PID "$pid" //T //F > /dev/null 2>&1 && echo "stopped pid $pid" || true
+      "$taskkill_exe" //PID "$pid" //T //F > /dev/null 2>&1 && echo "stopped pid $pid" || true
     done
   else
     while read -r name pid _; do

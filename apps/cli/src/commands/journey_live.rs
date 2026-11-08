@@ -2729,3 +2729,71 @@ Connection: close
         );
     }
 }
+
+#[cfg(test)]
+mod object_ports_tests {
+    use super::launch_within;
+    use std::time::Duration;
+
+    /// #2607 (Yamato's live launch): the documented object form `{"runtime":N,"app":M}` of the
+    /// declared pair reaches the launcher script too. Fails when the reader accepts only the array
+    /// form, because the script then receives no ports. Cost: one shell launch; no Docker.
+    #[test]
+    fn the_object_form_of_the_declared_pair_reaches_the_launcher_script() {
+        let free = || {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port()
+        };
+        let runtime = free();
+        let app = free();
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+        std::fs::write(
+            project.path().join(".graphhelm/journey-fixture.json"),
+            format!(
+                r#"{{"schema":"graphhelm-journey-fixture/1","script":"ports.sh","ports":{{"runtime":{runtime},"app":{app}}}}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            project.path().join("ports.sh"),
+            "#!/usr/bin/env bash
+if [ \"$1\" = up ]; then mkdir -p \"$2\" && printf '%s %s' \"$3\" \"$4\" > \"$2/ports\"; fi
+",
+        )
+        .unwrap();
+        let listener = std::net::TcpListener::bind(("127.0.0.1", app)).unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for mut stream in listener.incoming().map_while(Result::ok) {
+                let mut buffer = [0u8; 1024];
+                let _ = stream.read(&mut buffer);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK
+Content-Length: 0
+Connection: close
+
+",
+                );
+            }
+        });
+        let launched = launch_within(
+            project.path(),
+            &format!("http://127.0.0.1:{app}"),
+            "checkout",
+            None,
+            Duration::from_secs(20),
+            |_| Ok(()),
+        )
+        .expect("the launch succeeds");
+        let got = std::fs::read_to_string(launched.dir.join("ports")).unwrap_or_default();
+        assert_eq!(
+            got,
+            format!("{runtime} {app}"),
+            "the launcher did not receive the object-form pair"
+        );
+    }
+}

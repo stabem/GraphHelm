@@ -97,7 +97,7 @@
     "measuredGain": "none claimed",
     "complexity": "New mapping function in the Runtime; no existing function made more complex in this plan.",
     "skill_list_for_implementation": {
-      "note": "Every SKILL.md the implementation edits, by class. entry = the one entry skill; step = gets a transition table and the 'If in doubt' index; other = no table, no index. Owner: plugin owner for graphhelm and keel; Minato for the two builtin extensions (Shikamaru decision).",
+      "note": "Every SKILL.md the implementation edits, by class. entry = the one entry skill; step = gets a transition table and the 'If in doubt' index; entry and other = the 'If in doubt' index, no transition table. Owner: plugin owner for graphhelm and keel; Minato for the two builtin extensions (Shikamaru decision).",
       "entry": [
         "plugins/graphhelm/skills/graphhelm-work/SKILL.md (new, owner graphhelm)"
       ],

@@ -149,3 +149,14 @@ Read the sections your step names, not whole files.
 | Merge and cleanup | `keel/KEEL_MERGE.md`; DELIVERY §5 |
 | Identity line | `docs/process/DELIVERY.md` §4 |
 | Lane rules and wake loop | `docs/process/LANES.md` §1 and §5 |
+
+## Bounded tool output (#2424)
+
+Tool output lands in agent context, so ask for the smallest form first:
+
+- `git log --oneline -n <N>`, never a bare `git log` (the full history was 1.5 MB here).
+- `git diff --stat` before any full diff; read a full diff only for a named file.
+- `gh issue view <N> --json <fields> --jq <expr>` with the fields you need, not the full JSON.
+- Read files over about 500 lines with `offset` and `limit`.
+- Logs through `grep` or `tail -n <N>`, never a whole log.
+- If output is truncated, say so and how to get the rest.

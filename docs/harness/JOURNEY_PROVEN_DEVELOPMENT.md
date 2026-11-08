@@ -326,6 +326,7 @@ verbatim from Gabriel's answer in Shikamaru's chat, 2026-11-08 (structured quest
 - Option 1: "Deixar o revisor (Recomendado)": "O keel-journey-qa passa a aprovar as jornadas por você. Você não precisa olhar cada uma."
 - Option 2: "Eu mesmo aprovo": "Eu te mando a jornada para você ler e aprovar."
 - Gabriel's answer: "Deixar o revisor (Recomendado)"
+- Scope, as stated by Shikamaru (message e321ba95-79ea-4ab7-b01e-bdaf23f4a696, 2026-11-08): "The scope is GENERAL, covering all journey contracts." The earlier phrase "starting with `studio2-open`" named the first use, not a limit.
 
 The delegation covers only the `keel-journey-qa` CLI route above, and only when all seven of its points pass.
 

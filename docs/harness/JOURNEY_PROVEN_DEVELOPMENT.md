@@ -318,10 +318,16 @@ findings, whether Approve would be accepted, and its screens and edges. Approve 
 `graphhelm journey approve <id>` on the Runtime's `--project`; a flow with findings is refused and
 nothing is written. Both routes need owner credentials and a Runtime started with `--project`.
 
-**Recorded delegation.** Gabriel (the owner) delegated journey-contract approval to `keel-journey-qa`,
-starting with `studio2-open`. Source: chat with Shikamaru, 2026-11-08 (message 46ab5ef2). Exact wording
-from Gabriel's chat: `[PENDING: exact text from Shikamaru, not yet confirmed]`. This delegation covers only
-the `keel-journey-qa` CLI route above, and only when all seven of its points pass.
+**Recorded delegation.** Gabriel (the owner) gave a standing delegation of journey-contract approval to
+`keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`. The record is
+verbatim from Gabriel's answer in Shikamaru's chat, 2026-11-08 (structured question):
+
+- Question: "A jornada 'studio2-open' do Studio ainda é rascunho, então o teste dela não roda. Pela regra do projeto, só você aprova jornadas, ou o revisor de jornadas (keel-journey-qa) se você deixar. O que você prefere?"
+- Option 1: "Deixar o revisor (Recomendado)": "O keel-journey-qa passa a aprovar as jornadas por você. Você não precisa olhar cada uma."
+- Option 2: "Eu mesmo aprovo": "Eu te mando a jornada para você ler e aprovar."
+- Gabriel's answer: "Deixar o revisor (Recomendado)"
+
+The delegation covers only the `keel-journey-qa` CLI route above, and only when all seven of its points pass.
 
 Writers take a nonblocking project lock, preflight all destinations, replace each file
 through a synced temporary file and restore earlier files when a later write fails.

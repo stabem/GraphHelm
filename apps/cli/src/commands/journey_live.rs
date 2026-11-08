@@ -1084,6 +1084,26 @@ pub(super) fn launcher_isolated(project: &Path) -> bool {
             .is_some_and(|fixture| fixture["isolated"] == true)
 }
 
+/// #2603: the ports the project's launcher asks for, `"ports": {"runtime": N, "app": M}` in
+/// `.graphhelm/journey-fixture.json`, or none. A port is 1024 to 65535, never the GraphHelm default
+/// Runtime port 8793, and the two differ. Anything else is an invalid launcher, not a silent default.
+pub(super) fn configured_ports(fixture: &Value) -> std::result::Result<Option<(u16, u16)>, ()> {
+    let Some(ports) = fixture.get("ports") else {
+        return Ok(None);
+    };
+    let port = |key: &str| {
+        ports
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| (1024..=65535).contains(value) && *value != 8793)
+    };
+    match (port("runtime"), port("app")) {
+        (Some(runtime), Some(app)) if runtime != app => Ok(Some((runtime, app))),
+        _ => Err(()),
+    }
+}
+
 /// `base` with its port replaced by `port`: the address an isolated launch answers on.
 pub(super) fn base_on_port(base: &str, port: u16) -> Option<String> {
     let (scheme, rest) = base.split_once("://")?;
@@ -1416,9 +1436,16 @@ pub(super) fn launch_within(
     drop(log);
     // An isolated launcher gets two free ports (`up <dir> <runtime port> <app port>`), and the
     // flow is played on the app port instead of its own base.
-    let isolated_base = if fixture["isolated"] == true {
-        let (Some(runtime_port), Some(app_port)) = (free_port(), free_port()) else {
-            return Err(failure("watch.launch_failed", "/launcher/ports", 1));
+    // #2603: a configured port pair is used as given; otherwise an isolated launcher gets free ports.
+    let configured = configured_ports(&fixture)
+        .map_err(|()| failure("watch.launcher_invalid", "/launcher/ports", 2))?;
+    let isolated_base = if fixture["isolated"] == true || configured.is_some() {
+        let (runtime_port, app_port) = match configured {
+            Some(ports) => ports,
+            None => match (free_port(), free_port()) {
+                (Some(runtime), Some(app)) => (runtime, app),
+                _ => return Err(failure("watch.launch_failed", "/launcher/ports", 1)),
+            },
         };
         command
             .arg(runtime_port.to_string())
@@ -2252,6 +2279,25 @@ mod launch_tests {
             assert_eq!(configured_ready(&dir), want, "{text}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn a_configured_port_pair_is_read_and_an_invalid_one_is_refused() {
+        use super::configured_ports;
+        let ok = serde_json::json!({"ports": {"runtime": 8800, "app": 5190}});
+        assert_eq!(configured_ports(&ok), Ok(Some((8800, 5190))));
+        assert_eq!(
+            configured_ports(&serde_json::json!({"isolated": true})),
+            Ok(None)
+        );
+        for bad in [
+            serde_json::json!({"ports": {"runtime": 8793, "app": 5190}}),
+            serde_json::json!({"ports": {"runtime": 8800, "app": 8800}}),
+            serde_json::json!({"ports": {"runtime": 80, "app": 5190}}),
+            serde_json::json!({"ports": {"runtime": 70000, "app": 5190}}),
+            serde_json::json!({"ports": {"runtime": 8800}}),
+        ] {
+            assert_eq!(configured_ports(&bad), Err(()), "{bad}");
+        }
     }
 
     #[test]

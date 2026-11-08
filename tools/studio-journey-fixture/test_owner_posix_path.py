@@ -20,6 +20,8 @@ PROBES = [
     'C:/Windows/System32/taskkill.exe //PID 1; taskkill //PID 2 //F',
     '"$taskkill_exe" //PID 1; taskkill //PID 2',
     '"$taskkill_exe" //PID 1 || true; taskkill //PID 3 || true',
+    'echo System32 $(netstat -ano)',
+    'grep System32 <(netstat -ano)',
 ]
 
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -123,7 +125,7 @@ class OwnerPosixPath(unittest.TestCase):
             for match in call.finditer(probe):
                 start = max((m.end() for m in separator.finditer(probe, 0, match.start())), default=0)
                 own = probe[start:match.start()]
-                if not ("System32" in own or "taskkill_exe" in own):
+                if not re.search(r"(System32\/?[A-Za-z]*|taskkill_exe)[\"' ]*$", own):
                     flagged = True
             self.assertTrue(flagged, f"probe passed the rule: {probe}")
 

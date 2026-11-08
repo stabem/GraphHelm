@@ -65,11 +65,11 @@ ode_modules`) can be a junction into the
 
       graphhelm workspace remove D:/gh/<lane>/wt-<issue>
 
-  For a linked git worktree it stops the processes inside, unlinks every link without following
+  For a linked git worktree it refuses while a live process runs inside it (nothing is stopped; the refusal names the PIDs), unlinks every link without following
   it, saves uncommitted work to `D:/_merge-leftovers/<directory name>/`, unregisters the worktree
   and deletes the folder; any other directory has its links unlinked and is deleted. It refuses a
   repository's main checkout and a locked worktree, and exits 3 when it could not finish.
-- After a merge the merger removes the PR's worktrees with `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]` (DELIVERY.md §5): it stops the processes inside the PR's worktrees, unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. For the one kept worktree (`--keep-worktree`), see [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
+- After a merge the merger removes the PR's worktrees with `graphhelm workspace sweep --apply --merged-branch <branch> --repo <repo> --pr <N> --head <sha> [--target <dir>]... [--keep-worktree <dir>]` (DELIVERY.md §5): it refuses to remove a PR worktree that a live process runs inside (nothing is stopped; that worktree is kept and named), unlinks links without following them, saves uncommitted work to `D:/_merge-leftovers/<N>/`, and removes every worktree and review checkout of the PR (any lane's), the named per-PR targets and the local branch. For the one kept worktree (`--keep-worktree`), see [KEEL_MERGE.md](../../keel/KEEL_MERGE.md) step 5.
 - Removal by name is DELIVERY.md §6; never touch another lane's ticket either. The one sweep
   allowed to remove by rule and to run `git worktree prune` is
   `graphhelm workspace sweep --all [--apply] [--repo <repo>]` (#1578). Without `--apply` it only

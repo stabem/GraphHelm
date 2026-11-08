@@ -149,19 +149,34 @@ fn workspace_merged_cleanup_removes_the_prs_worktrees_and_keeps_everything_else(
         .output()
         .unwrap();
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
-    let stopped = holder.try_wait().unwrap().is_some() || holder.wait_timeout_free().is_some();
-    assert!(out.status.success(), "{out:?}");
-    assert_eq!(reply["data"]["ok"], true, "{reply}");
-
+    // #2606: a live process inside the review checkout keeps that checkout; nothing stops it.
+    assert_eq!(reply["data"]["ok"], false, "{reply}");
+    let alive = holder.try_wait().unwrap().is_none();
     assert!(
-        stopped,
-        "the process holding the review checkout was not stopped: {reply}"
+        alive,
+        "the process holding the review checkout was stopped: {reply}"
+    );
+    let pid = holder.id().to_string();
+    let named = reply.to_string();
+    assert!(
+        named.contains("live processes run inside the worktree") && named.contains(&pid),
+        "the refusal does not name pid {pid}: {reply}"
+    );
+    assert!(
+        review.is_dir(),
+        "the review checkout with a live process was removed"
     );
     let listed = worktree_paths(&repo);
-    for gone in [&author, &review] {
-        assert!(!gone.exists(), "{} survived: {reply}", s(gone));
-        assert!(!listed.contains(&s(gone)), "{} still registered", s(gone));
-    }
+    assert!(!author.exists(), "{} survived: {reply}", s(&author));
+    assert!(
+        !listed.contains(&s(&author)),
+        "{} still registered",
+        s(&author)
+    );
+    assert!(
+        listed.contains(&s(&review)),
+        "the review checkout left the registry"
+    );
     assert!(!target.exists(), "the per-PR target survived");
     assert_eq!(
         git(&repo, &["branch", "--list", "issue-9-x"]),
@@ -178,6 +193,8 @@ fn workspace_merged_cleanup_removes_the_prs_worktrees_and_keeps_everything_else(
         .join("untracked")
         .join("wip.txt");
     assert_eq!(std::fs::read_to_string(saved).unwrap(), "unsaved\n");
+    let _ = holder.kill();
+    let _ = holder.wait();
 
     assert!(
         unrelated.join("a.txt").is_file(),
@@ -273,23 +290,4 @@ fn workspace_merged_cleanup_holds_a_locked_live_session_worktree() {
         Some(3),
         "an incomplete cleanup must exit non-zero: {out:?}"
     );
-}
-
-trait WaitBounded {
-    fn wait_timeout_free(&mut self) -> Option<std::process::ExitStatus>;
-}
-
-impl WaitBounded for std::process::Child {
-    /// Polls for up to five seconds; a survivor is killed so the test never leaks it.
-    fn wait_timeout_free(&mut self) -> Option<std::process::ExitStatus> {
-        for _ in 0..50 {
-            if let Ok(Some(status)) = self.try_wait() {
-                return Some(status);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        let _ = self.kill();
-        let _ = self.wait();
-        None
-    }
 }

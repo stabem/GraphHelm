@@ -14,7 +14,6 @@
 //! the command did not select is touched, and `git worktree prune` is not run: it would drop
 //! other lanes' entries for worktrees on a drive that is not mounted right now.
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -90,23 +89,6 @@ pub(crate) fn show(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
-/// Stops every process inside `dir`; returns the ids stopped and the ids that would not stop.
-fn stop_processes(dir: &Path) -> (Vec<u32>, Vec<u32>) {
-    let mut stopped = Vec::new();
-    let mut survived = Vec::new();
-    for pid in graphhelm_process_tree::processes_inside(dir) {
-        let Ok(identity) = graphhelm_process_tree::ProcessIdentity::capture(pid) else {
-            continue; // already gone, or not ours to ask about
-        };
-        let gone = identity.terminate().is_ok()
-            && identity
-                .wait_until_gone(Duration::from_secs(10))
-                .unwrap_or(false);
-        if gone { &mut stopped } else { &mut survived }.push(pid);
-    }
-    (stopped, survived)
-}
-
 /// Removes every link (symlink or junction) under `dir` as a link; what it points at survives.
 pub(crate) fn unlink_links(dir: &Path) -> Result<Vec<String>, String> {
     let mut unlinked = Vec::new();
@@ -163,10 +145,19 @@ pub(crate) fn save_leftovers(worktree: &Path, into: &Path) -> Result<Option<Stri
 
 pub(crate) fn remove_worktree(repo: &Path, worktree: &Worktree, leftovers: &Path) -> Value {
     let path = &worktree.path;
-    let (stopped, survived) = stop_processes(path);
-    let mut row = json!({"path": show(path), "stopped": stopped});
-    if !survived.is_empty() {
-        row["error"] = json!(format!("processes {survived:?} would not stop"));
+    let mut row = json!({"path": show(path)});
+    // #2606: a live process inside the worktree refuses its removal; nothing is stopped here.
+    let holders = graphhelm_process_tree::holders_inside(path);
+    if !holders.is_empty() {
+        let named: Vec<String> = holders
+            .iter()
+            .map(|h| format!("pid {} image {}", h.pid, h.image))
+            .collect();
+        row["processes"] = json!(holders.iter().map(|h| h.pid).collect::<Vec<u32>>());
+        row["error"] = json!(format!(
+            "live processes run inside the worktree, which is kept: {}",
+            named.join("; ")
+        ));
         return row;
     }
     match unlink_links(path) {

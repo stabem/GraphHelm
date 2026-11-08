@@ -89,18 +89,19 @@ class OwnerPosixPath(unittest.TestCase):
     def test_every_netstat_and_taskkill_call_is_by_full_path(self):
         """#2607 (Tsunade, Shino): each netstat and taskkill call names its own System32 path.
 
-        The check looks at each call's own command segment (split at ; | & and newlines), not at
-        the whole line, so a System32 mention elsewhere on the line does not hide a bare call.
+        Each call is judged by its own offset in the line: the text between the previous
+        command separator and this call must name the System32 path (or taskkill_exe), so a
+        full-path call earlier on the line cannot hide a bare one later.
         """
         call = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
-        splitter = re.compile(r";|\|\||\||&&|&")
+        separator = re.compile(r";|\|\||\||&&|&")
         for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
             if line.lstrip().startswith("#"):
                 continue
             code = line.split(" #", 1)[0]
             for match in call.finditer(code):
-                own = next((part for part in splitter.split(code)
-                            if match.group(0).lower() in part.lower()), code)
+                start = max((m.end() for m in separator.finditer(code, 0, match.start())), default=0)
+                own = code[start:match.start()] + code[match.start():match.end() + 60]
                 if "System32" in own or "taskkill_exe" in own:
                     continue
                 self.fail(f"fixture.sh:{number} calls {match.group(0)} without its own System32 path: {line.strip()}")

@@ -67,6 +67,7 @@ class OwnerPosixPath(unittest.TestCase):
             # still resolve, so the check calls it by its full path.
             env = dict(os.environ)
             env["PATH"] = "/usr/bin:/bin:/c/Windows/System32/WindowsPowerShell/v1.0"
+            env["PATHEXT"] = ".CPL"  # the spawned environment carries only this (#2607 live log)
             run = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
                                  timeout=90, creationflags=NO_WINDOW, env=env)
             out = run.stdout + run.stderr

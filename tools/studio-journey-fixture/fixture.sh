@@ -43,8 +43,20 @@ $ports = @($env:GH_FIXTURE_PORTS -split ' ' | Where-Object { $_ -match '^\d+$' -
 $processes = @{}
 Get-CimInstance Win32_Process | ForEach-Object { $processes[[string]$_.ProcessId] = $_.CommandLine }
 # #2607: the launcher's PATH may lack System32; call netstat by its full path.
-$netstat = Join-Path $env:SystemRoot 'System32\NETSTAT.EXE'
-$listeners = & $netstat -ano | Where-Object { $_ -match 'LISTENING' }
+# #2607: run netstat through .NET with its output redirected: PowerShell's & does not run a full-path
+# .exe when PATHEXT is restricted (the launcher's), and the pipeline form reported a document instead.
+function Get-NetstatLines {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $env:SystemRoot 'System32\NETSTAT.EXE'
+    $psi.Arguments = '-ano'
+    $psi.RedirectStandardOutput = $true
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $text = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+    return ($text -split "`r?`n")
+}
+$listeners = Get-NetstatLines | Where-Object { $_ -match 'LISTENING' }
 foreach ($line in $listeners) {
     $fields = $line.Trim() -split '\s+'
     # #2607: -notmatch does not set $Matches, so the port is read only after a positive -match.

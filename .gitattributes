@@ -1,3 +1,6 @@
+# #2597: every tracked text file checks out LF, whatever the cloner's core.autocrlf. Binary files
+# are left to git's own detection; the exceptions below still win (the last matching line wins).
+* text=auto eol=lf
 *.rs text eol=lf
 *.toml text eol=lf
 *.yml text eol=lf

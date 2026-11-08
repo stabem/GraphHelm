@@ -5,6 +5,7 @@ starts, with `dir` set the way fixture.sh sets it (`cd ... && pwd`), and expects
 Needs bash and PowerShell, not Node or Docker.
 """
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -83,6 +84,19 @@ class OwnerPosixPath(unittest.TestCase):
         for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
             if "taskkill" in line and "System32" not in line and "taskkill_exe" not in line                     and not line.lstrip().startswith("#"):
                 self.fail(f"fixture.sh:{number} calls a bare taskkill: {line.strip()}")
+
+
+    def test_every_netstat_and_taskkill_call_is_by_full_path(self):
+        """#2607 (Tsunade, Shino): netstat and taskkill are never called by bare name in the fixture;
+        the launcher's PATH lacks System32."""
+        bare = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
+        for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
+            code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
+            for match in bare.finditer(code):
+                context = code[max(0, match.start() - 40):match.end() + 40]
+                if "System32" in context or "taskkill_exe" in context or "NETSTAT.EXE" in context:
+                    continue
+                self.fail(f"fixture.sh:{number} calls {match.group(0)} by bare name: {line.strip()}")
 
 
 if __name__ == "__main__":

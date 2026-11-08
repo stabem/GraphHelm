@@ -93,6 +93,16 @@ does not mean task work has started. The orchestrator never takes a lane's ident
    PR, head and heartbeat), `status` and `events`; never script the CLI or HTTP for the same answer. A lane silent past its heartbeat is shown stale there; re-brief or release it
    (`task_record.py ... released --claim-sequence <seq> --release-reason "<why>"`).
 
+## Owner decisions
+
+Whenever the orchestrator must send the owner a decision, it arrives complete, in this shape:
+
+- Options A, B and C. Give fewer only when no real third option exists.
+- For each option: an action plan (who does what, in order), its risks, and its pros and cons.
+- A recommended option and the reason for it.
+
+Keep the decision text generic and free of private project names.
+
 ## Never
 
 - Open a visible console window per command. On Windows run children hidden

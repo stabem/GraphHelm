@@ -87,16 +87,23 @@ class OwnerPosixPath(unittest.TestCase):
 
 
     def test_every_netstat_and_taskkill_call_is_by_full_path(self):
-        """#2607 (Tsunade, Shino): netstat and taskkill are never called by bare name in the fixture;
-        the launcher's PATH lacks System32."""
-        bare = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
+        """#2607 (Tsunade, Shino): each netstat and taskkill call names its own System32 path.
+
+        The check looks at each call's own command segment (split at ; | & and newlines), not at
+        the whole line, so a System32 mention elsewhere on the line does not hide a bare call.
+        """
+        call = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
+        splitter = re.compile(r";|\|\||\||&&|&")
         for number, line in enumerate(open(SCRIPT, encoding="utf-8"), 1):
-            code = line.split("#", 1)[0] if not line.lstrip().startswith("#") else ""
-            for match in bare.finditer(code):
-                context = code[max(0, match.start() - 40):match.end() + 40]
-                if "System32" in context or "taskkill_exe" in context or "NETSTAT.EXE" in context:
+            if line.lstrip().startswith("#"):
+                continue
+            code = line.split(" #", 1)[0]
+            for match in call.finditer(code):
+                own = next((part for part in splitter.split(code)
+                            if match.group(0).lower() in part.lower()), code)
+                if "System32" in own or "taskkill_exe" in own:
                     continue
-                self.fail(f"fixture.sh:{number} calls {match.group(0)} by bare name: {line.strip()}")
+                self.fail(f"fixture.sh:{number} calls {match.group(0)} without its own System32 path: {line.strip()}")
 
 
 if __name__ == "__main__":

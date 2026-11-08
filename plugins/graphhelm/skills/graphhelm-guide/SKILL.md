@@ -31,9 +31,9 @@ Installing this plugin exposes guidance. It does not install the CLI, start the 
 
 ## The whole flow, in order
 
-One entry skill drives every task. A session that is handed a task loads `graphhelm-work`, asks GraphHelm for `next`, loads the skill it names, does that step, records it, and asks again. The Runtime derives `next` from the task's own records (`claimed`, `pr_opened`, `review_verdict`, `merged`, `blocked`), so a session that wakes up with only a task id knows what to do without remembering the flow.
+Planned, not shipped (#2582). The plan: one entry skill, `graphhelm-work`, drives every task. A session handed a task would load it, ask GraphHelm for `next`, load the skill it names, do that step, record it, and ask again. Until the Runtime ships `next`, `graphhelm-work` reports `OBSERVER_MISSING` and stops. The planned `next` would be derived from the task's records (`claimed`, `pr_opened`, `review_verdict`, `merged`, `blocked`).
 
-`next` has four fields: `step` (one of `claim`, `implement`, `review`, `merge`, `cleanup`, `done`, `diagnose`), `skill` (the skill to load, or null), `actor` (`{id, role}`; the role is `author`, `reviewer`, `approver`, `merger` or `owner`) and `because` (a fixed reason code plus the record it came from). A null skill is reported as `OBSERVER_MISSING`, never as success: the session stops and names the missing skill.
+The planned `next` has four fields: `step` (one of `claim`, `implement`, `review`, `merge`, `cleanup`, `done`, `diagnose`), `skill` (the skill to load, or null), `actor` (`{id, role}`; the role is `author`, `reviewer`, `approver`, `merger` or `owner`) and `because` (a fixed reason code plus the record it came from). A null skill would be reported as `OBSERVER_MISSING`, never as success: the session would stop and name the missing skill.
 
 ```mermaid
 stateDiagram-v2
@@ -50,9 +50,9 @@ stateDiagram-v2
     done --> [*]
 ```
 
-Read the diagram as: each arrow is one `next` answer, and its label is the record that caused it. Ids match the `step` enum and the journey edge ids, so a session and a conformance check read the same names.
+Read the diagram as the plan: each arrow is a planned `next` answer, and its label is the record that would cause it. Ids are meant to match the `step` enum and the journey edge ids; the conformance check that enforces this is planned, not yet run.
 
-Who acts at each state (the author never reviews or merges their own work):
+Who acts at each state, as planned (the author never reviews or merges their own work). The skill names are planned; only the ones in the plugin folder exist as files, the rest live in extension folders or are still to write:
 
 | State | Acts | Skill |
 |---|---|---|
@@ -67,7 +67,7 @@ A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owne
 
 Every step skill ends with its own transition table (what its record leads to, and who acts next) and sends the session back to `graphhelm-work`. If a session is unsure, it reads the "If in doubt" index at the end of its skill, which is the same in every skill.
 
-The proof of this flow is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. Each step is taken from `next`, not from memory. A conformance test fails when a skill's transition names a skill that does not exist, or when the diagram omits a state or transition the Runtime maps.
+The planned proof (not run) is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. A planned conformance test would fail when a skill's transition names a skill that does not exist, or when the diagram omits a state or transition the Runtime maps. Neither exists yet.
 
 ## Prefer the GraphHelm MCP tools
 

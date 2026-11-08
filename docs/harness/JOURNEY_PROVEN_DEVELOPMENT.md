@@ -322,7 +322,8 @@ nothing is written. Both routes need owner credentials and a Runtime started wit
 approval to `keel-journey-qa`. It applies to journey contracts generally, not only to `studio2-open`.
 Origin: the owner order of 2026-10-25, cited at `plugins/keel/skills/keel-journey-qa/SKILL.md:20`.
 Reaffirmed on 2026-11-08 in a structured question to Shikamaru (relayed verbatim by Shikamaru). The owner's
-original Portuguese wording is kept verbatim in issue #2618; the English below is a translation.
+original Portuguese wording is kept verbatim in [issue #2618](https://github.com/stabem/GraphHelm/issues/2618).
+The English below is a translation of the Portuguese original, not the original itself.
 
 - Question (translated): "The studio2-open journey of the Studio is still a draft, so its test does not run.
   Under the project rule, only you approve journeys, or the journey reviewer (keel-journey-qa) if you let it.

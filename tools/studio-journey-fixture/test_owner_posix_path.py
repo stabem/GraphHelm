@@ -15,6 +15,13 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "fixture.sh")
+PROBES = [
+    'taskkill //PID $p //F && "C:/Windows/System32/netstat.exe" -ano',
+    'C:/Windows/System32/taskkill.exe //PID 1; taskkill //PID 2 //F',
+    '"$taskkill_exe" //PID 1; taskkill //PID 2',
+    '"$taskkill_exe" //PID 1 || true; taskkill //PID 3 || true',
+]
+
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -101,10 +108,24 @@ class OwnerPosixPath(unittest.TestCase):
             code = line.split(" #", 1)[0]
             for match in call.finditer(code):
                 start = max((m.end() for m in separator.finditer(code, 0, match.start())), default=0)
-                own = code[start:match.start()] + code[match.start():match.end() + 60]
+                own = code[start:match.start()]
                 if "System32" in own or "taskkill_exe" in own:
                     continue
                 self.fail(f"fixture.sh:{number} calls {match.group(0)} without its own System32 path: {line.strip()}")
+
+
+    def test_regression_probes_are_caught(self):
+        """#2607 (Shino): bypass lines must fail the rule (each probe is judged on its own)."""
+        call = re.compile(r"\b(netstat|taskkill)(\.exe)?\b", re.IGNORECASE)
+        separator = re.compile(r";|\|\||\||&&|&")
+        for probe in PROBES:
+            flagged = False
+            for match in call.finditer(probe):
+                start = max((m.end() for m in separator.finditer(probe, 0, match.start())), default=0)
+                own = probe[start:match.start()]
+                if not ("System32" in own or "taskkill_exe" in own):
+                    flagged = True
+            self.assertTrue(flagged, f"probe passed the rule: {probe}")
 
 
 if __name__ == "__main__":

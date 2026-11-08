@@ -138,6 +138,12 @@
         "extensions/builtin/graphhelm-jpd/.codex-plugin/plugin.json"
       ],
       "declared_follow_up": "If the builtin skills should also ship as plugin skills, that is a separate card, not a blocker of #2582."
+    },
+    "part5_next_hook": {
+      "what": "graphhelm next --json (CLI) feeds the existing SessionStart, Stop and SubagentStop hooks, which inject ONE line: GraphHelm next: <step> → use skill <skill> (<because>).",
+      "limits": ["at most about 40 tokens per injected line", "nothing is injected when the lane has no task", "on Stop, injected only when next changed since the last injection", "never blocks the turn"],
+      "owner": "Sasuke after #2589 for the CLI next and the hook code, or Yamato (owns hooks) if he is free first. Decided by Kakashi.",
+      "proof": "unit test for the line length bound and the no-task silence; a Stop test that injects only on change; a journey or observer that shows the line in the session context."
     }
   }
 }

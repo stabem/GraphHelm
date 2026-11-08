@@ -77,6 +77,11 @@ is bounded at 30 seconds. An act that cannot run is `fail`; an unmet expectation
 launcher in `.graphhelm/journey-fixture.json`:
 `{"schema":"graphhelm-journey-fixture/1","script":"launch.sh","isolated":true}`. The script is
 called as `up <dir> <runtime port> <app port>` and `down <dir>`. A `cli`-only flow needs none.
+An optional `ports` object pins the pair instead of taking two free ports:
+`{"schema":"graphhelm-journey-fixture/1","script":"launch.sh","ports":{"runtime":8800,"app":5190}}`.
+Each port must be 1024 to 65535, not 8793 (the GraphHelm default), and the two must differ; anything
+else fails the watch with `watch.launcher_invalid`. A pinned pair that is already taken fails the
+launch with `watch.launch_failed`; the launcher log says which port was occupied.
 The app port is taken as ready as soon as it accepts a connection, so bind it only once the app
 answers. When `up` fails, the tail of its stdout and stderr is kept in the validation report
 (`failures[].launchLog`: `{path, tail}`); `<dir>` itself is removed.

@@ -44,6 +44,7 @@ class ShippedSpawnFlagsTest(unittest.TestCase):
 
         real = module.subprocess.Popen
         module.subprocess.Popen = _Fake
+        module.arm_lane_wake = lambda *a, **k: 0  # the spawn flags are under test; arming needs a live runtime
         try:
             call()
         finally:

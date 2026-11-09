@@ -218,6 +218,11 @@ export interface JourneyRun {
   kind?: "replay" | "preview";
   startedAt?: string;
   ranAt?: string;
+  /** #2468/#2469: the project commit the run used, and how many commits it was behind origin/main
+   * (as of the last fetch). Older runs and Runtimes omit both; `warning` is set only when behind. */
+  head?: string | null;
+  behindOrigin?: number | null;
+  warning?: string;
   current?: string;
   result?: StepResult;
   reason?: string;

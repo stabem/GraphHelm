@@ -676,6 +676,15 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
               : <><span className="pass">{counts.passed} passed</span> <span className="wait">{counts.waits} waits for you</span> <span className="fail">{counts.failed} failed</span> <span className="idle">{counts.notRun} not run</span></>}
           </span>
         </div>
+        {typeof shown?.head === "string" && shown.head !== "" && (
+          // #2469: the project commit this run used, and a warning when it was behind origin/main.
+          <p className="run-checkout mono" title={shown.head}>HEAD {shown.head.slice(0, 7)}</p>
+        )}
+        {typeof shown?.behindOrigin === "number" && shown.behindOrigin > 0 && (
+          <p role="status" className="run-behind">
+            {shown.behindOrigin} {shown.behindOrigin === 1 ? "commit" : "commits"} behind origin/main (as of the last fetch). {shown.warning ?? "Update the project (git pull), then run again."}
+          </p>
+        )}
         {flow.purpose && <p><span className="section-label">PROVES</span> {flow.purpose}</p>}
         <div className="run-bar">
           {finished && <span className="run-score">{counts.passed} passed · {counts.failed} failed</span>}

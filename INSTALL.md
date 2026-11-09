@@ -163,6 +163,29 @@ ran. Python 3 is required for the hooks. See the
 [plugin's session-hook instructions](plugins/graphhelm/README.md#session-hooks)
 for explicit execution binding and host-specific settings when using hooks.
 
+### Update the plugins
+
+Installing once does not keep a plugin current. Refresh the marketplace, update, then restart the
+host; a running session keeps the plugin it started with.
+
+```sh
+claude plugin marketplace update graphhelm
+claude plugin update graphhelm@graphhelm
+```
+
+Codex has no `plugin update`: refresh the marketplace snapshot, then remove and add the plugin
+again (`remove` deletes the local cache).
+
+```sh
+codex plugin marketplace upgrade graphhelm
+codex plugin remove graphhelm-codex-hooks
+codex plugin add graphhelm-codex-hooks@graphhelm
+```
+
+Repeat the remove and add for each Codex plugin you installed. To check that the installed copy is
+current, compare its `gitCommitSha` in `installed_plugins.json` (Claude, under the host's `plugins`
+folder) with `git rev-parse origin/main` of `stabem/GraphHelm`.
+
 The main plugin brings the `graphhelm-guide`, `graphhelm-setup` and `graphhelm-resume` skills.
 It does **not** install the CLI, start the Runtime, or replace the main `graphhelm` MCP
 registration. Steps 2, 4 and 6 do that. The hooks companion's task-handoff MCP is a separate

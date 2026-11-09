@@ -465,6 +465,17 @@ After the end lands, the command releases, as the lane, every pre-PR claim the l
 (reason `run ended (exit N) without a PR`) and reports them under `claims`: a one-shot run
 that ended without a PR will not open one, so its issue is free at once, not after the lease.
 
+### Operator notes: answering with note_reply.py
+
+A lane answers an `operator_note` addressed to it with the helper, not with a raw write:
+
+    python tools/task-record/note_reply.py --lane <lane> --execution <exec> --token-file <lane token> --reply-to <note id> --text "<what you did, or why not>"
+
+- `--reply-to` is the note's signal id. The reply is recorded as an `operator_note` with `replyTo` set to that id, which clears the note for this lane. The reply's signal id is `<lane>-reply-<note id>`.
+- Read-back: the helper reads the journal from its head before the write, then reads forward until it finds its own reply. It prints `recorded at sequence <n>` on success.
+- HTTP 409: the idempotency key `<lane>-reply-<note id>` was already used by an earlier write, so a reply for this note already exists or an earlier write was refused. If the read-back then fails, the new write is not in the journal: check the journal, not the 409 text alone.
+- Skip rule: a note whose record has `replyTo` set is an answer, not a request to answer (#2697). The Stop hook skips notes older than 3 days and names them; reply to those with the same command.
+- Never claim work in `--text` that was not performed.
 ### Autonomous lane wake loop
 
 The owner deleted the per-agent OpenBot routines and sweeps (2026-11-08). Do not recreate them,

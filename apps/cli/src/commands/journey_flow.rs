@@ -2432,7 +2432,28 @@ pub(crate) fn mark_safe_owned(id: &str, edge: &str, project: std::path::PathBuf)
     )
 }
 
-const ACT_FIELDS: &[&str] = &["kind", "role", "name", "text", "secret"];
+/// `headers` (#2649) is written last and only when the act has it, so an act without it keeps its
+/// bytes and digests exactly as before.
+const ACT_FIELDS: &[&str] = &["kind", "role", "name", "text", "secret", "headers"];
+
+/// An act's fixed request headers: every key, sorted, whatever the map's own order. `inline`
+/// would filter a nested map by the field list, which is how a header name was dropped.
+fn headers_inline(headers: &serde_json::Map<String, Value>) -> String {
+    let mut names: Vec<&String> = headers.keys().collect();
+    names.sort();
+    format!(
+        "{{{}}}",
+        names
+            .into_iter()
+            .map(|name| format!(
+                "{}: {}",
+                scalar(&Value::String(name.clone())),
+                scalar(&headers[name])
+            ))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
 
 // Emit the schema's reading order, not map insertion order or a serializer's incidental style.
 fn scalar(value: &Value) -> String {
@@ -2469,7 +2490,14 @@ fn inline(value: &Value, fields: &[&str]) -> String {
             "{{{}}}",
             fields
                 .iter()
-                .filter_map(|key| object.get(*key).map(|v| format!("{key}: {}", scalar(v))))
+                .filter_map(|key| {
+                    object.get(*key).map(|v| match (*key, v) {
+                        ("headers", Value::Object(headers)) => {
+                            format!("{key}: {}", headers_inline(headers))
+                        }
+                        _ => format!("{key}: {}", scalar(v)),
+                    })
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -2891,6 +2919,46 @@ mod tests {
         let mut rewhy = command.clone();
         rewhy["edges"][0]["why"] = json!("another reason");
         assert_ne!(approval_digest(&rewhy), approval_digest(&command));
+    }
+
+    /// #2649: an `http` act's fixed `headers` are part of the act. Defects named: the canonical
+    /// writer drops them (so `journey compile --fmt` silently strips a header the flow needs and
+    /// the approval ignores it), a header-less act changes bytes or digest (an existing approval
+    /// goes stale), or the edge's safe-mark digest does not bind a header.
+    /// Cost: in memory only.
+    #[test]
+    fn an_http_act_keeps_its_headers_in_the_written_bytes_and_the_digests() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_backend/backend.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let mut with = plain.clone();
+        with["edges"][0]["acts"][0]["headers"] =
+            json!({"x-tenant-id": "t1", "origin": "http://foreign.example"});
+        let accepted = schemas.validate(FLOW_SCHEMA_ID, &with, "journey-flow");
+        assert!(accepted.is_empty(), "{accepted:?}");
+
+        let written = canonical(&with, false);
+        let line = ", headers: {origin: http://foreign.example, x-tenant-id: t1}";
+        assert!(written.contains(line), "{written}");
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(
+            reread["edges"], with["edges"],
+            "headers survive the round trip"
+        );
+        assert_eq!(canonical(&reread, false), written);
+        // A header-less act keeps its exact bytes, so no existing approval or mark goes stale.
+        assert_eq!(written.replacen(line, "", 1), canonical(&plain, false));
+
+        assert_ne!(approval_digest(&with), approval_digest(&plain));
+        let mut changed = with.clone();
+        changed["edges"][0]["acts"][0]["headers"]["origin"] = json!("http://other.example");
+        assert_ne!(approval_digest(&changed), approval_digest(&with));
+        assert_ne!(
+            mark_digest(&changed, &changed["edges"][0]),
+            mark_digest(&with, &with["edges"][0])
+        );
     }
 
     /// #1041: "this thing is gone" is an expectation. Defects named: the canonical writer drops

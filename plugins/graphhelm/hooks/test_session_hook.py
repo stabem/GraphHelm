@@ -267,6 +267,85 @@ class SessionHookTests(unittest.TestCase):
         self.assertIn("briefing deferred (slow host)", context)
         self.assertNotIn("UNOBSERVED", context)
 
+    def load_hook(self):
+        spec = importlib.util.spec_from_file_location("session_hook_waiter_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        return hook
+
+    def test_a_waiter_whose_session_is_gone_exits_and_cleans_its_pid_file(self):
+        # #2697: a session killed without a SessionEnd left its waiter scanning forever, and its pid
+        # file behind (378 of them). A heartbeat untouched past the dead bound ends the waiter.
+        hook = self.load_hook()
+        state = Path(self.temp.name) / "waiter-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        payload = {"session_id": "session-dead"}
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}):
+            heartbeat = hook._heartbeat_path(payload, bound, "claude")
+            pid_file = hook._waiter_path(payload, bound, "claude")
+            heartbeat.write_text("", encoding="ascii")
+            old = time.time() - hook.HEARTBEAT_DEAD_AFTER - 60
+            os.utime(heartbeat, (old, old))
+            pid_file.write_text(str(os.getpid()), encoding="ascii")
+            with patch.object(hook, "binding", return_value=bound),                     patch.object(hook, "arm_lane_wake"),                     patch.object(hook.subprocess, "run", side_effect=AssertionError("a dead session's waiter scanned")):
+                hook.wait_for_lane("claude", "session-dead", Path(self.temp.name) / "events", heartbeat)
+            self.assertFalse(pid_file.exists())
+            self.assertFalse(heartbeat.exists())
+
+    def test_an_old_heartbeat_with_a_live_rewake_is_not_a_dead_session(self):
+        hook = self.load_hook()
+        state = Path(self.temp.name) / "rewake-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        payload = {"session_id": "session-live"}
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}):
+            heartbeat = hook._heartbeat_path(payload, bound, "claude")
+            heartbeat.write_text("", encoding="ascii")
+            old = time.time() - hook.HEARTBEAT_DEAD_AFTER - 60
+            os.utime(heartbeat, (old, old))
+            rewake = hook.state_path("run-test", "session-live", "claude", bound[3]).with_suffix(".rewake.pid")
+            rewake.write_text(str(os.getpid()), encoding="ascii")
+            self.assertFalse(hook._session_gone(payload, bound, "claude", heartbeat))
+            rewake.write_text("999999999", encoding="ascii")
+            self.assertTrue(hook._session_gone(payload, bound, "claude", heartbeat))
+
+    def test_a_fresh_heartbeat_is_never_a_gone_session_whatever_the_rewake_says(self):
+        # The age guard: dropping it would end every waiter whose rewake file is missing.
+        hook = self.load_hook()
+        state = Path(self.temp.name) / "age-guard-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        payload = {"session_id": "session-fresh"}
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}):
+            heartbeat = hook._heartbeat_path(payload, bound, "claude")
+            heartbeat.write_text("", encoding="ascii")  # fresh; no rewake pid file at all
+            self.assertFalse(hook._session_gone(payload, bound, "claude", heartbeat))
+
+    def test_a_live_waiter_with_a_quiet_heartbeat_keeps_running(self):
+        hook = self.load_hook()
+        heartbeat = Path(self.temp.name) / "quiet.alive"
+        heartbeat.write_text("", encoding="ascii")
+        old = time.time() - 3 * 3600  # idle three hours: quiet, not dead
+        os.utime(heartbeat, (old, old))
+        self.assertFalse(hook._heartbeat_dead(heartbeat))
+
+    def test_the_sweep_removes_only_pid_files_of_dead_processes(self):
+        hook = self.load_hook()
+        state = Path(self.temp.name) / "sweep-state"
+        state.mkdir()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"], creationflags=NO_WINDOW)
+        gone.wait(timeout=60)
+        (state / "dead.waiter.pid").write_text(str(gone.pid), encoding="ascii")
+        (state / "live.waiter.pid").write_text(str(os.getpid()), encoding="ascii")
+        (state / "junk.waiter.pid").write_text("not a pid", encoding="ascii")
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}):
+            removed = hook.sweep_dead_waiters()
+        self.assertEqual(removed, 1)
+        self.assertFalse((state / "dead.waiter.pid").exists())
+        self.assertTrue((state / "live.waiter.pid").exists())
+        self.assertTrue((state / "junk.waiter.pid").exists())
+
     def test_session_end_stops_its_waiter(self):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
@@ -315,7 +394,7 @@ class SessionHookTests(unittest.TestCase):
                  f"http://127.0.0.1:{self.server.server_port}", None)
         heartbeat = Path(self.temp.name) / "alive"
         heartbeat.touch()
-        old = 1
+        old = time.time() - 2 * 3600  # stale (past the 30 min mark) but not a dead session (#2697)
         os.utime(heartbeat, (old, old))
         stale_burn = json.dumps({"ok": True, "data": {
             "timedOut": True,

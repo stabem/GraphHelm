@@ -1316,7 +1316,7 @@ class LaneStopTests(unittest.TestCase):
         module = lane_stop_hook_module()
         self.assertEqual(self.stop(MANIFESTS[0]), [])
         found = {"note-1": {"kind": {"data": {}}}}
-        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.5),                 mock.patch.object(module, "unanswered_events", side_effect=[TimeoutError("slow"), found]),                 mock.patch.object(sys, "stderr", io.StringIO()) as err:
+        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.5),                 mock.patch.object(module, "scan_notes", side_effect=[TimeoutError("slow"), (found, False)]),                 mock.patch.object(sys, "stderr", io.StringIO()) as err:
             started = time.monotonic()
             code = module.rewake({"cwd": self.tmp.name, "session_id": "retry-session"})
             elapsed = time.monotonic() - started
@@ -1326,6 +1326,93 @@ class LaneStopTests(unittest.TestCase):
         lines = next(self.hook_state_dir.glob("*.rewake.log")).read_text(encoding="utf-8").splitlines()
         self.assertRegex(lines[0], r" trigger=fallback outcome=error ms=\d+ error=TimeoutError$")
         self.assertRegex(lines[1], r" trigger=retry outcome=wake ms=\d+$")
+
+    def test_a_failed_scan_is_retried_with_a_growing_delay_up_to_a_cap(self):
+        # #2697: a fixed 2 s retry from dozens of lanes kept a slow Runtime saturated.
+        module = lane_stop_hook_module()
+        self.assertEqual([module.rewake_retry_delay(n) for n in (1, 2, 3, 4)], [2.0, 4.0, 8.0, 16.0])
+        self.assertEqual(module.rewake_retry_delay(50), module.REWAKE_RETRY_MAX_SECONDS)
+
+    def test_a_later_scan_reads_only_what_is_new_and_flags_a_ready_hint(self):
+        # #2697: the first scan costs a head call plus pages; the next one is a single small page.
+        module = lane_stop_hook_module()
+        bound = ("exec-1", "token-file", "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        calls = []
+
+        def fake_request(url, token, method, body=None, headers=None, timeout=1.0, max_reply=0):
+            calls.append(url)
+            if "limit=1" in url:
+                return {"data": {"head": 10, "events": []}}
+            after = int(url.split("after=")[1].split("&")[0])
+            events = [{"sequence": 11, "actor": {"id": "x"}, "kind": {"type": "signal_recorded",
+                       "data": {"kind": "task.review_assigned", "executionId": "exec-1", "signalId": "s-11"}}}] if after < 11 else []
+            return {"data": {"head": 11, "events": events}}
+
+        state = {}
+        with mock.patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 mock.patch.object(module, "binding", return_value=bound),                 mock.patch.object(module, "token_from_file", return_value="t"),                 mock.patch.object(module, "request", side_effect=fake_request):
+            _notes, hint = module.scan_notes({}, state)
+            first_calls = len(calls)
+            _notes, hint_again = module.scan_notes({}, state)
+        self.assertTrue(hint)
+        self.assertFalse(hint_again)
+        self.assertEqual(first_calls, 2)  # head, then the page that reaches it
+        self.assertEqual(len(calls) - first_calls, 1)  # incremental: one small page, no head call
+        self.assertTrue(all("after=0&limit=1" not in url for url in calls[first_calls:]))
+
+    def test_a_ring_with_a_ready_step_wakes_an_idle_lane_once(self):
+        # #2697: an assigned review is not a note; rewake used to look at notes only.
+        module = lane_stop_hook_module()
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        step = {"issue": 2678, "step": "review", "head": "db1e805c" + "0" * 32, "reason": "assigned review of PR 2691"}
+        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.3),                 mock.patch.object(module, "scan_notes", return_value=({}, True)),                 mock.patch.object(module, "lookup_ready", return_value=[step]),                 mock.patch.object(sys, "stderr", io.StringIO()) as err:
+            code = module.rewake({"cwd": self.tmp.name, "session_id": "step-session"})
+        self.assertEqual(code, 2)
+        self.assertIn("assigned review of PR 2691", err.getvalue())
+        self.assertIn("db1e805c", err.getvalue())
+        notified = next(self.hook_state_dir.glob("*.rewake.notified")).read_text(encoding="utf-8")
+        self.assertIn("step:2678:review:", notified)  # a second rewake for the same head stays quiet
+
+    def test_a_ready_step_already_woken_for_does_not_wake_again(self):
+        module = lane_stop_hook_module()
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        step = {"issue": 2678, "step": "review", "head": "a" * 40, "reason": "assigned review of PR 2691"}
+        env = {"GRAPHHELM_REWAKE_TEST": "1"}
+        with mock.patch.dict(os.environ, {**self.env, **env}, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.2),                 mock.patch.object(module, "scan_notes", return_value=({}, True)),                 mock.patch.object(module, "lookup_ready", return_value=[step]),                 mock.patch.object(sys, "stderr", io.StringIO()):
+            self.assertEqual(module.rewake({"cwd": self.tmp.name, "session_id": "again-session"}), 2)
+        outcome = []
+
+        def second():
+            with mock.patch.dict(os.environ, {**self.env, **env}, clear=True),                     mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.2),                     mock.patch.object(module, "scan_notes", return_value=({}, True)),                     mock.patch.object(module, "lookup_ready", return_value=[step]),                     mock.patch.object(sys, "stderr", io.StringIO()):
+                outcome.append(module.rewake({"cwd": self.tmp.name, "session_id": "again-session"}))
+
+        worker = threading.Thread(target=second, daemon=True)
+        worker.start()
+        worker.join(2.0)
+        self.assertTrue(worker.is_alive(), "the same ready step woke the lane a second time")
+        # supersede the waiting rewake so the thread ends
+        (next(self.hook_state_dir.glob("*.rewake.pid"))).write_text("0", encoding="ascii")
+        worker.join(5.0)
+
+    def test_a_note_that_is_itself_a_reply_does_not_ask_for_a_reply(self):
+        # #2697: replies addressed to a lane were counted as requests the lane had to answer.
+        module = lane_stop_hook_module()
+        bound = ("exec-1", "token-file", "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+
+        def note(sequence, signal_id, reply_to=None):
+            data = {"kind": "operator_note", "executionId": "exec-1", "signalId": signal_id, "to": "lane-a"}
+            if reply_to:
+                data["replyTo"] = reply_to
+            return {"sequence": sequence, "actor": {"id": "lane-b", "type": "agent"},
+                    "kind": {"type": "signal_recorded", "data": data}}
+
+        def fake_request(url, token, method, body=None, headers=None, timeout=1.0, max_reply=0):
+            if "limit=1" in url:
+                return {"data": {"head": 2, "events": []}}
+            return {"data": {"head": 2, "events": [note(1, "ask-1"), note(2, "answer-1", reply_to="earlier")]}}
+
+        with mock.patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 mock.patch.object(module, "binding", return_value=bound),                 mock.patch.object(module, "token_from_file", return_value="t"),                 mock.patch.object(module, "request", side_effect=fake_request):
+            notes, _hint = module.scan_notes({}, {})
+        self.assertEqual(sorted(notes), ["ask-1"])
 
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")

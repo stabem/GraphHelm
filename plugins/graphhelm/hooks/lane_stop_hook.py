@@ -63,12 +63,25 @@ def unanswered(payload: dict | None = None) -> set[str]:
     return set(unanswered_events(payload))
 
 
+# #2697: task records after which a lane may have a ready step (an assigned review, a BLOCK to fix).
+READY_HINT_KINDS = {"task.review_assigned", "task.review_verdict", "task.pr_opened"}
+
+
 def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
     """#2152: the same scan as `unanswered`, keeping each unanswered note's journal event, so a
     rewake can open the note's sealed text."""
+    return scan_notes(payload, {})[0]
+
+
+def scan_notes(payload: dict | None, state: dict) -> tuple[dict[str, dict], bool]:
+    """#2697: the note scan, incremental. `state` ({} for a first scan) remembers the last read
+    sequence and the unanswered notes, so a later scan reads only what is new: one small page and no
+    head call, where the first scan costs the head call plus up to 8 pages. Returns the unanswered
+    notes and whether a task record that can make a step ready for this lane arrived since the
+    previous scan."""
     bound = binding(payload)
     if bound is None:
-        return set()
+        return {}, False
     execution, token_file, url, _origin, _node = bound
     lane = os.environ.get("GRAPHHELM_ACTOR", "")
     if not lane and payload is not None:
@@ -78,14 +91,16 @@ def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
     token = token_from_file(token_file)
     base = f"{url}/v1/executions/{quote(execution, safe='')}"
     deadline = time.monotonic() + SCAN_BUDGET_SECONDS
-    head = request(f"{base}/events?after=0&limit=1", token, "GET",
-                   timeout=max(0.001, deadline - time.monotonic()))["data"]["head"]
-    if type(head) is not int or head < 0:
-        raise ValueError("invalid event head")
-    # Bound the window, not the execution's lifetime. A reply follows its note,
-    # so replies to notes inside this window cannot precede the window.
-    after = max(0, head - 4096)
-    unanswered: dict[str, dict] = {}
+    first = "after" not in state
+    if first:
+        head = request(f"{base}/events?after=0&limit=1", token, "GET",
+                       timeout=max(0.001, deadline - time.monotonic()))["data"]["head"]
+        if type(head) is not int or head < 0:
+            raise ValueError("invalid event head")
+        # Bound the window, not the execution's lifetime. A reply follows its note,
+        # so replies to notes inside this window cannot precede the window.
+        state["after"], state["notes"] = max(0, head - 4096), {}
+    after, unanswered = state["after"], state["notes"]
     STALE_NOTES.clear()
     # Size bound; the parent process imposes the wall-time bound even if a server
     # trickles bytes. request's timeout alone only bounds socket inactivity.
@@ -107,6 +122,8 @@ def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
             after = sequence
             kind = event.get("kind", {})
             record = kind.get("data", {})
+            if kind.get("type") == "signal_recorded" and record.get("kind") in READY_HINT_KINDS:
+                state["hint"] = True  # sticky: a failed scan must not lose it
             if kind.get("type") != "signal_recorded" or record.get("kind") != "operator_note":
                 continue
             if record.get("executionId") != execution:
@@ -123,13 +140,14 @@ def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
             actor = event.get("actor", {})
             if actor.get("type") == "agent" and actor.get("id") == lane:
                 unanswered.pop(reply_to, None)
-            if to == lane:
+            if to == lane and reply_to is None:  # #2697: a reply is an answer, not a request to answer
                 unanswered[signal_id] = event
+        state["after"] = after  # a failure after this keeps what was read; the next scan goes on from here
         if after >= head:
-            for signal_id in [key for key, event in unanswered.items() if note_is_stale(event)]:
-                del unanswered[signal_id]
+            fresh = {key: event for key, event in unanswered.items() if not note_is_stale(event)}
+            for signal_id in unanswered.keys() - fresh.keys():
                 STALE_NOTES.append(signal_id)
-            return unanswered
+            return fresh, bool(state.pop("hint", False))
     raise ValueError("note scan exceeded bound")
 
 
@@ -510,6 +528,24 @@ def wake_reason(bound: tuple, events: dict[str, dict]) -> str:
     return REWAKE_REASON + "\n" + "\n".join(lines)
 
 
+REWAKE_STEP_REASON = "GraphHelm: a step is ready for your lane while you were idle."
+REWAKE_RETRY_MAX_SECONDS = 60.0
+
+
+def rewake_retry_delay(failures: int) -> float:
+    """#2697: a failed scan is retried 2 s, 4 s, 8 s ... up to 60 s later. A fixed 2 s retry from a
+    few dozen lanes kept a slow Runtime saturated, and every scan kept timing out."""
+    return min(REWAKE_RETRY_MAX_SECONDS, REWAKE_RETRY_SECONDS * (2 ** max(0, failures - 1)))
+
+
+def _rewake_step_id(step: dict) -> str:
+    return f"step:{step['issue']}:{step['step']}:{step['head']}"
+
+
+def _lookup_ready_for_rewake(payload: dict) -> list[dict]:
+    return lookup_ready(payload)
+
+
 def rewake(payload: dict, host: str = "claude") -> int:
     """#1058: the host runs this in the background after every Stop (`asyncRewake`); exit 2 wakes
     the idle host. It waits for the lane waiter's ring (or the fallback interval), then scans the
@@ -533,6 +569,8 @@ def rewake(payload: dict, host: str = "claude") -> int:
     seen = _mtime(rang)
     next_scan = time.monotonic() + REWAKE_FALLBACK_SECONDS
     retrying = False
+    failures = 0
+    scan_state: dict = {}
     while True:
         time.sleep(REWAKE_POLL_SECONDS)
         try:
@@ -546,20 +584,30 @@ def rewake(payload: dict, host: str = "claude") -> int:
         trigger = "ring" if now != seen else ("retry" if retrying else "fallback")
         seen, started = now, time.monotonic()
         try:
-            waiting = unanswered_events(payload)
-        except Exception as error:  # noqa: BLE001 - an unreadable scan is logged and retried soon
+            waiting, ready_hint = scan_notes(payload, scan_state)
+        except Exception as error:  # noqa: BLE001 - an unreadable scan is logged and retried, backing off
             _log_scan(log, trigger, "error", started, error)
-            retrying, next_scan = True, time.monotonic() + REWAKE_RETRY_SECONDS
+            failures += 1
+            retrying, next_scan = True, time.monotonic() + rewake_retry_delay(failures)
             continue
+        failures = 0
         retrying, next_scan = False, time.monotonic() + REWAKE_FALLBACK_SECONDS
         fresh = set(waiting) - _read_notified(notified)
-        _log_scan(log, trigger, "wake" if fresh else ("seen" if waiting else "none"), started)
-        if fresh:
+        # #2697: a task record that can make a step ready (an assigned review, a BLOCK to fix) is not
+        # a note; the ready lookup (one /tasks call) runs only when such a record has arrived.
+        steps = [step for step in (_lookup_ready_for_rewake(payload) if ready_hint else [])
+                 if _rewake_step_id(step) not in _read_notified(notified)]
+        _log_scan(log, trigger, "wake" if (fresh or steps) else ("seen" if waiting else "none"), started)
+        if fresh or steps:
             try:
-                notified.write_text(json.dumps(sorted(waiting)), encoding="utf-8")
+                notified.write_text(json.dumps(sorted(set(waiting) | {_rewake_step_id(step) for step in steps}
+                                                    | (_read_notified(notified) - set(waiting)))), encoding="utf-8")
             except OSError:
                 pass
-            print(wake_reason(bound, {key: waiting[key] for key in fresh}), file=sys.stderr)
+            reason = wake_reason(bound, {key: waiting[key] for key in fresh}) if fresh else REWAKE_STEP_REASON
+            for step in steps:
+                reason += f"\n- {step['reason']} (issue {step['issue']}, head {step['head'][:8]}); read origin/main skill for the step, then act."
+            print(reason, file=sys.stderr)
             return 2
 
 

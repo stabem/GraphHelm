@@ -540,10 +540,11 @@ with a binding/read diagnostic. Each check scans at most 4096 events and has an 
 child-process timeout; the host allows ten seconds. A larger or slow log remains unverified,
 not silently clear. No message text or credentials are printed by the hook.
 
-The same Stop hook also injects a ready step (#2643). It blocks once per (issue, step, head) key, so
-a repeated Stop on the same step does not block again. A turn blocks at most three times for ready
-steps; after that the stop is allowed and the refusal is logged. This is the step guard, not a
-wake: it runs on the lane's own turn end and does not ring another lane.
+The Stop hook has a ready-step guard (#2643), wired but not yet live. The ready list is empty until
+the Runtime lookup lands, so the hook injects no step today. When it is live, it blocks once per
+(issue, step, head) key within one Stop cycle; the state resets at every Stop, so a key is not
+remembered across Stops. At most three blocks per Stop cycle. The guard does not log a refusal;
+the caller must. The Codex copy of the hook (`plugins/graphhelm-codex-hooks`) has the same guard and the same empty ready list. This is a turn-end guard, not a wake.
 
 This hook prevents a pending ask from being abandoned at turn end. It cannot launch a dead
 host. After reboot, restart the host and the loop. A host without background completion

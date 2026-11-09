@@ -322,6 +322,23 @@ class SessionHookTests(unittest.TestCase):
             heartbeat.write_text("", encoding="ascii")  # fresh; no rewake pid file at all
             self.assertFalse(hook._session_gone(payload, bound, "claude", heartbeat))
 
+    def test_the_wake_lease_is_armed_for_ten_minutes_by_default(self):
+        # #2699: re-arming every 60 s from ~30 lanes made most of the journal's appends.
+        hook = self.load_hook()
+        bound = ("run-test", str(self.token_file), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        sent = []
+
+        def fake_request(url, token, method, body=None, headers=None, timeout=1.0, max_reply=0):
+            if "events?" in url:
+                return {"data": {"head": 5, "events": []}}
+            sent.append(body)
+            return {"data": {"sessionId": body["sessionId"], "armedCursor": 5}}
+
+        with patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 patch.object(hook, "request", side_effect=fake_request):
+            hook.arm_lane_wake({"session_id": "session-lease"}, bound)
+        self.assertEqual(sent[0]["maturesInSeconds"], 600)
+        self.assertEqual(hook.WAKE_LEASE_SECONDS, 600)
+
     def test_a_live_waiter_with_a_quiet_heartbeat_keeps_running(self):
         hook = self.load_hook()
         heartbeat = Path(self.temp.name) / "quiet.alive"

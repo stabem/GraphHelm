@@ -1,0 +1,13 @@
+{
+  "promise": "A warn-only reference-transaction hook prints one line naming the ref, old and new value and acting process when an issue-* branch is deleted or moved off its history, never blocks and never fails a git command (every path exits 0). A repo-owned installer is idempotent, backs up a foreign hook, and uninstall restores it. Nothing is installed in the shared .git by this change.",
+  "scopePaths": [
+    "tools/git-hooks/reference-transaction",
+    "tools/git-hooks/install.py",
+    "tools/git-hooks/test_ref_guard.py",
+    "docs/process/LANES.md",
+    ".graphhelm/cards/issue-2669.json"
+  ],
+  "proof": "python -m pytest tools/git-hooks (throwaway repo: watched delete and non-fast-forward warn and succeed, unwatched silent, internal error exits 0, install twice same bytes, backup and uninstall restore); break-once: remove the fail-open trap -> test_an_internal_error_still_lets_the_update_through_with_exit_zero fails; live install and fetch/commit check from another worktree: OBSERVER_MISSING until merge and announcement",
+  "exportedSymbols": [],
+  "journeys": []
+}

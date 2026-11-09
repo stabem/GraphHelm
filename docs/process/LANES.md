@@ -601,6 +601,10 @@ Undo for a lane folder (the user-scope install in the provider home is untouched
 
 Source: #2643 comments 6740695651 and 6740519294 (Yamato's step 1 rollout).
 
+### Ref-guard warning (#2669)
+
+A warn-only git `reference-transaction` hook in the shared `.git` prints one line, `graphhelm-ref-guard: WARNING <ref> deleted|moved off its history (<old> -> <new>) by <process>`, when an `issue-*` branch is deleted or moved to a commit that does not contain its old tip. It never blocks and never fails a git command. It does not see runs that set `core.hooksPath` elsewhere (the tool host does). The owner installs it once, after an announcement: `python tools/git-hooks/install.py`; remove it with `python tools/git-hooks/install.py --uninstall` (restores any hook it replaced).
+
 ### No idle lanes: mandatory work loop
 
 Owner order (2026-11-08, #2636). An idle lane is a defect, and every turn leaves a record. This loop

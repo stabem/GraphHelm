@@ -1,0 +1,41 @@
+#!/bin/sh
+# graphhelm-ref-guard v1 (#2669): warn-only reference-transaction hook.
+# After a ref update commits, one line on stderr names a delete or a non-fast-forward move of an
+# `issue-*` branch: the ref, old and new value, and the acting process. It never blocks and never
+# fails a git command: every path exits 0, and a failure of its own is silent.
+# Git hands the old value as zeros for some updates, so the old value is read from the ref itself
+# while the transaction is `prepared` and the warning is printed once it is `committed`.
+# Remove it with: python tools/git-hooks/install.py --uninstall
+trap 'exit 0' EXIT INT TERM
+phase="$1"
+note="${TMPDIR:-/tmp}/graphhelm-ref-guard.$PPID"
+case "$phase" in
+  prepared|committed|aborted) ;;
+  *) cat >/dev/null 2>&1; exit 0 ;;
+esac
+if [ "$phase" = aborted ]; then rm -f "$note" 2>/dev/null; cat >/dev/null 2>&1; exit 0; fi
+if [ "$phase" = committed ]; then
+  cat >/dev/null 2>&1
+  [ -f "$note" ] && cat "$note" >&2
+  rm -f "$note" 2>/dev/null
+  exit 0
+fi
+# prepared: decide what is worth a warning
+[ -z "$GRAPHHELM_REF_GUARD_OFF" ] || { cat >/dev/null 2>&1; exit 0; }
+zero=0000000000000000000000000000000000000000
+actor=$(ps -o comm= -p "$PPID" 2>/dev/null | head -n 1)
+[ -n "$actor" ] || actor="pid $PPID"
+: > "$note" 2>/dev/null || { cat >/dev/null 2>&1; exit 0; }
+while read -r old new ref; do
+  case "$ref" in refs/heads/issue-*) ;; *) continue ;; esac
+  if [ -n "$GRAPHHELM_REF_GUARD_FORCE_ERROR" ]; then false; exit 1; fi  # test: an internal error must still exit 0
+  current=$(timeout 3 git rev-parse -q --verify "$ref" 2>/dev/null) || continue  # not there yet: a creation
+  short_old=$(printf %.8s "$current")
+  if [ "$new" = "$zero" ]; then
+    echo "graphhelm-ref-guard: WARNING $ref deleted ($short_old -> deleted) by $actor" >> "$note"
+  elif [ "$current" != "$new" ] && ! timeout 3 git merge-base --is-ancestor "$current" "$new" >/dev/null 2>&1; then
+    echo "graphhelm-ref-guard: WARNING $ref moved off its history ($short_old -> $(printf %.8s "$new")) by $actor" >> "$note"
+  fi
+done
+[ -s "$note" ] || rm -f "$note" 2>/dev/null
+exit 0

@@ -220,7 +220,9 @@ class ReconciledDigestTests(unittest.TestCase):
         # request on every quiet Stop. Cost: four in-process calls, no network.
         if str(HERE) not in sys.path:
             sys.path.insert(0, str(HERE))  # lane_stop_hook imports its siblings bare, as the hosts run it
+        sys.path.insert(0, str(HERE))
         import lane_stop_hook
+        from datetime import datetime, timezone
         quiet = {"merged": [], "closed": [], "released": [], "heartbeat": {"sent": [], "refused": []}, "inspected": 0}
         busy = {**quiet, "merged": [9001]}
         with mock.patch.object(lane_stop_hook, "request", return_value={"ok": True, "data": {}}) as post:
@@ -1446,6 +1448,25 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(self.stop("hooks.json"), [])
         self.note("request-2", to="codex-4")
         self.assertEqual(self.stop("hooks.json")[-1]["decision"], "block")
+
+    def test_a_note_older_than_the_bounded_age_is_skipped_and_named(self):
+        # #2684: the Runtime stamps a note's event on receipt, so age is made by a tiny bound.
+        self.env["GRAPHHELM_NOTE_MAX_AGE_SECONDS"] = "1"
+        self.note("old-request", to="codex-4")
+        time.sleep(2.5)
+        self.assertEqual(self.stop("hooks.json"), [])
+
+    def test_a_recent_note_still_blocks_with_the_default_bound(self):
+        self.note("fresh-request", to="codex-4")
+        self.assertEqual(self.stop("hooks.json")[-1]["decision"], "block")
+
+    def test_note_is_stale_reads_the_runtime_nanosecond_stamp(self):
+        import lane_stop_hook
+        now = datetime(2026, 11, 9, tzinfo=timezone.utc)
+        self.assertTrue(lane_stop_hook.note_is_stale({"occurredAt": "2026-10-30T00:58:45.688350500Z"}, now))
+        self.assertFalse(lane_stop_hook.note_is_stale({"occurredAt": "2026-11-08T12:00:00.5Z"}, now))
+        self.assertFalse(lane_stop_hook.note_is_stale({"occurredAt": "not a time"}, now))
+        self.assertFalse(lane_stop_hook.note_is_stale({}, now))
 
 
 if __name__ == "__main__":

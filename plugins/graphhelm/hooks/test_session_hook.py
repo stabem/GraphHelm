@@ -226,6 +226,47 @@ class SessionHookTests(unittest.TestCase):
             bound = hook.binding({"session_id": "session-123", "cwd": str(repo)})
         self.assertEqual(bound[0], "env-run")
 
+    def test_an_environment_with_only_the_execution_id_uses_the_lane_token_and_team_file(self):
+        # #2683: GRAPHHELM_EXECUTION_ID set, no token file and no URL: the binding used to raise.
+        spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        repo = Path(self.temp.name) / "repo"
+        (repo / ".graphhelm").mkdir(parents=True)
+        (repo / ".graphhelm" / "team.json").write_text(json.dumps({
+            "executionId": "team-run", "runtimeUrl": "http://127.0.0.1:8793"}), encoding="utf-8")
+        lane_token = repo / ".graphhelm-lane.token"
+        lane_token.write_text("lane-token", encoding="utf-8")
+        env = {key: value for key, value in self.env.items() if key not in {"GRAPHHELM_TOKEN_FILE", "GRAPHHELM_RUNTIME_URL"}}
+        env.update({"GRAPHHELM_EXECUTION_ID": "env-run", "GRAPHHELM_ACTOR": "lane-one"})
+        with patch.dict(os.environ, env, clear=True):
+            bound = hook.binding({"session_id": "session-123", "cwd": str(repo)})
+        self.assertEqual(bound, ("env-run", str(lane_token), "http://127.0.0.1:8793", "http://127.0.0.1:8793", None))
+
+    def test_the_briefing_request_names_the_lane_actor(self):
+        # #2683: the Runtime answered 401 to a lane token sent without X-GraphHelm-Actor.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        self.env["GRAPHHELM_ACTOR"] = "lane-one"
+        result = self.run_hook("start")
+        if self.timed_out(result, "start"):
+            return
+        gets = [item for item in RuntimeHandler.requests if item[0] == "GET" and item[1].endswith("/briefing")]
+        self.assertTrue(gets)
+        self.assertEqual({k.lower(): v for k, v in gets[0][2].items()}.get("x-graphhelm-actor"), "lane-one")
+
+    def test_a_slow_runtime_says_the_briefing_is_deferred(self):
+        # #2683: a briefing that does not arrive in time is deferred (slow host), not UNOBSERVED.
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        RuntimeHandler.get_started = threading.Event()
+        RuntimeHandler.get_release = threading.Event()
+        try:
+            result = self.run_hook("start")
+        finally:
+            RuntimeHandler.get_release.set()
+        context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("briefing deferred (slow host)", context)
+        self.assertNotIn("UNOBSERVED", context)
+
     def test_session_end_stops_its_waiter(self):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
         hook = importlib.util.module_from_spec(spec)
@@ -1328,7 +1369,9 @@ class SessionHookTests(unittest.TestCase):
         result = self.run_hook_timed("start")
         self.assertEqual(result.returncode, 0, result.stderr)
         context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("GraphHelm briefing UNOBSERVED.", context)
+        # #2683: the briefing is read directly, so a hung state write no longer hides it.
+        self.assertNotIn("UNOBSERVED", context)
+        self.assertIn("run-test", context)
         self.assertIn("state write still pending", result.stderr)
         self.assertEqual(list(Path(self.env["GRAPHHELM_HOOK_STATE_DIR"]).glob("*.json")), [], "no state written")
 
@@ -1877,7 +1920,7 @@ class SessionHookTests(unittest.TestCase):
         self.env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(hang), self.env.get("PYTHONPATH")]))
         start = self.run_hook_timed("start")
         self.assertEqual(start.returncode, 0, start.stderr)
-        self.assertIn("GraphHelm briefing UNOBSERVED.", json.loads(start.stdout)["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("GraphHelm briefing deferred (slow host).", json.loads(start.stdout)["hookSpecificOutput"]["additionalContext"])
         self.assertIn("start unobserved (no answer 6 s after the first line)", start.stderr)
         end = self.run_hook_timed("end")
         self.assertEqual((end.returncode, end.stdout), (0, ""))

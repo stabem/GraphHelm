@@ -52,7 +52,7 @@ fn commit_project(project: &Path) {
             "project",
         ],
     ] {
-        let status = std::process::Command::new("git")
+        let status = graphhelm_process::command("git")
             .args(&args)
             .current_dir(project)
             .status()

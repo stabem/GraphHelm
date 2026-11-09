@@ -25,6 +25,33 @@ from session_hook import _lane_actor, binding, hook_input, request, token_from_f
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 SCAN_BUDGET_SECONDS = 5.0
 SCAN_CHILD_TIMEOUT_SECONDS = 6.0
+# #2684: a note this old is no longer pending work for the lane: the hook skips it and names it,
+# instead of blocking every Stop on a request whose issue closed long ago. Env override for tests.
+NOTE_MAX_AGE_SECONDS = 3 * 24 * 3600
+STALE_NOTES: list[str] = []  # ids skipped as too old by the latest scan in this process
+
+
+def _note_max_age() -> float:
+    try:
+        return float(os.environ.get("GRAPHHELM_NOTE_MAX_AGE_SECONDS", NOTE_MAX_AGE_SECONDS))
+    except ValueError:
+        return NOTE_MAX_AGE_SECONDS
+
+
+def note_is_stale(event: dict, now: datetime | None = None) -> bool:
+    """True when the note's journal event is older than the bounded age. An unreadable time is not
+    stale: unknown never hides a note."""
+    stamp = event.get("occurredAt")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        # The Runtime writes nanoseconds; datetime reads microseconds.
+        at = datetime.fromisoformat(re.sub(r"(\.\d{6})\d*", r"", stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if at.tzinfo is None:
+        return False
+    return ((now or datetime.now(timezone.utc)) - at).total_seconds() > _note_max_age()
 
 
 def pending(payload: dict | None = None) -> bool:
@@ -59,6 +86,7 @@ def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
     # so replies to notes inside this window cannot precede the window.
     after = max(0, head - 4096)
     unanswered: dict[str, dict] = {}
+    STALE_NOTES.clear()
     # Size bound; the parent process imposes the wall-time bound even if a server
     # trickles bytes. request's timeout alone only bounds socket inactivity.
     for _ in range(8):
@@ -98,6 +126,9 @@ def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
             if to == lane:
                 unanswered[signal_id] = event
         if after >= head:
+            for signal_id in [key for key, event in unanswered.items() if note_is_stale(event)]:
+                del unanswered[signal_id]
+                STALE_NOTES.append(signal_id)
             return unanswered
     raise ValueError("note scan exceeded bound")
 
@@ -380,7 +411,13 @@ def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = Non
         reason = ready_step_reason(turn_state, ready)
         if reason is not None:
             return reason
-    return NOTES_REASON if scan_status(payload) == 1 else None
+    if scan_status(payload) != 1:
+        if STALE_NOTES:
+            print(f"graphhelm-lane-stop: ignored {len(STALE_NOTES)} note(s) older than "
+                  f"{_note_max_age() / 86400:g} days: {', '.join(STALE_NOTES[:3])}", file=sys.stderr)
+        return None
+    return NOTES_REASON + (f" (ignored {len(STALE_NOTES)} note(s) older than {_note_max_age() / 86400:g} days: "
+                           + ", ".join(STALE_NOTES[:3]) + ")" if STALE_NOTES else "")
 
 
 # #1058: how often an idle lane's rewake looks for its waiter's ring, and how long it goes

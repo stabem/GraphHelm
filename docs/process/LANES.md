@@ -508,6 +508,7 @@ autonomous wake as separate statuses.
    Match the envelope's `to` exactly to your lane. Read notes from owners and agents;
    do not filter only owner events. Act on each pending addressed note within your authority.
    Reply as yourself with an `operator_note` whose `replyTo` is the original signal id.
+   `python tools/task-record/note_reply.py --lane <lane> --execution <exec> --token-file <lane token> --reply-to <note id> --text "<what you did or why not>"` records it and reads it back (#2684). The Stop hook skips notes older than 3 days and names them; reply to them the same way.
    A reply can report a blocker; it must not claim unperformed work. A note remains pending
    until that lane replies. An unrelated task record or another lane's reply does not clear it.
 3. Arm `wake_arm` on that execution with `cursor` at the last sequence actually read,

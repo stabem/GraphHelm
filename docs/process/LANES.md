@@ -566,19 +566,30 @@ Install (cwd is the lane folder; `CLAUDE_CONFIG_DIR` is the provider home):
 
     claude plugin install graphhelm@graphhelm --scope local
 
-Then set the env pair in `<folder>\.claude\settings.local.json`, under an `env` block:
+Then set the env block in `<folder>\.claude\settings.local.json`:
 
     "env": {
       "GRAPHHELM_ACTOR": "<lane>",
-      "GRAPHHELM_EXECUTION_ID": "graphhelm-openbot-ops"
+      "GRAPHHELM_EXECUTION_ID": "graphhelm-openbot-ops",
+      "GRAPHHELM_RUNTIME_URL": "http://127.0.0.1:8793",
+      "GRAPHHELM_TOKEN_FILE": "<absolute path to the lane's .graphhelm-lane.token>"
     }
 
-- The Stop and SessionStart hooks take the lane actor from `GRAPHHELM_ACTOR`. A session title
-  does not carry it: the SessionStart payload has no `session_title` in this hook version.
-- `<folder>\.graphhelm\team.json` alone does **not** bind a lane (the hook returns no binding).
-  Keep the env pair; `team.json` is optional.
+The env pair alone is not enough. The hook needs a runtime URL and a token file, from one of two places:
+
+- **Env (used above):** `GRAPHHELM_RUNTIME_URL` and `GRAPHHELM_TOKEN_FILE` in the env block. Without
+  `GRAPHHELM_RUNTIME_URL` the hook falls back to port 8791, not the owner's Runtime on 8793.
+- **Folder:** `<folder>\.graphhelm\team.json` with `runtimeUrl` and the token file. Use this instead of
+  the two env variables.
+
+With only `GRAPHHELM_ACTOR` and `GRAPHHELM_EXECUTION_ID`, the start line prints `UNOBSERVED`
+(a `ValueError`). That is the failure this section prevents.
+
+- The lane actor comes from `GRAPHHELM_ACTOR`. A session title does not carry it: the SessionStart
+  payload has no `session_title` in this hook version.
 - Verify in a new chat: the first output shows a `SessionStart:startup hook_success` record and
-  the GraphHelm `FRESH` start line. Until you see that, the lane is not observed.
+  the GraphHelm `FRESH` start line. Until you see that, the lane is not observed. This doc was
+  checked in a scratch config, not in a live lane session.
 
 Undo for a lane folder (the user-scope install in the provider home is untouched):
 

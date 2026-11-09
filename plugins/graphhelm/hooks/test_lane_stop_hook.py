@@ -220,9 +220,7 @@ class ReconciledDigestTests(unittest.TestCase):
         # request on every quiet Stop. Cost: four in-process calls, no network.
         if str(HERE) not in sys.path:
             sys.path.insert(0, str(HERE))  # lane_stop_hook imports its siblings bare, as the hosts run it
-        sys.path.insert(0, str(HERE))
         import lane_stop_hook
-        from datetime import datetime, timezone
         quiet = {"merged": [], "closed": [], "released": [], "heartbeat": {"sent": [], "refused": []}, "inspected": 0}
         busy = {**quiet, "merged": [9001]}
         with mock.patch.object(lane_stop_hook, "request", return_value={"ok": True, "data": {}}) as post:
@@ -1462,6 +1460,7 @@ class LaneStopTests(unittest.TestCase):
 
     def test_note_is_stale_reads_the_runtime_nanosecond_stamp(self):
         import lane_stop_hook
+        from datetime import datetime, timezone
         now = datetime(2026, 11, 9, tzinfo=timezone.utc)
         self.assertTrue(lane_stop_hook.note_is_stale({"occurredAt": "2026-10-30T00:58:45.688350500Z"}, now))
         self.assertFalse(lane_stop_hook.note_is_stale({"occurredAt": "2026-11-08T12:00:00.5Z"}, now))

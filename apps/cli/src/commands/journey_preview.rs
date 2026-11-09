@@ -546,7 +546,15 @@ fn save_state(dir: &Path, state: &Value) {
 }
 
 fn write_state(dir: &Path, state: &Value) -> std::io::Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?;
+    // #2468: every state write carries the checkout fields, so no run path drops them.
+    // The run key is digest + commit; these are record fields only.
+    let mut state = state.clone();
+    if let Some(project) = dir.ancestors().find(|a| a.join(".git").exists() || a.join(".graphhelm").is_dir()) {
+        let checkout = run_checkout(project);
+        state["head"] = checkout["head"].clone();
+        state["behindOrigin"] = checkout["behindOrigin"].clone();
+    }
+    let mut bytes = serde_json::to_vec_pretty(&state).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
     super::atomic::atomic_write(&dir.join(STATE), &bytes)
 }
@@ -5622,5 +5630,24 @@ mod run_checkout_fields_tests {
         let checkout = run_checkout(dir);
         assert_eq!(checkout["head"], head.as_str());
         assert_eq!(checkout["behindOrigin"], 0);
+    }
+}
+
+#[cfg(test)]
+mod checkout_on_every_write_tests {
+    use super::*;
+
+    /// Red before the fix: a terminal state written without the new-run branch carries no
+    /// `head`/`behindOrigin`. This asserts that every write path, here a terminal state, has them.
+    #[test]
+    fn a_terminal_state_write_carries_head_and_behind_origin() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path().join(PREVIEWS).join("flow");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::process::Command::new("git").arg("-C").arg(project.path()).args(["init", "-q"]).status().unwrap();
+        write_state(&dir, &json!({"state":"ready","digest":"d","commit":"c"})).unwrap();
+        let stored: Value = serde_json::from_slice(&std::fs::read(dir.join(STATE)).unwrap()).unwrap();
+        assert!(stored.get("head").is_some(), "terminal write dropped head: {stored}");
+        assert!(stored.get("behindOrigin").is_some(), "terminal write dropped behindOrigin: {stored}");
     }
 }

@@ -947,6 +947,7 @@ _HELPER_OPS = {
     "read_state": lambda path, execution, session, host, origin: _read_state_or_empty(Path(path), execution, session, host, origin),
     "write_state": lambda path, value, durable: _write_state(Path(path), value, durable),
     "token": lambda path: token_from_file(path),
+    "step_text": lambda ready, cwd: _step_text(ready, cwd),
     "claim_lock": _op_claim_lock,
     "release_lock": _op_release_lock,
 }
@@ -1114,6 +1115,7 @@ def _use_helper(host: str) -> None:
         "_read_state_or_empty": read_,
         "_write_state_bounded": write_,
         "_token_bounded": lambda path: remote("token", "token", path=path),
+        "_step_text": lambda ready, cwd: remote("steps", "step_text", ready=ready, cwd=cwd),
         "_claim_lock_bounded": lambda path: _RemoteLock(remote("lock", "claim_lock", path=str(path))),
         "_release_lock": release_,
     }
@@ -1180,6 +1182,78 @@ def _context(digest: dict, freshness: str, execution: str, session: str, node_id
     if len(value) > MAX_CONTEXT:
         raise ValueError("briefing context too large")
     return value
+
+
+# #2643 slice 4 (#2639): the start context names the lane's ready step, its skill (checked to
+# exist, else named MISSING) and the transition-table version, from the same bounded lookup as
+# the Stop hook. Any failure adds nothing: the start never waits on it.
+STEP_SKILLS = {
+    "review": "extensions/builtin/graphhelm-development-contracts/skills/blind-review/SKILL.md",
+    "fix": "extensions/builtin/graphhelm-development-contracts/skills/implement/SKILL.md",
+    "merge": "extensions/builtin/graphhelm-development-contracts/skills/merge/SKILL.md",
+}
+TRANSITION_TABLE = "plugins/graphhelm/skills/graphhelm-work/references/if-in-doubt.md"
+NEXT_STEP_MAX = 400
+
+
+def _table_version(root: Path) -> str:
+    try:
+        return "table " + hashlib.sha256((root / TRANSITION_TABLE).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "table missing"
+
+
+def next_step_text(ready: list, root: Path) -> str:
+    if not ready:
+        return ""
+    step = ready[0]
+    skill = STEP_SKILLS.get(step["step"], STEP_SKILLS["fix"])
+    skill_part = skill if (root / skill).is_file() else "MISSING " + skill
+    text = (f" Next step: {step['reason']} on issue {step['issue']} at head {step['head'][:8]}; "
+            f"skill {skill_part}; {_table_version(root)}.")
+    return text[:NEXT_STEP_MAX]
+
+
+def _step_text(ready: list, cwd_text: str) -> str:
+    """The file reads (skill existence, table hash). In hook mode this is a helper request."""
+    cwd = Path(cwd_text)
+    root = next((d for d in (cwd, *cwd.parents) if (d / ".git").exists()), cwd)
+    return next_step_text(ready, root)
+
+
+def start_next_step(payload: dict, bound: tuple, lane: str | None = None) -> str:
+    """File access goes through `_lane_actor` and `_token_bounded`, which in hook mode are
+    requests to the helper: the process the host waits on opens no file itself."""
+    try:
+        from lane_stop_hook import LOOKUP_BUDGET_SECONDS, ready_steps
+        execution, token_file, url, _origin, _node = bound
+        lane = lane or os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload) or ""
+        if not ID.fullmatch(lane):
+            return ""
+        token = _token_bounded(token_file)
+        found: list = []
+
+        def run() -> None:
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/tasks", token, "GET",
+                            timeout=LOOKUP_BUDGET_SECONDS)
+            data = reply.get("data") if isinstance(reply, dict) else None
+            if isinstance(data, dict):
+                found.extend(ready_steps(data, lane))
+
+        def guarded() -> None:
+            try:
+                run()
+            except Exception:  # noqa: BLE001
+                pass
+
+        thread = threading.Thread(target=guarded, daemon=True)
+        thread.start()
+        thread.join(LOOKUP_BUDGET_SECONDS)
+        if thread.is_alive():
+            return ""
+        return _step_text(list(found), str(payload.get("cwd") or ".")) if found else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 SESSION_PROTOCOL = "graphhelm-session-v1"
@@ -1287,6 +1361,8 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
         _record_started(bound, host, session, lane, state, path)
     start_lane_waiter(payload, bound, host)
     context = KEEL_CONTEXT + "\n" + _context(digest, freshness, execution, session, node_id)
+    if len(context) + NEXT_STEP_MAX <= MAX_CONTEXT:
+        context += start_next_step(payload, bound, lane)
     if len(context) > MAX_CONTEXT:
         raise ValueError("hook context too large")
     if output_format == "portable":

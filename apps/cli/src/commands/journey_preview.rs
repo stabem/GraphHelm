@@ -192,6 +192,22 @@ pub(crate) fn run_checkout(project: &Path) -> Value {
     json!({"head": head, "behindOrigin": behind})
 }
 
+/// The state of a run that is starting: its key, its time, and the checkout it ran on (#2468).
+/// The checkout fields are record fields only; the run key is digest + commit. The warning says
+/// what to do; the count is only as current as the last fetch.
+fn new_run_state(project: &Path, digest: &str, commit: &str) -> Value {
+    let mut state = json!({"preview":true,"digest":digest,"commit":commit,
+        "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
+        "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+    let checkout = run_checkout(project);
+    state["head"] = checkout["head"].clone();
+    state["behindOrigin"] = checkout["behindOrigin"].clone();
+    if let Some(warning) = behind_warning(&checkout) {
+        state["warning"] = json!(warning);
+    }
+    state
+}
+
 /// The card's warning: set only when the checkout was behind origin/main (#2468).
 pub(crate) fn behind_warning(checkout: &Value) -> Option<&'static str> {
     (checkout["behindOrigin"].as_u64().unwrap_or(0) > 0).then_some(
@@ -554,20 +570,21 @@ fn save_state(dir: &Path, state: &Value) {
 }
 
 fn write_state(dir: &Path, state: &Value) -> std::io::Result<()> {
-    // #2468: the checkout fields belong to the run, set once when it starts. A later write
-    // (terminal state, progress) carries forward what the stored state already holds; it never
-    // recomputes them, so they keep naming the HEAD the run used, and it adds nothing to a state
-    // that never had them.
+    // #2468: the checkout fields belong to the run, set once when it starts. A later write of
+    // the SAME run (same runId: terminal state, progress) carries forward what the stored state
+    // holds; it never recomputes them. A new run (another runId) inherits nothing.
     let mut state = state.clone();
-    if state.get("head").is_none() {
-        if let Some(stored) = std::fs::read(dir.join(STATE))
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        {
-            for key in ["head", "behindOrigin", "warning"] {
-                if let Some(value) = stored.get(key) {
-                    state[key] = value.clone();
-                }
+    let stored = std::fs::read(dir.join(STATE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    if let Some(stored) = stored.filter(|s| {
+        state.get("head").is_none()
+            && state.get("runId").is_some()
+            && s.get("runId") == state.get("runId")
+    }) {
+        for key in ["head", "behindOrigin", "warning"] {
+            if let Some(value) = stored.get(key) {
+                state[key] = value.clone();
             }
         }
     }
@@ -1954,17 +1971,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
-        state = json!({"preview":true,"digest":digest,"commit":commit,
-            "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
-            "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
-        // #2468: the checkout fields are record fields only; the run key is digest + commit.
-        let checkout = run_checkout(&project);
-        state["head"] = checkout["head"].clone();
-        state["behindOrigin"] = checkout["behindOrigin"].clone();
-        // The warning says what to do; the count is only as current as the last fetch.
-        if let Some(warning) = behind_warning(&checkout) {
-            state["warning"] = json!(warning);
-        }
+        state = new_run_state(&project, &digest, &commit);
     }
     state["kind"] = if flow["status"] == "approved" {
         "replay"
@@ -5735,6 +5742,55 @@ mod run_checkout_fields_tests {
         let warning = behind_warning(&checkout).expect("behind origin/main must warn");
         assert!(warning.contains("git pull"), "{warning}");
     }
+
+    /// The real run-start path: a run started on a checkout behind origin/main records its head,
+    /// the count and the warning. Removing any of those assignments fails this.
+    #[test]
+    fn a_new_run_state_records_head_behind_count_and_warning() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let state = new_run_state(dir, "d", "c");
+        assert_eq!(state["head"].as_str().map(str::len), Some(40), "{state}");
+        assert_eq!(state["behindOrigin"], 1, "{state}");
+        assert!(
+            state["warning"]
+                .as_str()
+                .is_some_and(|w| w.contains("git pull")),
+            "{state}"
+        );
+        assert_eq!(state["digest"], "d");
+    }
 }
 
 #[cfg(test)]
@@ -5762,14 +5818,24 @@ mod checkout_on_every_write_tests {
         );
         write_state(
             &dir,
-            &json!({"state":"running","head":"h","behindOrigin":3,"warning":"w"}),
+            &json!({"runId":"r1","state":"running","head":"h","behindOrigin":3,"warning":"w"}),
         )
         .unwrap();
-        write_state(&dir, &json!({"state":"ready"})).unwrap();
+        write_state(&dir, &json!({"runId":"r1","state":"ready"})).unwrap();
         let stored: Value =
             serde_json::from_slice(&std::fs::read(dir.join(STATE)).unwrap()).unwrap();
         assert_eq!(stored["head"], "h", "{stored}");
         assert_eq!(stored["behindOrigin"], 3, "{stored}");
         assert_eq!(stored["warning"], "w", "{stored}");
+        // A new run (another runId) must not inherit the previous run's checkout fields.
+        write_state(&dir, &json!({"runId":"r2","state":"running"})).unwrap();
+        let fresh: Value =
+            serde_json::from_slice(&std::fs::read(dir.join(STATE)).unwrap()).unwrap();
+        assert!(
+            fresh.get("head").is_none()
+                && fresh.get("behindOrigin").is_none()
+                && fresh.get("warning").is_none(),
+            "{fresh}"
+        );
     }
 }

@@ -85,11 +85,12 @@ function run(dir, startedAt, current) {
   }
   const ranAt = new Date(Date.parse(startedAt) + 30000).toISOString();
   const state = {
-    commit: current ? commit : commit, current: null, digest, edges: {}, kind: 'preview', preview: true, recorded: false,
+    commit: current ? commit : commit, head: commit, behindOrigin: current ? 0 : 2, current: null, digest, edges: {}, kind: 'preview', preview: true, recorded: false,
     ranAt, result: 'pass', screens: view(1280, 800), startedAt, state: 'ready', viewport: 'mobile',
     viewports: { web: { edges: {}, result: 'pass', screens: view(1280, 800) }, mobile: { edges: {}, result: 'pass', screens: view(390, 844) } },
     viewportsPlanned: ['web', 'mobile'],
   };
+  if (!current) state.warning = 'This run used a checkout behind origin/main (as of the last fetch). Update the project (git pull), then run again.';
   fs.writeFileSync(path.join(dir, 'state.json'), `${JSON.stringify(state, null, 2)}\n`);
 }
 

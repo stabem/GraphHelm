@@ -402,7 +402,13 @@ def token_from_file(path: str) -> str:
     return token
 
 
-def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = 60,
+# #2699: 91% of the journal was wake_lease records from ~30 lanes re-arming every 60 s, and each append
+# held the store for seconds. A parked wait still ends at once on a ring; the lease length only bounds
+# how long it parks (and how late a dead session is noticed), so it is ten minutes.
+WAKE_LEASE_SECONDS = 600
+
+
+def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = WAKE_LEASE_SECONDS,
                   cursor: int | None = None) -> int:
     """Renew the lane's finite lease from the last observed event head."""
     execution, token_file, url, _origin, _node = bound

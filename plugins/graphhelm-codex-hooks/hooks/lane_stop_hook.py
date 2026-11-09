@@ -73,7 +73,14 @@ def unanswered_events(payload: dict | None = None) -> dict[str, dict]:
     return scan_notes(payload, {})[0]
 
 
-def scan_notes(payload: dict | None, state: dict) -> tuple[dict[str, dict], bool]:
+# #2699: the rewake is a background hook that never holds the host, so it gets a long budget, and its
+# first cursor is taken at the head (a short look-back keeps a note that arrived a moment ago).
+REWAKE_SCAN_BUDGET_SECONDS = 30.0
+REWAKE_LOOKBACK_EVENTS = 64
+
+
+def scan_notes(payload: dict | None, state: dict, budget: float = SCAN_BUDGET_SECONDS,
+               from_head: bool = False) -> tuple[dict[str, dict], bool]:
     """#2697: the note scan, incremental. `state` ({} for a first scan) remembers the last read
     sequence and the unanswered notes, so a later scan reads only what is new: one small page and no
     head call, where the first scan costs the head call plus up to 8 pages. Returns the unanswered
@@ -90,16 +97,20 @@ def scan_notes(payload: dict | None, state: dict) -> tuple[dict[str, dict], bool
         raise ValueError("lane identity missing")
     token = token_from_file(token_file)
     base = f"{url}/v1/executions/{quote(execution, safe='')}"
-    deadline = time.monotonic() + SCAN_BUDGET_SECONDS
+    deadline = time.monotonic() + budget
     first = "after" not in state
     if first:
         head = request(f"{base}/events?after=0&limit=1", token, "GET",
                        timeout=max(0.001, deadline - time.monotonic()))["data"]["head"]
         if type(head) is not int or head < 0:
             raise ValueError("invalid event head")
-        # Bound the window, not the execution's lifetime. A reply follows its note,
-        # so replies to notes inside this window cannot precede the window.
-        state["after"], state["notes"] = max(0, head - 4096), {}
+        if from_head:
+            # #2699: a rewake reads only what arrives from now on, in one request.
+            state["after"], state["notes"] = max(0, head - REWAKE_LOOKBACK_EVENTS), {}
+        else:
+            # Bound the window, not the execution's lifetime. A reply follows its note,
+            # so replies to notes inside this window cannot precede the window.
+            state["after"], state["notes"] = max(0, head - 4096), {}
     after, unanswered = state["after"], state["notes"]
     STALE_NOTES.clear()
     # Size bound; the parent process imposes the wall-time bound even if a server
@@ -363,7 +374,7 @@ def lookup_ready(payload: dict) -> list[dict]:
     return [] if thread.is_alive() else list(found)
 
 
-def _lookup_ready(payload: dict) -> list[dict]:
+def _lookup_ready(payload: dict, budget: float = LOOKUP_BUDGET_SECONDS) -> list[dict]:
     """Ask the Runtime (existing tasks endpoint, this lane's own token) for the lane's ready
     steps. Any failure means no ready step: an unreadable lookup never blocks a stop."""
     try:
@@ -376,7 +387,7 @@ def _lookup_ready(payload: dict) -> list[dict]:
             return []
         token = token_from_file(token_file)
         reply = request(f"{url}/v1/executions/{quote(execution, safe='')}/tasks", token, "GET",
-                        timeout=LOOKUP_BUDGET_SECONDS)
+                        timeout=budget)
         data = reply.get("data") if isinstance(reply, dict) else None
         return ready_steps(data, lane) if isinstance(data, dict) else []
     except Exception:  # noqa: BLE001
@@ -543,7 +554,9 @@ def _rewake_step_id(step: dict) -> str:
 
 
 def _lookup_ready_for_rewake(payload: dict) -> list[dict]:
-    return lookup_ready(payload)
+    """#2699: the rewake waits for the tasks projection as long as its own scan budget; a failure is
+    no ready step, and the next ring or fallback asks again."""
+    return _lookup_ready(payload, REWAKE_SCAN_BUDGET_SECONDS)
 
 
 def rewake(payload: dict, host: str = "claude") -> int:
@@ -567,7 +580,7 @@ def rewake(payload: dict, host: str = "claude") -> int:
     owner.parent.mkdir(parents=True, exist_ok=True)
     owner.write_text(me, encoding="ascii")
     seen = _mtime(rang)
-    next_scan = time.monotonic() + REWAKE_FALLBACK_SECONDS
+    next_scan = time.monotonic()  # #2699: the first scan, which takes the cursor, runs at once
     retrying = False
     failures = 0
     scan_state: dict = {}
@@ -584,7 +597,7 @@ def rewake(payload: dict, host: str = "claude") -> int:
         trigger = "ring" if now != seen else ("retry" if retrying else "fallback")
         seen, started = now, time.monotonic()
         try:
-            waiting, ready_hint = scan_notes(payload, scan_state)
+            waiting, ready_hint = scan_notes(payload, scan_state, budget=REWAKE_SCAN_BUDGET_SECONDS, from_head=True)
         except Exception as error:  # noqa: BLE001 - an unreadable scan is logged and retried, backing off
             _log_scan(log, trigger, "error", started, error)
             failures += 1

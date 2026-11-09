@@ -1364,7 +1364,7 @@ class LaneStopTests(unittest.TestCase):
         module = lane_stop_hook_module()
         self.assertEqual(self.stop(MANIFESTS[0]), [])
         step = {"issue": 2678, "step": "review", "head": "db1e805c" + "0" * 32, "reason": "assigned review of PR 2691"}
-        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.3),                 mock.patch.object(module, "scan_notes", return_value=({}, True)),                 mock.patch.object(module, "lookup_ready", return_value=[step]),                 mock.patch.object(sys, "stderr", io.StringIO()) as err:
+        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.3),                 mock.patch.object(module, "scan_notes", return_value=({}, True)),                 mock.patch.object(module, "_lookup_ready", return_value=[step]),                 mock.patch.object(sys, "stderr", io.StringIO()) as err:
             code = module.rewake({"cwd": self.tmp.name, "session_id": "step-session"})
         self.assertEqual(code, 2)
         self.assertIn("assigned review of PR 2691", err.getvalue())
@@ -1377,12 +1377,12 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(self.stop(MANIFESTS[0]), [])
         step = {"issue": 2678, "step": "review", "head": "a" * 40, "reason": "assigned review of PR 2691"}
         env = {"GRAPHHELM_REWAKE_TEST": "1"}
-        with mock.patch.dict(os.environ, {**self.env, **env}, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.2),                 mock.patch.object(module, "scan_notes", return_value=({}, True)),                 mock.patch.object(module, "lookup_ready", return_value=[step]),                 mock.patch.object(sys, "stderr", io.StringIO()):
+        with mock.patch.dict(os.environ, {**self.env, **env}, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.2),                 mock.patch.object(module, "scan_notes", return_value=({}, True)),                 mock.patch.object(module, "_lookup_ready", return_value=[step]),                 mock.patch.object(sys, "stderr", io.StringIO()):
             self.assertEqual(module.rewake({"cwd": self.tmp.name, "session_id": "again-session"}), 2)
         outcome = []
 
         def second():
-            with mock.patch.dict(os.environ, {**self.env, **env}, clear=True),                     mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.2),                     mock.patch.object(module, "scan_notes", return_value=({}, True)),                     mock.patch.object(module, "lookup_ready", return_value=[step]),                     mock.patch.object(sys, "stderr", io.StringIO()):
+            with mock.patch.dict(os.environ, {**self.env, **env}, clear=True),                     mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 0.2),                     mock.patch.object(module, "scan_notes", return_value=({}, True)),                     mock.patch.object(module, "_lookup_ready", return_value=[step]),                     mock.patch.object(sys, "stderr", io.StringIO()):
                 outcome.append(module.rewake({"cwd": self.tmp.name, "session_id": "again-session"}))
 
         worker = threading.Thread(target=second, daemon=True)
@@ -1413,6 +1413,46 @@ class LaneStopTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 mock.patch.object(module, "binding", return_value=bound),                 mock.patch.object(module, "token_from_file", return_value="t"),                 mock.patch.object(module, "request", side_effect=fake_request):
             notes, _hint = module.scan_notes({}, {})
         self.assertEqual(sorted(notes), ["ask-1"])
+
+    def test_a_rewake_first_scan_takes_the_head_in_one_request_with_the_long_budget(self):
+        # #2699: with the Runtime at seconds per request, head + a 4096-event window never fit 5 s.
+        module = lane_stop_hook_module()
+        bound = ("exec-1", "token-file", "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        calls = []
+
+        def fake_request(url, token, method, body=None, headers=None, timeout=1.0, max_reply=0):
+            calls.append((url, timeout))
+            if "limit=1" in url:
+                return {"data": {"head": 9000, "events": []}}
+            return {"data": {"head": 9000, "events": [{"sequence": 9000, "actor": {"id": "x"}, "kind": {"type": "wake_lease"}}]}}
+
+        state = {}
+        with mock.patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 mock.patch.object(module, "binding", return_value=bound),                 mock.patch.object(module, "token_from_file", return_value="t"),                 mock.patch.object(module, "request", side_effect=fake_request):
+            notes, hint = module.scan_notes({}, state, budget=module.REWAKE_SCAN_BUDGET_SECONDS, from_head=True)
+        self.assertEqual((notes, hint), ({}, False))
+        self.assertEqual(len(calls), 2)  # the head call, then one page of the short look-back
+        self.assertTrue(all("after=0&limit=1" not in url or i == 0 for i, (url, _t) in enumerate(calls)))
+        self.assertIn(f"after={9000 - module.REWAKE_LOOKBACK_EVENTS}&", calls[1][0])  # no 4096-event window
+        self.assertGreater(calls[0][1], module.SCAN_BUDGET_SECONDS)  # more than the Stop hook's 5 s
+        self.assertEqual(state["after"], 9000)
+
+    def test_the_rewake_ready_lookup_waits_as_long_as_its_scan(self):
+        module = lane_stop_hook_module()
+        with mock.patch.object(module, "_lookup_ready", return_value=[]) as lookup:
+            module._lookup_ready_for_rewake({"cwd": "x"})
+        lookup.assert_called_once_with({"cwd": "x"}, module.REWAKE_SCAN_BUDGET_SECONDS)
+        self.assertGreater(module.REWAKE_SCAN_BUDGET_SECONDS, module.LOOKUP_BUDGET_SECONDS)
+
+    def test_a_rewake_makes_its_first_scan_at_once_not_after_the_fallback_interval(self):
+        module = lane_stop_hook_module()
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        found = {"note-1": {"kind": {"data": {}}}}
+        with mock.patch.dict(os.environ, self.env, clear=True),                 mock.patch.object(module, "REWAKE_FALLBACK_SECONDS", 120.0),                 mock.patch.object(module, "scan_notes", return_value=(found, False)),                 mock.patch.object(sys, "stderr", io.StringIO()):
+            started = time.monotonic()
+            code = module.rewake({"cwd": self.tmp.name, "session_id": "first-scan-session"})
+            elapsed = time.monotonic() - started
+        self.assertEqual(code, 2)
+        self.assertLess(elapsed, 20 * time_scale())  # far under the 120 s fallback
 
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")

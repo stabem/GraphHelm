@@ -1,0 +1,15 @@
+{
+  "promise": "A lane's rewake (a background hook that never holds the host) scans with a 30 s budget, takes its first cursor at the journal head (with a 64-event look-back) in one request and at once, and looks up ready steps within the same 30 s, so a Runtime that answers in seconds no longer makes every scan and lookup time out. The wake lease is armed for 600 s instead of 60 s, so lane waiters write a tenth of the lease records.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/lane_stop_hook.py",
+    "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py",
+    "plugins/graphhelm/hooks/session_hook.py",
+    "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
+    "plugins/graphhelm/hooks/test_lane_stop_hook.py",
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    ".graphhelm/cards/issue-2699.json"
+  ],
+  "proof": "python -m pytest plugins/graphhelm/hooks/test_lane_stop_hook.py plugins/graphhelm/hooks/test_session_hook.py (first scan one head request + look-back page with the long budget, ready lookup long budget, first scan at once, lease 600 s); break-once: restore the 5 s budget or the 60 s lease -> those tests fail; then an idle-lane wake observed on a fresh session",
+  "exportedSymbols": [],
+  "journeys": []
+}

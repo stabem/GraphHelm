@@ -1,4 +1,4 @@
-//! `graphhelm journey capture` / `graphhelm journey walked` (#315, spec §6.3): the producers of
+//! `graphhelm journey capture` / `graphhelm journey walked` (#315, spec Â§6.3): the producers of
 //! the two journey records. Both are ordinary sealed signals recorded through the shared signal
 //! core (`execution::signal::execute`) as the owner; this module only builds valid documents
 //! (Ruling 3) and refuses everything else before the store is touched.
@@ -36,6 +36,7 @@ pub fn run(args: &JourneyArgs) -> Outcome {
         JourneyCommand::Validate(validate) => journey_validate::run(validate),
         JourneyCommand::Compile(compile) => super::journey_flow::run_compile(compile),
         JourneyCommand::Approve(approve) => super::journey_flow::run_approve(approve),
+        JourneyCommand::ApproveGrant(grant) => super::journey_flow::run_approve_grant(grant),
         JourneyCommand::Reject(reject) => super::journey_flow::run_reject(reject),
         JourneyCommand::SignLegacy(sign) => super::journey_flow::run_sign_legacy(sign),
         JourneyCommand::MarkSafe(mark) => super::journey_flow::run_mark_safe(mark),

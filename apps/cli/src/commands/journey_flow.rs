@@ -3497,3 +3497,79 @@ mod preview_owner_store_tests {
         assert!(!codes.contains(&"flow.approval_unsigned"), "{codes:?}");
     }
 }
+
+/// `graphhelm journey approve-grant <id> --grant <file> --actor <name>` (#2625): a scoped,
+/// revocable grant lets a named actor approve a journey without the owner token. The grant file
+/// names the actor, the scope (`journey.approve`) and whether it is revoked. A missing, revoked,
+/// out-of-scope or non-matching grant is refused before any approval is written; `approve` itself
+/// stays owner-only (#1309 ruling A).
+pub(crate) fn run_approve_grant(args: &crate::args::JourneyApproveGrantArgs) -> Outcome {
+    const COMMAND: &str = "journey.approve-grant";
+    let project = args.project.clone().unwrap_or_else(|| ".".into());
+    let grant = match std::fs::read_to_string(&args.grant)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    {
+        Some(grant) => grant,
+        None => return input_error(COMMAND, "the grant file is missing or not valid JSON"),
+    };
+    let granted = grant["grants"].as_array().into_iter().flatten().any(|entry| {
+        entry["actor"] == args.actor.as_str()
+            && entry["revoked"] != Value::Bool(true)
+            && entry["scope"].as_array().is_some_and(|scope| scope.iter().any(|s| s == "journey.approve"))
+    });
+    if !granted {
+        return input_error(
+            COMMAND,
+            "no unrevoked journey.approve grant names this actor; approving without a grant is the owner's",
+        );
+    }
+    let grant_id = grant["grants"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry["actor"] == args.actor.as_str())
+        .and_then(|entry| entry["id"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let outcome = approve_owned(&args.id, project.clone());
+    if outcome_ok(&outcome) {
+        write_grant_audit(&project, &args.id, &args.actor, &grant_id);
+    }
+    outcome
+}
+
+/// The grant-audit record (#2625, option a): written beside the approval, after a successful
+/// approval. It names the grant, the actor, the flow, its revision and digest, and the time; the
+/// approval record and its digest rule are not changed.
+fn write_grant_audit(project: &Path, flow: &str, actor: &str, grant_id: &str) {
+    let approved = read(&project.join(".graphhelm/journeys").join(format!("{flow}.journey.yaml"))).ok().map(|(_, value)| value);
+    let (revision, digest) = approved
+        .as_ref()
+        .map(|flow| {
+            (
+                flow["approved"]["revision"].as_str().unwrap_or_default().to_owned(),
+                flow["approved"]["digest"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .unwrap_or_default();
+    let audit = json!({
+        "grant": grant_id,
+        "actor": actor,
+        "flow": flow,
+        "revision": revision,
+        "digest": digest,
+        "time": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default(),
+    });
+    let dir = project.join(".graphhelm/journey-grant-audit");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join(format!("{flow}.json")), audit.to_string());
+}
+
+/// Whether an `Outcome` is a success (the approval was written).
+fn outcome_ok(outcome: &Outcome) -> bool {
+    outcome.exit_code == 0
+}

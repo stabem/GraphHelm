@@ -197,6 +197,38 @@ def origin_url(cwd: str) -> str:
                           capture_output=True, text=True, timeout=1, check=True, creationflags=NO_WINDOW).stdout.strip()
 
 
+# #2643: a ready step (assigned review, BLOCK to fix, approved merge, next item) blocks the stop
+# once per step key; the guard is inline below so both hook copies stay self-contained.
+MAX_STEP_BLOCKS_PER_TURN = 3
+
+
+def _new_step_state() -> dict:
+    return {"injected": set(), "blocks": 0}
+
+
+def _step_key(issue: int, step: str, head: str) -> tuple:
+    return (issue, step, head)
+
+
+def _should_block_step(state: dict, key: tuple) -> bool:
+    return key not in state["injected"] and state["blocks"] < MAX_STEP_BLOCKS_PER_TURN
+
+
+def _record_step_block(state: dict, key: tuple) -> None:
+    state["injected"].add(key)
+    state["blocks"] += 1
+
+
+def ready_step_reason(state: dict, ready: list[dict]) -> str | None:
+    """The reason to inject for the first ready step not yet injected, or None."""
+    for step in ready:
+        key = _step_key(step["issue"], step["step"], step["head"])
+        if _should_block_step(state, key):
+            _record_step_block(state, key)
+            return f"GraphHelm: {step['reason']} on issue {step['issue']} at head {step['head'][:8]}."
+    return None
+
+
 NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team execution, act on them, "
                 "then record your operator_note reply with replyTo before stopping.")
 

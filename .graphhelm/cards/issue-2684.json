@@ -1,0 +1,15 @@
+{
+  "promise": "The Stop and rewake note scan skips operator notes addressed to a lane whose journal event is older than 3 days and names the skipped ids; a fresh note still blocks; an unreadable time never hides a note. tools/task-record/note_reply.py answers a note with an operator_note carrying replyTo and reads the reply back from the journal, failing when it is not there.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/lane_stop_hook.py",
+    "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py",
+    "plugins/graphhelm/hooks/test_lane_stop_hook.py",
+    "tools/task-record/note_reply.py",
+    "tools/task-record/test_note_reply.py",
+    "docs/process/LANES.md",
+    ".graphhelm/cards/issue-2684.json"
+  ],
+  "proof": "python -m pytest plugins/graphhelm/hooks/test_lane_stop_hook.py -k 'bounded_age or recent_note or nanosecond or only_own_reply or addressed_pending'; python -m pytest tools/task-record/test_note_reply.py; break-once: age filter off -> test_a_note_older_than_the_bounded_age_is_skipped_and_named fails; read-back removed -> the missing-reply test passes wrongly",
+  "exportedSymbols": ["note_is_stale", "build_signal", "main"],
+  "journeys": []
+}

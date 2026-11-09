@@ -173,18 +173,34 @@ fn flow_key_and_source(project: &Path, id: &str) -> Result<(Value, String, Strin
 /// #2468: the project HEAD and how many commits it is behind origin/main, from local refs only
 /// (a stale origin/main understates the count; the warning says so). Fields, not part of the key.
 pub(crate) fn run_checkout(project: &Path) -> Value {
+    // Local refs only, but git still runs under a deadline: a hung git must not hold a run start.
     let git = |args: &[&str]| {
-        graphhelm_process::command("git")
+        let mut child = graphhelm_process::command("git")
             .arg("-C")
             .arg(project)
             .args(args)
             .stdin(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|text| text.trim().to_owned())
+            .spawn()
+            .ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        };
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+        status.success().then(|| text.trim().to_owned())
     };
     let head = git(&["rev-parse", "HEAD"]).filter(|sha| sha.len() == 40);
     let behind =

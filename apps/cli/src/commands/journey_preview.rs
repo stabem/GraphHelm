@@ -199,13 +199,19 @@ fn new_run_state(project: &Path, digest: &str, commit: &str) -> Value {
     let mut state = json!({"preview":true,"digest":digest,"commit":commit,
         "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
         "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+    record_checkout(&mut state, project);
+    state
+}
+
+/// Records the checkout the run starts on: `head`, `behindOrigin` and, when behind, the warning.
+/// Both places that create a `running` state (the door and the runner) call this.
+fn record_checkout(state: &mut Value, project: &Path) {
     let checkout = run_checkout(project);
     state["head"] = checkout["head"].clone();
     state["behindOrigin"] = checkout["behindOrigin"].clone();
     if let Some(warning) = behind_warning(&checkout) {
         state["warning"] = json!(warning);
     }
-    state
 }
 
 /// The card's warning: set only when the checkout was behind origin/main (#2468).
@@ -1278,6 +1284,8 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     let mut running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
         "runId":uuid::Uuid::new_v4().to_string(),"state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
         "screens":{},"edges":{}});
+    // #2468: the door writes the `running` state the runner reuses, so it records the checkout.
+    record_checkout(&mut running, &project);
     if let Err(error) = write_state(&dir, &running) {
         return io_answer(
             current,
@@ -5741,6 +5749,53 @@ mod run_checkout_fields_tests {
         assert_eq!(checkout["behindOrigin"], 1, "{checkout}");
         let warning = behind_warning(&checkout).expect("behind origin/main must warn");
         assert!(warning.contains("git pull"), "{warning}");
+    }
+
+    /// The door's `running` state is the one the runner reuses; `record_checkout` on it must give
+    /// head, count and warning. Removing the door's call is caught by the end-to-end observation
+    /// in the PR (a stored state from `journey preview --force`); this pins the shared helper.
+    #[test]
+    fn record_checkout_fills_a_door_state_for_a_checkout_behind_origin() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let mut state = json!({"state":"running","runId":"r"});
+        record_checkout(&mut state, dir);
+        assert_eq!(state["behindOrigin"], 1, "{state}");
+        assert!(
+            state["head"].is_string() && state["warning"].is_string(),
+            "{state}"
+        );
     }
 
     /// The real run-start path: a run started on a checkout behind origin/main records its head,

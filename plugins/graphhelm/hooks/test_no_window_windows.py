@@ -48,6 +48,7 @@ class ShippedSpawnFlagsTest(unittest.TestCase):
 
         real = module.subprocess.Popen
         module.subprocess.Popen = _Fake
+        module.arm_lane_wake = lambda *a, **k: 0  # the spawn flags are under test; arming needs a live runtime
         try:
             call()
         finally:
@@ -134,6 +135,7 @@ def _recorded_waiter_flags(module):
     import tempfile
     real = module.subprocess.Popen
     module.subprocess.Popen = _Fake
+    module.arm_lane_wake = lambda *a, **k: 0  # the spawn flags are under test; arming needs a live runtime
     try:
         with tempfile.TemporaryDirectory() as tmp:
             events = Path(tmp) / "events"

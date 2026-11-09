@@ -20,7 +20,11 @@ fn graphhelm() -> std::process::Command {
 
 fn project_with_flow() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    for file in ["app/cart/page.tsx", "app/checkout/page.tsx", "app/api/pay/route.ts"] {
+    for file in [
+        "app/cart/page.tsx",
+        "app/checkout/page.tsx",
+        "app/api/pay/route.ts",
+    ] {
         let path = dir.path().join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "export {}").unwrap();
@@ -38,7 +42,15 @@ fn commit_project(project: &Path) {
     for args in [
         vec!["init", "-q"],
         vec!["add", "-A"],
-        vec!["-c", "user.email=owner@example.com", "-c", "user.name=owner", "commit", "-qm", "project"],
+        vec![
+            "-c",
+            "user.email=owner@example.com",
+            "-c",
+            "user.name=owner",
+            "commit",
+            "-qm",
+            "project",
+        ],
     ] {
         let status = std::process::Command::new("git")
             .args(&args)
@@ -80,10 +92,26 @@ fn a_valid_grant_is_accepted_and_the_record_names_it() {
 
     let output = approve_grant(project.path(), &grant, "keel-journey-qa");
     let record = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "a valid grant was refused: {record}");
-    let audit = std::fs::read_to_string(project.path().join(".graphhelm/journey-grant-audit/checkout.json")).expect("grant-audit record written");
-    assert!(audit.contains("g-qa-1"), "the audit record must name the grant id: {audit}");
-    assert!(audit.contains("keel-journey-qa") && audit.contains("checkout") && audit.contains("sha256:"), "{audit}");
+    assert!(
+        output.status.success(),
+        "a valid grant was refused: {record}"
+    );
+    let audit = std::fs::read_to_string(
+        project
+            .path()
+            .join(".graphhelm/journey-grant-audit/checkout.json"),
+    )
+    .expect("grant-audit record written");
+    assert!(
+        audit.contains("g-qa-1"),
+        "the audit record must name the grant id: {audit}"
+    );
+    assert!(
+        audit.contains("keel-journey-qa")
+            && audit.contains("checkout")
+            && audit.contains("sha256:"),
+        "{audit}"
+    );
 }
 
 /// Red (Keel case 3, Shikamaru): a valid grant with a FAILING preview is still refused. The grant
@@ -94,11 +122,25 @@ fn a_valid_grant_with_a_failing_preview_is_still_refused() {
     let _ = owner_token(project.path());
     let grant = write_grant(project.path());
     commit_project(project.path());
-    let before = std::fs::read(project.path().join(".graphhelm/journeys/checkout.journey.yaml")).unwrap();
+    let before = std::fs::read(
+        project
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+    )
+    .unwrap();
 
     let output = approve_grant(project.path(), &grant, "keel-journey-qa");
-    assert!(!output.status.success(), "approved with no passing preview: {}", String::from_utf8_lossy(&output.stdout));
-    let after = std::fs::read(project.path().join(".graphhelm/journeys/checkout.journey.yaml")).unwrap();
+    assert!(
+        !output.status.success(),
+        "approved with no passing preview: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let after = std::fs::read(
+        project
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+    )
+    .unwrap();
     assert_eq!(before, after, "a refused approve must not change the flow");
 }
 
@@ -113,8 +155,17 @@ fn a_grant_approval_writes_the_same_digest_as_the_owner_approval() {
     commit_project(granted.path());
     passing_preview(granted.path(), "checkout");
     let output = approve_grant(granted.path(), &grant, "keel-journey-qa");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
-    let granted_flow = std::fs::read_to_string(granted.path().join(".graphhelm/journeys/checkout.journey.yaml")).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let granted_flow = std::fs::read_to_string(
+        granted
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+    )
+    .unwrap();
     let stdout_digest = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["data"]["approved"]["digest"].as_str().unwrap_or_default().to_owned();
 
     let owned = project_with_flow();
@@ -122,12 +173,29 @@ fn a_grant_approval_writes_the_same_digest_as_the_owner_approval() {
     commit_project(owned.path());
     passing_preview(owned.path(), "checkout");
     let owner_out = graphhelm()
-        .args(["--json", "journey", "approve", "checkout", "--token-file", &token, "--project"])
+        .args([
+            "--json",
+            "journey",
+            "approve",
+            "checkout",
+            "--token-file",
+            &token,
+            "--project",
+        ])
         .arg(owned.path())
         .output()
         .unwrap();
-    assert!(owner_out.status.success(), "{}", String::from_utf8_lossy(&owner_out.stdout));
-    let owner_flow = std::fs::read_to_string(owned.path().join(".graphhelm/journeys/checkout.journey.yaml")).unwrap();
+    assert!(
+        owner_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&owner_out.stdout)
+    );
+    let owner_flow = std::fs::read_to_string(
+        owned
+            .path()
+            .join(".graphhelm/journeys/checkout.journey.yaml"),
+    )
+    .unwrap();
 
     let digest = |text: &str| {
         text.lines()
@@ -135,11 +203,27 @@ fn a_grant_approval_writes_the_same_digest_as_the_owner_approval() {
             .map(|line| line.trim().to_owned())
             .unwrap_or_default()
     };
-    assert!(!stdout_digest.is_empty(), "the grant approval reported no digest");
-    let audit_text = std::fs::read_to_string(granted.path().join(".graphhelm/journey-grant-audit/checkout.json")).expect("audit record written");
+    assert!(
+        !stdout_digest.is_empty(),
+        "the grant approval reported no digest"
+    );
+    let audit_text = std::fs::read_to_string(
+        granted
+            .path()
+            .join(".graphhelm/journey-grant-audit/checkout.json"),
+    )
+    .expect("audit record written");
     let audit: serde_json::Value = serde_json::from_str(&audit_text).unwrap();
-    assert_eq!(audit["digest"].as_str().unwrap_or_default(), stdout_digest, "the audit digest must equal approved.digest");
-    assert_eq!(digest(&granted_flow), digest(&owner_flow), "a grant must not change the digest rule");
+    assert_eq!(
+        audit["digest"].as_str().unwrap_or_default(),
+        stdout_digest,
+        "the audit digest must equal approved.digest"
+    );
+    assert_eq!(
+        digest(&granted_flow),
+        digest(&owner_flow),
+        "a grant must not change the digest rule"
+    );
 }
 
 /// Review fix (#2661, Shino): a revoked grant for the same actor listed FIRST must not be the one
@@ -159,9 +243,23 @@ fn a_revoked_grant_listed_first_is_not_the_one_recorded() {
     passing_preview(project.path(), "checkout");
 
     let output = approve_grant(project.path(), &grant, "keel-journey-qa");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
-    let audit = std::fs::read_to_string(project.path().join(".graphhelm/journey-grant-audit/checkout.json"))
-        .expect("grant-audit record written");
-    assert!(audit.contains("g-valid"), "the audit must name the valid grant: {audit}");
-    assert!(!audit.contains("g-revoked"), "the audit must not name the revoked grant: {audit}");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let audit = std::fs::read_to_string(
+        project
+            .path()
+            .join(".graphhelm/journey-grant-audit/checkout.json"),
+    )
+    .expect("grant-audit record written");
+    assert!(
+        audit.contains("g-valid"),
+        "the audit must name the valid grant: {audit}"
+    );
+    assert!(
+        !audit.contains("g-revoked"),
+        "the audit must not name the revoked grant: {audit}"
+    );
 }

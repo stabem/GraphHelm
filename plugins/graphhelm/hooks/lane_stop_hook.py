@@ -249,7 +249,8 @@ NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team executio
 
 
 def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = None,
-             turn_state: dict | None = None) -> str | None:
+             turn_state: dict | None = None, new_event: bool = False,
+             ring_base: Path | None = None) -> str | None:
     """#1278: one Stop for this lane, callable in-process by `stop_hook.py`: reconcile, then the
     reminder reason (or None)."""
     # Every Stop refreshes this lane's finished PRs and released claims. An offline
@@ -286,6 +287,9 @@ def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = Non
         return None
     # #2643: a ready step is injected first; the per-turn state is passed by main() and reset
     # at the start of each Stop cycle, so a stop with a step already injected does not re-block.
+    # #2643 slice 2: a new review, verdict or merge rings this lane before the Stop decides.
+    if new_event and ring_base is not None:
+        ring_lane(ring_base)
     if ready and turn_state is not None:
         reason = ready_step_reason(turn_state, ready)
         if reason is not None:

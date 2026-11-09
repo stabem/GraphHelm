@@ -6,6 +6,7 @@ No Runtime is started: `request` and `binding` are replaced.
 """
 import io
 import json
+import time
 import unittest
 from contextlib import redirect_stdout
 from unittest import mock
@@ -70,6 +71,23 @@ class LookupReady(unittest.TestCase):
                 mock.patch.object(hook, "token_from_file", side_effect=OSError("gone")), \
                 mock.patch.dict("os.environ", {"GRAPHHELM_ACTOR": LANE}):
             self.assertEqual(hook.lookup_ready({"cwd": ""}), [])
+
+
+class LookupIsBounded(unittest.TestCase):
+    """#2643 slice 3: a stalled Runtime must not hold the Stop; the full-suite stall test caps
+    the whole hook at 12 s and the notes scan already uses up to 6 s of it."""
+
+    def test_a_stalled_runtime_does_not_hold_the_stop(self):
+        def slow(*args, **kwargs):
+            time.sleep(1.0)
+            return {"data": {"tasks": [task(assignedReviewers=[LANE])]}}
+
+        with mock.patch.object(hook, "binding", return_value=LookupReady.bound),                 mock.patch.object(hook, "token_from_file", return_value="secret"),                 mock.patch.object(hook, "request", side_effect=slow),                 mock.patch.object(hook, "LOOKUP_BUDGET_SECONDS", 0.2, create=True),                 mock.patch.dict("os.environ", {"GRAPHHELM_ACTOR": LANE}):
+            started = time.monotonic()
+            steps = hook.lookup_ready({"cwd": ""})
+            took = time.monotonic() - started
+        self.assertEqual(steps, [], "a lookup that outlives its budget finds no step")
+        self.assertLess(took, 0.8, f"the lookup held the stop for {took:.2f}s")
 
 
 class MainUsesTheLookup(unittest.TestCase):

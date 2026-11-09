@@ -6,6 +6,6 @@
     ".graphhelm/cards/issue-2701.json"
   ],
   "proof": "python -m pytest plugins/graphhelm/hooks/test_lane_stop_hook.py -k unrecorded (red before the change: no record_unrecorded_merges); then the full plugins/graphhelm/hooks suite",
-  "exportedSymbols": [],
+  "exportedSymbols": ["record_unrecorded_merges"],
   "journeys": []
 }

@@ -17,7 +17,7 @@ MARKER = b"# graphhelm-ref-guard v1"
 SOURCE = Path(__file__).with_name("reference-transaction")
 
 
-def common_dir(cwd):
+def shared_git_dir(cwd):
     out = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=cwd,
                          capture_output=True, text=True, timeout=30, check=True).stdout.strip()
     return Path(out)
@@ -66,7 +66,7 @@ def main(argv=None):
     p.add_argument("--uninstall", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
-    git_dir = args.git_dir or common_dir(Path.cwd())
+    git_dir = args.git_dir or shared_git_dir(Path.cwd())
     print(uninstall(git_dir) if args.uninstall else install(git_dir, args.dry_run))
     return 0
 

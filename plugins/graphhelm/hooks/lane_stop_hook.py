@@ -257,12 +257,29 @@ def _same_lane(name, lane) -> bool:
     return bool(name) and norm(name) == norm(lane)
 
 
+STALE_AFTER_SECONDS = 3 * 24 * 3600
+
+
+def _stale(item: dict) -> bool:
+    """A task idle for days is not a ready step: the projection can keep a task whose PR merged
+    with no merge record. No readable last-event time means not known stale."""
+    clock = item.get("clock")
+    last = clock.get("lastAt") if isinstance(clock, dict) else None
+    try:
+        at = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+        if at.tzinfo is None:
+            return False
+        return (datetime.now(timezone.utc) - at).total_seconds() > STALE_AFTER_SECONDS
+    except (ValueError, TypeError):
+        return False
+
+
 def ready_steps(data: dict, lane: str) -> list[dict]:
     """#2643 slice 3: the steps ready for `lane` in the Runtime's tasks projection: a review
     assigned to it, or a BLOCK on its own PR to fix. A merged task is never ready."""
     steps: list[dict] = []
     for item in data.get("tasks") or []:
-        if not isinstance(item, dict) or item.get("mergeSha"):
+        if not isinstance(item, dict) or item.get("mergeSha") or _stale(item):
             continue
         issue, head = item.get("issue"), item.get("headSha")
         if not isinstance(issue, int) or not isinstance(head, str) or not head:

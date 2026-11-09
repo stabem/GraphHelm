@@ -1208,7 +1208,9 @@ def next_step_text(ready: list, root: Path) -> str:
         return ""
     step = ready[0]
     skill = STEP_SKILLS.get(step["step"], STEP_SKILLS["fix"])
-    skill_part = skill if (root / skill).is_file() else "MISSING " + skill
+    # A lane's cwd is rarely the repo that holds the skill: when it is not found there, name it
+    # on origin/main (read with `git show`), not MISSING.
+    skill_part = skill if (root / skill).is_file() else "origin/main:" + skill
     text = (f" Next step: {step['reason']} on issue {step['issue']} at head {step['head'][:8]}; "
             f"skill {skill_part}; {_table_version(root)}.")
     return text[:NEXT_STEP_MAX]

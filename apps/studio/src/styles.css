@@ -197,6 +197,8 @@ button { font: inherit; }
 .run-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); }
 .run-bar .b[disabled] { opacity: .6; cursor: default; }
 .run-note { font-size: 11px; color: var(--faint); }
+.run-checkout { margin: 0; color: var(--faint); font-size: var(--fs-meta); }
+.run-behind { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--accent); border-radius: var(--card-radius); color: var(--accent); font-size: var(--fs-card); }
 .cli-confirm { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border-radius: 12px; border: 1px solid var(--accent); background: #1e1610; }
 .cli-confirm .muted { color: var(--muted); }
 .cli-argv { margin: 0; padding: 8px 10px 8px 28px; border-radius: 6px; background: var(--bg); align-self: stretch; font-size: 11px; overflow-wrap: anywhere; }

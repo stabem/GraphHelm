@@ -557,6 +557,38 @@ wake merely because a lease exists. Reload the installed plugin to use the new S
 - **Every verdict goes to two places:** the comment on the PR, and a one-line `SendMessage` to the
   author. A verdict the author never hears about is not delivered.
 
+### Installing the GraphHelm hooks in a lane folder
+
+A lane gets the GraphHelm hooks in its own folder, not in the owner's checkout. Hooks load only
+in a **new** chat, so start a fresh chat after installing and after undoing.
+
+Install (cwd is the lane folder; `CLAUDE_CONFIG_DIR` is the provider home):
+
+    claude plugin install graphhelm@graphhelm --scope local
+
+Then set the env pair in `<folder>\.claude\settings.local.json`, under an `env` block:
+
+    "env": {
+      "GRAPHHELM_ACTOR": "<lane>",
+      "GRAPHHELM_EXECUTION_ID": "graphhelm-openbot-ops"
+    }
+
+- The Stop and SessionStart hooks take the lane actor from `GRAPHHELM_ACTOR`. A session title
+  does not carry it: the SessionStart payload has no `session_title` in this hook version.
+- `<folder>\.graphhelm\team.json` alone does **not** bind a lane (the hook returns no binding).
+  Keep the env pair; `team.json` is optional.
+- Verify in a new chat: the first output shows a `SessionStart:startup hook_success` record and
+  the GraphHelm `FRESH` start line. Until you see that, the lane is not observed.
+
+Undo for a lane folder (the user-scope install in the provider home is untouched):
+
+1. Delete `<folder>\.claude\settings.local.json` (removes `enabledPlugins` and the env pair).
+2. Run `claude plugin uninstall graphhelm@graphhelm --scope local` with cwd = the folder and
+   `CLAUDE_CONFIG_DIR` set to the provider home.
+3. Start a new chat.
+
+Source: #2643 comments 6740695651 and 6740519294 (Yamato's step 1 rollout).
+
 ### No idle lanes: mandatory work loop
 
 Owner order (2026-11-08, #2636). An idle lane is a defect, and every turn leaves a record. This loop

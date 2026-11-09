@@ -252,7 +252,7 @@ class SessionHookTests(unittest.TestCase):
             return
         gets = [item for item in RuntimeHandler.requests if item[0] == "GET" and item[1].endswith("/briefing")]
         self.assertTrue(gets)
-        self.assertEqual(gets[0][2].get("X-GraphHelm-Actor"), "lane-one")
+        self.assertEqual({k.lower(): v for k, v in gets[0][2].items()}.get("x-graphhelm-actor"), "lane-one")
 
     def test_a_slow_runtime_says_the_briefing_is_deferred(self):
         # #2683: a briefing that does not arrive in time is deferred (slow host), not UNOBSERVED.

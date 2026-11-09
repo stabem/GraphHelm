@@ -75,7 +75,7 @@ def _watchdog_answer() -> str:
     argv = _first_line_sys.argv
     host = argv[argv.index("--host") + 1] if "--host" in argv[:-1] else ""
     output_format = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else ("native" if host in {"claude", "codex"} else "portable")
-    context = _watchdog_quote(globals().get("KEEL_CONTEXT", "") + "\nGraphHelm briefing UNOBSERVED.")
+    context = _watchdog_quote(globals().get("KEEL_CONTEXT", "") + "\nGraphHelm briefing deferred (slow host).")
     if _watched_phase == "start" and output_format != "portable":
         return '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":' + context + "}}\n"
     if output_format == "portable":
@@ -1658,9 +1658,9 @@ def main() -> int:
             return 1
         if args.phase == "start":
             if output_format == "portable":
-                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}, separators=(",", ":")))
+                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": start_context}, separators=(",", ":")))
             else:
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": start_context}}))
         elif output_format == "portable":
             report = {"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}
             if args.phase == "end":

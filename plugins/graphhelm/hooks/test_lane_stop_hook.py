@@ -1428,7 +1428,7 @@ class LaneStopTests(unittest.TestCase):
 
         state = {}
         with mock.patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 mock.patch.object(module, "binding", return_value=bound),                 mock.patch.object(module, "token_from_file", return_value="t"),                 mock.patch.object(module, "request", side_effect=fake_request):
-            notes, hint = module.scan_notes({}, state, module.REWAKE_SCAN_BUDGET_SECONDS, True)
+            notes, hint = module.scan_notes({}, state, budget=module.REWAKE_SCAN_BUDGET_SECONDS, from_head=True)
         self.assertEqual((notes, hint), ({}, False))
         self.assertEqual(len(calls), 2)  # the head call, then one page of the short look-back
         self.assertTrue(all("after=0&limit=1" not in url or i == 0 for i, (url, _t) in enumerate(calls)))

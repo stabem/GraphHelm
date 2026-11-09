@@ -597,7 +597,7 @@ def rewake(payload: dict, host: str = "claude") -> int:
         trigger = "ring" if now != seen else ("retry" if retrying else "fallback")
         seen, started = now, time.monotonic()
         try:
-            waiting, ready_hint = scan_notes(payload, scan_state, REWAKE_SCAN_BUDGET_SECONDS, True)
+            waiting, ready_hint = scan_notes(payload, scan_state, budget=REWAKE_SCAN_BUDGET_SECONDS, from_head=True)
         except Exception as error:  # noqa: BLE001 - an unreadable scan is logged and retried, backing off
             _log_scan(log, trigger, "error", started, error)
             failures += 1

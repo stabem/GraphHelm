@@ -136,5 +136,32 @@ fn a_grant_approval_writes_the_same_digest_as_the_owner_approval() {
             .unwrap_or_default()
     };
     assert!(!stdout_digest.is_empty(), "the grant approval reported no digest");
+    let audit_text = std::fs::read_to_string(granted.path().join(".graphhelm/journey-grant-audit/checkout.json")).expect("audit record written");
+    let audit: serde_json::Value = serde_json::from_str(&audit_text).unwrap();
+    assert_eq!(audit["digest"].as_str().unwrap_or_default(), stdout_digest, "the audit digest must equal approved.digest");
     assert_eq!(digest(&granted_flow), digest(&owner_flow), "a grant must not change the digest rule");
+}
+
+/// Review fix (#2661, Shino): a revoked grant for the same actor listed FIRST must not be the one
+/// recorded. The id comes from the entry that passed the check, the valid one after it.
+#[test]
+fn a_revoked_grant_listed_first_is_not_the_one_recorded() {
+    let project = project_with_flow();
+    let _ = owner_token(project.path());
+    std::fs::create_dir_all(project.path().join(".graphhelm")).unwrap();
+    let grant = project.path().join("grant.json");
+    std::fs::write(
+        &grant,
+        r#"{"grants":[{"id":"g-revoked","actor":"keel-journey-qa","scope":["journey.approve"],"revoked":true},{"id":"g-valid","actor":"keel-journey-qa","scope":["journey.approve"],"revoked":false}]}"#,
+    )
+    .unwrap();
+    commit_project(project.path());
+    passing_preview(project.path(), "checkout");
+
+    let output = approve_grant(project.path(), &grant, "keel-journey-qa");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    let audit = std::fs::read_to_string(project.path().join(".graphhelm/journey-grant-audit/checkout.json"))
+        .expect("grant-audit record written");
+    assert!(audit.contains("g-valid"), "the audit must name the valid grant: {audit}");
+    assert!(!audit.contains("g-revoked"), "the audit must not name the revoked grant: {audit}");
 }

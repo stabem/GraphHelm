@@ -1,4 +1,4 @@
-//! `graphhelm journey capture` / `graphhelm journey walked` (#315, spec Â§6.3): the producers of
+//! `graphhelm journey capture` / `graphhelm journey walked` (#315, spec §6.3): the producers of
 //! the two journey records. Both are ordinary sealed signals recorded through the shared signal
 //! core (`execution::signal::execute`) as the owner; this module only builds valid documents
 //! (Ruling 3) and refuses everything else before the store is touched.

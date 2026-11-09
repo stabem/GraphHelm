@@ -125,6 +125,40 @@ class ClosedIssueLeaseTests(unittest.TestCase):
         self.assertEqual(post.call_args.args[6], sha)
         self.assertEqual(out, [2591])
 
+    def test_a_pr_not_reported_merged_is_never_recorded_even_with_a_merge_commit_in_the_reply(self):
+        """#2707: the state check alone must keep it out; the reply carries a valid merge sha and closes list."""
+        view = {"tasks": [{"taskId": f"issue-{n}", "pr": n, "mergeSha": None} for n in (2801, 2802)]}
+        sha = "d" * 40
+
+        def lookup(pr, repo):
+            return {"state": "OPEN" if pr == 2801 else "CLOSED", "mergeCommit": {"oid": sha},
+                    "closingIssuesReferences": [{"number": pr}]}
+
+        with mock.patch.object(tasks_reconcile, "post") as post:
+            out = tasks_reconcile.record_unrecorded_merges(
+                view, "http://127.0.0.1:1", lambda actor: f"cred-{actor}", "gh-team", "stabem/GraphHelm",
+                lookup=lookup)
+        post.assert_not_called()
+        self.assertEqual(out, [])
+
+    def test_at_most_max_prs_per_stop_prs_are_read_and_recorded_in_one_run(self):
+        """#2707: more merged tasks than the cap; the rest wait for the next run."""
+        total = tasks_reconcile.MAX_PRS_PER_STOP + 5
+        view = {"tasks": [{"taskId": f"issue-{n}", "pr": n, "mergeSha": None} for n in range(3000, 3000 + total)]}
+        looked = []
+
+        def lookup(pr, repo):
+            looked.append(pr)
+            return {"state": "MERGED", "mergeCommit": {"oid": "e" * 40}, "closingIssuesReferences": []}
+
+        with mock.patch.object(tasks_reconcile, "post") as post:
+            out = tasks_reconcile.record_unrecorded_merges(
+                view, "http://127.0.0.1:1", lambda actor: f"cred-{actor}", "gh-team", "stabem/GraphHelm",
+                lookup=lookup)
+        self.assertEqual(len(looked), tasks_reconcile.MAX_PRS_PER_STOP, "GitHub is read at most the cap")
+        self.assertEqual(post.call_count, tasks_reconcile.MAX_PRS_PER_STOP)
+        self.assertEqual(out, list(range(3000, 3000 + tasks_reconcile.MAX_PRS_PER_STOP)))
+
     def test_an_overdue_lease_already_released_for_its_closed_issue_is_not_released_twice(self):
         view = {"leases": [{"taskId": "issue-1309", "lane": "gh-claude-14", "claimSequence": 13082,
                             "overdue": True, "leaseSeconds": 1800, "expiresAt": "x"}]}

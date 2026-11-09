@@ -202,6 +202,11 @@ def origin_url(cwd: str) -> str:
 MAX_STEP_BLOCKS_PER_TURN = 3
 
 
+def new_turn_state() -> dict:
+    """The per-turn ready-step state: reset at each new Stop cycle."""
+    return _new_step_state()
+
+
 def _new_step_state() -> dict:
     return {"injected": set(), "blocks": 0}
 
@@ -233,7 +238,8 @@ NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team executio
                 "then record your operator_note reply with replyTo before stopping.")
 
 
-def evaluate(payload: dict, host: str = "claude") -> str | None:
+def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = None,
+             turn_state: dict | None = None) -> str | None:
     """#1278: one Stop for this lane, callable in-process by `stop_hook.py`: reconcile, then the
     reminder reason (or None)."""
     # Every Stop refreshes this lane's finished PRs and released claims. An offline
@@ -268,6 +274,12 @@ def evaluate(payload: dict, host: str = "claude") -> str | None:
     # per stop cycle is enough, even when the lane cannot send its reply.
     if payload.get("stop_hook_active") is True:
         return None
+    # #2643: a ready step is injected first; the per-turn state is passed by main() and reset
+    # at the start of each Stop cycle, so a stop with a step already injected does not re-block.
+    if ready and turn_state is not None:
+        reason = ready_step_reason(turn_state, ready)
+        if reason is not None:
+            return reason
     return NOTES_REASON if scan_status(payload) == 1 else None
 
 
@@ -431,7 +443,10 @@ def main() -> int:
         payload = hook_input()
     except (ValueError, OSError):
         return 0
-    reason = evaluate(payload, "codex" if "--host=codex" in sys.argv else "claude")
+    # #2643: the ready list comes from the Runtime lookup (next slice); until it lands, no step is
+    # ready and the turn state is fresh for this Stop cycle.
+    reason = evaluate(payload, "codex" if "--host=codex" in sys.argv else "claude",
+                      ready=[], turn_state=new_turn_state())
     if reason:
         print(json.dumps({"decision": "block", "reason": reason}))
     return 0

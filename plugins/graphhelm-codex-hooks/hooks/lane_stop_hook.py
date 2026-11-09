@@ -234,12 +234,23 @@ def ready_step_reason(state: dict, ready: list[dict]) -> str | None:
     return None
 
 
+# #2643 slice 2: a new review, verdict or merge for this lane rings its waiter, so the rewake
+# scans now. The ring is the file rewake reads by mtime (base.with_suffix(".waiter.rang")).
+def ring_lane(base: Path) -> None:
+    """Touch the lane's waiter ring so an idle rewake sees a new event."""
+    rang = base.with_suffix(".waiter.rang")
+    rang.parent.mkdir(parents=True, exist_ok=True)
+    rang.touch()
+    os.utime(rang, None)
+
+
 NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team execution, act on them, "
                 "then record your operator_note reply with replyTo before stopping.")
 
 
 def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = None,
-             turn_state: dict | None = None) -> str | None:
+             turn_state: dict | None = None, new_event: bool = False,
+             ring_base: Path | None = None) -> str | None:
     """#1278: one Stop for this lane, callable in-process by `stop_hook.py`: reconcile, then the
     reminder reason (or None)."""
     # Every Stop refreshes this lane's finished PRs and released claims. An offline
@@ -276,6 +287,9 @@ def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = Non
         return None
     # #2643: a ready step is injected first; the per-turn state is passed by main() and reset
     # at the start of each Stop cycle, so a stop with a step already injected does not re-block.
+    # #2643 slice 2: a new review, verdict or merge rings this lane before the Stop decides.
+    if new_event and ring_base is not None:
+        ring_lane(ring_base)
     if ready and turn_state is not None:
         reason = ready_step_reason(turn_state, ready)
         if reason is not None:

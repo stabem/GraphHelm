@@ -234,6 +234,16 @@ def ready_step_reason(state: dict, ready: list[dict]) -> str | None:
     return None
 
 
+# #2643 slice 2: a new review, verdict or merge for this lane rings its waiter, so the rewake
+# scans now. The ring is the file rewake reads by mtime (base.with_suffix(".waiter.rang")).
+def ring_lane(base: Path) -> None:
+    """Touch the lane's waiter ring so an idle rewake sees a new event."""
+    rang = base.with_suffix(".waiter.rang")
+    rang.parent.mkdir(parents=True, exist_ok=True)
+    rang.touch()
+    os.utime(rang, None)
+
+
 NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team execution, act on them, "
                 "then record your operator_note reply with replyTo before stopping.")
 

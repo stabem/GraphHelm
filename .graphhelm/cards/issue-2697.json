@@ -1,5 +1,5 @@
 {
-  "promise": "A lane's rewake scans the journal incrementally from its last read sequence (the first scan costs the head call, later ones a single small page), backs off exponentially (2 s to 60 s) after a failed scan, and on a ring that follows a task record able to make a step ready (review_assigned, review_verdict, pr_opened) asks for the lane's ready steps and exits 2 once per ready step head, so an idle reviewer is woken by an assigned review with no note. A waiter whose heartbeat has been untouched for 25 h (a session killed without SessionEnd) exits and removes its pid and heartbeat files, and every waiter start sweeps up to 50 pid files whose process is gone.",
+  "promise": "A lane's rewake scans the journal incrementally from its last read sequence (the first scan costs the head call, later ones a single small page), backs off exponentially (2 s to 60 s) after a failed scan, and on a ring that follows a task record able to make a step ready (review_assigned, review_verdict, pr_opened) asks for the lane's ready steps and exits 2 once per ready step head, so an idle reviewer is woken by an assigned review with no note. A waiter whose heartbeat has been untouched for 25 h (a session killed without SessionEnd) exits and removes its pid and heartbeat files, and every waiter start sweeps up to 50 pid files whose process is gone. A note that is itself a reply (replyTo set) is not counted as a request the lane must answer. note_reply.py reads back from the head taken before its write and, when the reply is not found, says what the Runtime answered (decision, reason, or HTTP 409) so a refused or lost write is told apart from a read miss.",
   "scopePaths": [
     "plugins/graphhelm/hooks/lane_stop_hook.py",
     "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py",
@@ -7,7 +7,9 @@
     ".graphhelm/cards/issue-2697.json",
     "plugins/graphhelm/hooks/session_hook.py",
     "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
-    "plugins/graphhelm/hooks/test_session_hook.py"
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    "tools/task-record/note_reply.py",
+    "tools/task-record/test_note_reply.py"
   ],
   "proof": "python -m pytest plugins/graphhelm/hooks/test_lane_stop_hook.py (growing delay, incremental scan with ready hint, ring with ready step wakes once, existing rewake tests); break-once: ready lookup removed -> the ready-step test fails; then the zero-message proof on a docs PR with a reviewer assigned by record only; python -m pytest plugins/graphhelm/hooks/test_session_hook.py -k 'session_is_gone or quiet_heartbeat or sweep_removes'; break-once: drop the dead-heartbeat condition -> the dead-waiter test fails",
   "exportedSymbols": [

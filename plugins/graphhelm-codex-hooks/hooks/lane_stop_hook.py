@@ -140,7 +140,7 @@ def scan_notes(payload: dict | None, state: dict) -> tuple[dict[str, dict], bool
             actor = event.get("actor", {})
             if actor.get("type") == "agent" and actor.get("id") == lane:
                 unanswered.pop(reply_to, None)
-            if to == lane:
+            if to == lane and reply_to is None:  # #2697: a reply is an answer, not a request to answer
                 unanswered[signal_id] = event
         state["after"] = after  # a failure after this keeps what was read; the next scan goes on from here
         if after >= head:

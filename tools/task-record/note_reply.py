@@ -67,13 +67,20 @@ def main(argv=None):
         print(json.dumps({"url": base + "/signal", "signal": signal}, indent=2))
         return 0
     token = open(args.token_file, encoding="utf-8").read().strip()
+    # The read-back starts at the head BEFORE the write, so a busy journal cannot push the reply out
+    # of a window taken after it.
+    after = _call(base + "/events?after=0&limit=1", token, args.lane)["data"]["head"]
+    start = after
+    outcome = "the Runtime answered 200"
     try:
-        _call(base + "/signal", token, args.lane, "POST", {"signal": signal}, signal["id"])
+        reply = _call(base + "/signal", token, args.lane, "POST", {"signal": signal}, signal["id"])
+        data = reply.get("data") if isinstance(reply, dict) else None
+        if isinstance(data, dict):
+            outcome = f"the Runtime answered decision={data.get('decision')} reason={data.get('rejectionReason')}"
     except urllib.error.HTTPError as error:
-        if error.code != 409:  # 409: this reply was already committed
+        if error.code != 409:
             raise SystemExit(f"note_reply: the Runtime refused the reply (HTTP {error.code})")
-    head = _call(base + "/events?after=0&limit=1", token, args.lane)["data"]["head"]
-    after = max(0, head - 512)
+        outcome = "HTTP 409: that idempotency key was already used by an earlier write"
     while True:
         data = _call(f"{base}/events?after={after}&limit=512", token, args.lane)["data"]
         for event in data["events"]:
@@ -81,10 +88,11 @@ def main(argv=None):
             record = event.get("kind", {}).get("data", {})
             if (event.get("actor", {}).get("id") == args.lane and record.get("signalId") == signal["id"]
                     and record.get("replyTo") == args.reply_to):
-                print(f"note_reply: recorded at sequence {event['sequence']} (replyTo {args.reply_to})")
+                print(f"note_reply: recorded at sequence {event['sequence']} (replyTo {args.reply_to}); {outcome}")
                 return 0
         if not data["events"] or after >= data["head"]:
-            raise SystemExit("note_reply: the reply was not found on read-back")
+            raise SystemExit(f"note_reply: not found on read-back (journal read from sequence {start} to {after}); "
+                             f"{outcome}. If this says 409, the write was refused or lost earlier, not missed by the read.")
 
 
 if __name__ == "__main__":

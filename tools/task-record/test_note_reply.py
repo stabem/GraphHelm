@@ -38,6 +38,7 @@ class NoteReplyTests(unittest.TestCase):
 class FakeRuntime(BaseHTTPRequestHandler):
     recorded = []
     store_reply = True
+    conflict = False
 
     def _send(self, body):
         raw = json.dumps(body).encode()
@@ -49,6 +50,11 @@ class FakeRuntime(BaseHTTPRequestHandler):
 
     def do_POST(self):
         signal = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["signal"]
+        if self.conflict:
+            self.send_response(409)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if self.store_reply:
             self.recorded.append(signal)
         self._send({"ok": True, "data": {"decision": "rejected", "rejectionReason": "signal_not_actionable"}})
@@ -67,6 +73,7 @@ class NoteReplyReadBackTests(unittest.TestCase):
     def setUp(self):
         FakeRuntime.recorded = []
         FakeRuntime.store_reply = True
+        FakeRuntime.conflict = False
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeRuntime)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.temp = tempfile.TemporaryDirectory()
@@ -96,6 +103,14 @@ class NoteReplyReadBackTests(unittest.TestCase):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not found on read-back", result.stderr)
+        self.assertIn("decision=rejected reason=signal_not_actionable", result.stderr)  # what the Runtime said
+
+    def test_a_409_with_no_journal_record_is_told_apart_from_a_read_miss(self):
+        FakeRuntime.conflict = True
+        result = self.run_tool()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HTTP 409", result.stderr)
+        self.assertIn("refused or lost earlier, not missed by the read", result.stderr)
 
 
 if __name__ == "__main__":

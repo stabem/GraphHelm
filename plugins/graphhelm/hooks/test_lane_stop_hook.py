@@ -1393,6 +1393,27 @@ class LaneStopTests(unittest.TestCase):
         (next(self.hook_state_dir.glob("*.rewake.pid"))).write_text("0", encoding="ascii")
         worker.join(5.0)
 
+    def test_a_note_that_is_itself_a_reply_does_not_ask_for_a_reply(self):
+        # #2697: replies addressed to a lane were counted as requests the lane had to answer.
+        module = lane_stop_hook_module()
+        bound = ("exec-1", "token-file", "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+
+        def note(sequence, signal_id, reply_to=None):
+            data = {"kind": "operator_note", "executionId": "exec-1", "signalId": signal_id, "to": "lane-a"}
+            if reply_to:
+                data["replyTo"] = reply_to
+            return {"sequence": sequence, "actor": {"id": "lane-b", "type": "agent"},
+                    "kind": {"type": "signal_recorded", "data": data}}
+
+        def fake_request(url, token, method, body=None, headers=None, timeout=1.0, max_reply=0):
+            if "limit=1" in url:
+                return {"data": {"head": 2, "events": []}}
+            return {"data": {"head": 2, "events": [note(1, "ask-1"), note(2, "answer-1", reply_to="earlier")]}}
+
+        with mock.patch.dict(os.environ, {"GRAPHHELM_ACTOR": "lane-a"}),                 mock.patch.object(module, "binding", return_value=bound),                 mock.patch.object(module, "token_from_file", return_value="t"),                 mock.patch.object(module, "request", side_effect=fake_request):
+            notes, _hint = module.scan_notes({}, {})
+        self.assertEqual(sorted(notes), ["ask-1"])
+
     def test_no_addressed_note_allows_stop(self):
         self.note("other-1", to="codex-5")
         self.note("room-1")

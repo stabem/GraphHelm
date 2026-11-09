@@ -129,6 +129,8 @@ mod journey_explore_browser;
 mod journey_explore_cli;
 #[path = "journey_flow_cli.rs"]
 mod journey_flow_cli;
+#[path = "journey_grant.rs"]
+mod journey_grant;
 #[path = "journey_flow_surfaces.rs"]
 mod journey_flow_surfaces;
 #[path = "journey_live_browser.rs"]

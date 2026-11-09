@@ -264,6 +264,8 @@ pub enum JourneyCommand {
     Compile(JourneyCompileArgs),
     /// Approve a canonical flow at the project's HEAD and write its generated contracts.
     Approve(JourneyApproveArgs),
+    /// Approve a flow with a scoped, revocable grant instead of the owner token (#2625).
+    ApproveGrant(JourneyApproveGrantArgs),
     /// Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's
     /// current content: editing the flow clears it.
     Reject(JourneyRejectArgs),
@@ -579,6 +581,17 @@ pub struct JourneySignLegacyArgs {
     /// The project's owner token (`.graphhelm/events.token`).
     #[arg(long = "token-file")]
     pub token_file: Option<PathBuf>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct JourneyApproveGrantArgs {
+    pub id: String,
+    #[arg(long)]
+    pub grant: PathBuf,
+    #[arg(long)]
+    pub actor: String,
+    #[arg(long)]
+    pub project: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

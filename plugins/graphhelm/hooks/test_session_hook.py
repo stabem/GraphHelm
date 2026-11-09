@@ -310,6 +310,18 @@ class SessionHookTests(unittest.TestCase):
             rewake.write_text("999999999", encoding="ascii")
             self.assertTrue(hook._session_gone(payload, bound, "claude", heartbeat))
 
+    def test_a_fresh_heartbeat_is_never_a_gone_session_whatever_the_rewake_says(self):
+        # The age guard: dropping it would end every waiter whose rewake file is missing.
+        hook = self.load_hook()
+        state = Path(self.temp.name) / "age-guard-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        payload = {"session_id": "session-fresh"}
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}):
+            heartbeat = hook._heartbeat_path(payload, bound, "claude")
+            heartbeat.write_text("", encoding="ascii")  # fresh; no rewake pid file at all
+            self.assertFalse(hook._session_gone(payload, bound, "claude", heartbeat))
+
     def test_a_live_waiter_with_a_quiet_heartbeat_keeps_running(self):
         hook = self.load_hook()
         heartbeat = Path(self.temp.name) / "quiet.alive"

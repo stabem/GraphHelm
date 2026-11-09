@@ -538,7 +538,7 @@ def rewake_retry_delay(failures: int) -> float:
     return min(REWAKE_RETRY_MAX_SECONDS, REWAKE_RETRY_SECONDS * (2 ** max(0, failures - 1)))
 
 
-def _step_key(step: dict) -> str:
+def _rewake_step_id(step: dict) -> str:
     return f"step:{step['issue']}:{step['step']}:{step['head']}"
 
 
@@ -596,11 +596,11 @@ def rewake(payload: dict, host: str = "claude") -> int:
         # #2697: a task record that can make a step ready (an assigned review, a BLOCK to fix) is not
         # a note; the ready lookup (one /tasks call) runs only when such a record has arrived.
         steps = [step for step in (_lookup_ready_for_rewake(payload) if ready_hint else [])
-                 if _step_key(step) not in _read_notified(notified)]
+                 if _rewake_step_id(step) not in _read_notified(notified)]
         _log_scan(log, trigger, "wake" if (fresh or steps) else ("seen" if waiting else "none"), started)
         if fresh or steps:
             try:
-                notified.write_text(json.dumps(sorted(set(waiting) | {_step_key(step) for step in steps}
+                notified.write_text(json.dumps(sorted(set(waiting) | {_rewake_step_id(step) for step in steps}
                                                     | (_read_notified(notified) - set(waiting)))), encoding="utf-8")
             except OSError:
                 pass

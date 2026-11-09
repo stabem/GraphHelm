@@ -3583,11 +3583,17 @@ pub(crate) fn run_approve_grant(args: &crate::args::JourneyApproveGrantArgs) -> 
     };
     // One passing grant, used for both the check and the id it records (#2661 review): unrevoked,
     // scoped to journey.approve, and naming this actor.
-    let passing = grant["grants"].as_array().into_iter().flatten().find(|entry| {
-        entry["actor"] == args.actor.as_str()
-            && entry["revoked"] != Value::Bool(true)
-            && entry["scope"].as_array().is_some_and(|scope| scope.iter().any(|s| s == "journey.approve"))
-    });
+    let passing = grant["grants"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| {
+            entry["actor"] == args.actor.as_str()
+                && entry["revoked"] != Value::Bool(true)
+                && entry["scope"]
+                    .as_array()
+                    .is_some_and(|scope| scope.iter().any(|s| s == "journey.approve"))
+        });
     let Some(passing) = passing else {
         return input_error(
             COMMAND,
@@ -3596,10 +3602,13 @@ pub(crate) fn run_approve_grant(args: &crate::args::JourneyApproveGrantArgs) -> 
     };
     let grant_id = passing["id"].as_str().unwrap_or_default().to_owned();
     let outcome = approve_owned(&args.id, project.clone());
-    if outcome_ok(&outcome) {
-        if let Err(message) = write_grant_audit(&project, &args.id, &args.actor, &grant_id) {
-            return input_error(COMMAND, &format!("the approval was written but its grant-audit record was not: {message}"));
-        }
+    if outcome_ok(&outcome)
+        && let Err(message) = write_grant_audit(&project, &args.id, &args.actor, &grant_id)
+    {
+        return input_error(
+            COMMAND,
+            &format!("the approval was written but its grant-audit record was not: {message}"),
+        );
     }
     outcome
 }
@@ -3607,14 +3616,31 @@ pub(crate) fn run_approve_grant(args: &crate::args::JourneyApproveGrantArgs) -> 
 /// The grant-audit record (#2625, option a): written beside the approval, after a successful
 /// approval. It names the grant, the actor, the flow, its revision and digest, and the time; the
 /// approval record and its digest rule are not changed.
-fn write_grant_audit(project: &Path, flow: &str, actor: &str, grant_id: &str) -> Result<(), String> {
-    let approved = read(&project.join(".graphhelm/journeys").join(format!("{flow}.journey.yaml"))).ok().map(|(_, value)| value);
+fn write_grant_audit(
+    project: &Path,
+    flow: &str,
+    actor: &str,
+    grant_id: &str,
+) -> Result<(), String> {
+    let approved = read(
+        &project
+            .join(".graphhelm/journeys")
+            .join(format!("{flow}.journey.yaml")),
+    )
+    .ok()
+    .map(|(_, value)| value);
     let (revision, digest) = approved
         .as_ref()
         .map(|flow| {
             (
-                flow["approved"]["revision"].as_str().unwrap_or_default().to_owned(),
-                flow["approved"]["digest"].as_str().unwrap_or_default().to_owned(),
+                flow["approved"]["revision"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+                flow["approved"]["digest"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
             )
         })
         .unwrap_or_default();

@@ -31,9 +31,10 @@ class NextStepText(unittest.TestCase):
         self.assertNotIn("MISSING", text)
         self.assertIn("table " + hashlib.sha256(b"table").hexdigest()[:12], text)
 
-    def test_missing_skill_is_named_missing(self):
+    def test_a_skill_not_under_the_cwd_is_named_on_origin_main_not_missing(self):
         text = session_hook.next_step_text([STEP], self.root(with_skill=False))
-        self.assertIn("MISSING " + session_hook.STEP_SKILLS["review"], text)
+        self.assertIn("origin/main:" + session_hook.STEP_SKILLS["review"], text)
+        self.assertNotIn("MISSING", text)
 
     def test_missing_table_is_named_missing(self):
         self.assertIn("table missing", session_hook.next_step_text([STEP], self.root(with_table=False)))

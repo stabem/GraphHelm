@@ -51,6 +51,27 @@ class ReadySteps(unittest.TestCase):
         self.assertEqual(hook.ready_steps(data, LANE), [])
 
 
+class StaleTasks(unittest.TestCase):
+    """The projection can hold a task whose PR merged with no merge record: idle for days."""
+
+    def clock(self, days):
+        import datetime
+        at = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        return {"lastAt": at.isoformat().replace("+00:00", "Z")}
+
+    def test_a_block_idle_for_days_is_not_a_ready_step(self):
+        data = {"tasks": [task(lane=LANE, blockedBy={"reviewer": "x"}, clock=self.clock(8))]}
+        self.assertEqual(hook.ready_steps(data, LANE), [])
+
+    def test_an_old_assigned_review_is_not_a_ready_step(self):
+        data = {"tasks": [task(assignedReviewers=[LANE], clock=self.clock(8))]}
+        self.assertEqual(hook.ready_steps(data, LANE), [])
+
+    def test_a_recent_block_is_still_a_ready_step(self):
+        data = {"tasks": [task(lane=LANE, blockedBy={"reviewer": "x"}, clock=self.clock(0.1))]}
+        self.assertEqual(len(hook.ready_steps(data, LANE)), 1)
+
+
 class LookupReady(unittest.TestCase):
     bound = ("graphhelm-openbot-ops", "token.file", "http://127.0.0.1:8793", "origin", "node")
 

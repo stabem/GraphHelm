@@ -192,9 +192,9 @@ pub(crate) fn run_checkout(project: &Path) -> Value {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
                 _ => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
+                    // Past the deadline (or the wait failed): stop git and give no value. A kill
+                    // that fails leaves nothing to report beyond the same "unknown" answer.
+                    return child.kill().ok().and(None);
                 }
             }
         };

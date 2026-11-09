@@ -1483,9 +1483,18 @@ fn record_refusal(flow: &Value, state: &mut Value, code: &str, pointer: &str) {
                 | "preview.launcher_not_isolated"
         )
     {
-        detail["message"] = failure_message(code, pointer).into();
-        detail["startError"] =
-            json!({"code":code,"pointer":pointer,"message":failure_message(code,pointer)});
+        // #2658: `watch.app_down` at `/base` means the base missed the reachability probe and no
+        // launcher is declared; the message names both, so a slow base is not read as a dead app.
+        let message = if code == "watch.app_down" && pointer == "/base" {
+            safe_detail(&format!(
+                "the base {} did not answer the reachability probe, and the project declares no launcher (.graphhelm/journey-fixture.json) to start it; start the app or declare a launcher, then retry ({code}, {pointer})",
+                run_base(flow)
+            ))
+        } else {
+            failure_message(code, pointer)
+        };
+        detail["message"] = message.clone().into();
+        detail["startError"] = json!({"code":code,"pointer":pointer,"message":message});
     }
     state["detail"] = detail.clone();
     state["reason"] = failed_reason(code).into();
@@ -5014,6 +5023,26 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         let mut refused = json!({"state":"running","screens":{},"edges":{}});
         super::record_refusal(&flow, &mut refused, "driver.secret_missing", "/secrets/0");
         assert_eq!(refused["reason"], "driver.secret_missing", "{refused}");
+    }
+
+    /// #2658: a base that missed the reachability probe, with no launcher declared, failed with a
+    /// bare "did not become reachable"; the reason must name the base, the probe and the missing
+    /// launcher. Cost: one in-memory state; no subprocess or network.
+    #[test]
+    fn an_app_down_without_launcher_names_the_missed_probe_and_the_base() {
+        let flow = json!({"id":"probe","base":"http://127.0.0.1:5184","screens":[],"edges":[]});
+        let mut state = json!({"state":"running"});
+        super::record_refusal(&flow, &mut state, "watch.app_down", "/base");
+        assert_eq!(state["reason"], "watch.app_down", "{state}");
+        for message in [
+            &state["detail"]["message"],
+            &state["detail"]["startError"]["message"],
+        ] {
+            let text = message.as_str().unwrap_or_default();
+            assert!(text.contains("reachability probe"), "{state}");
+            assert!(text.contains(&super::run_base(&flow)), "{state}");
+            assert!(text.contains(".graphhelm/journey-fixture.json"), "{state}");
+        }
     }
 
     /// #586: a flow the preview refuses before any browser starts says why, in the refusal's own

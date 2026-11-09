@@ -338,6 +338,15 @@ def _lane_token_file(directory: Path) -> str:
 
 
 def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None] | None:
+    found = _binding(payload)
+    if found is None and os.environ.get("GRAPHHELM_EXECUTION_ID"):
+        # An environment that names an execution but yields no token anywhere is still a refused
+        # binding: the start says so (UNOBSERVED) instead of going quiet.
+        raise ValueError("invalid execution binding")
+    return found
+
+
+def _binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None] | None:
     execution = os.environ.get("GRAPHHELM_EXECUTION_ID", "")
     token_file = os.environ.get("GRAPHHELM_TOKEN_FILE", "")
     url = os.environ.get("GRAPHHELM_RUNTIME_URL", "http://127.0.0.1:8791").rstrip("/")

@@ -1,0 +1,10 @@
+{
+  "promise": "A preview run's stored JSON records `head` (the project HEAD the run used) and `behindOrigin` (commits behind origin/main, from local refs, no fetch), and carries a warning when behindOrigin is above zero. Both places that create a running state (the door in start_with and the runner in run) record them; a later write of the same run keeps them; a new run inherits nothing. The run key (flow digest + scope commit) is unchanged. Old runs read head/behindOrigin as absent.",
+  "scopePaths": [
+    ".graphhelm/cards/issue-2468.json",
+    "apps/cli/src/commands/journey_preview.rs"
+  ],
+  "proof": "cargo test -p graphhelm-cli journey_preview (run_checkout_fields_tests, checkout_on_every_write_tests); cargo fmt -p graphhelm-cli --check; cargo clippy -p graphhelm-cli -- -D warnings; end to end: graphhelm journey preview --force on a temp project whose HEAD is 1 behind origin/main, stored state.json has head, behindOrigin 1 and the warning. Break-once: disable the warning or the door's record_checkout and the tests / the stored state go red. Studio display is #2469 and not observed here.",
+  "exportedSymbols": [],
+  "journeys": []
+}

@@ -170,6 +170,73 @@ fn flow_key_and_source(project: &Path, id: &str) -> Result<(Value, String, Strin
     Ok((flow, digest, commit, source))
 }
 
+/// #2468: the project HEAD and how many commits it is behind origin/main, from local refs only
+/// (a stale origin/main understates the count; the warning says so). Fields, not part of the key.
+pub(crate) fn run_checkout(project: &Path) -> Value {
+    // Local refs only, but git still runs under a deadline: a hung git must not hold a run start.
+    let git = |args: &[&str]| {
+        let mut child = graphhelm_process::command("git")
+            .arg("-C")
+            .arg(project)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                _ => {
+                    // Past the deadline (or the wait failed): stop git and give no value. A kill
+                    // that fails leaves nothing to report beyond the same "unknown" answer.
+                    return child.kill().ok().and(None);
+                }
+            }
+        };
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut child.stdout.take()?, &mut text).ok()?;
+        status.success().then(|| text.trim().to_owned())
+    };
+    let head = git(&["rev-parse", "HEAD"]).filter(|sha| sha.len() == 40);
+    let behind =
+        git(&["rev-list", "--count", "HEAD..origin/main"]).and_then(|n| n.parse::<u64>().ok());
+    json!({"head": head, "behindOrigin": behind})
+}
+
+/// The state of a run that is starting: its key, its time, and the checkout it ran on (#2468).
+/// The checkout fields are record fields only; the run key is digest + commit. The warning says
+/// what to do; the count is only as current as the last fetch.
+fn new_run_state(project: &Path, digest: &str, commit: &str) -> Value {
+    let mut state = json!({"preview":true,"digest":digest,"commit":commit,
+        "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
+        "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+    record_checkout(&mut state, project);
+    state
+}
+
+/// Records the checkout the run starts on: `head`, `behindOrigin` and, when behind, the warning.
+/// Both places that create a `running` state (the door and the runner) call this.
+fn record_checkout(state: &mut Value, project: &Path) {
+    let checkout = run_checkout(project);
+    state["head"] = checkout["head"].clone();
+    state["behindOrigin"] = checkout["behindOrigin"].clone();
+    if let Some(warning) = behind_warning(&checkout) {
+        state["warning"] = json!(warning);
+    }
+}
+
+/// The card's warning: set only when the checkout was behind origin/main (#2468).
+pub(crate) fn behind_warning(checkout: &Value) -> Option<&'static str> {
+    (checkout["behindOrigin"].as_u64().unwrap_or(0) > 0).then_some(
+        "This run used a checkout behind origin/main (as of the last fetch). Update the project (git pull), then run again.",
+    )
+}
+
 /// The flow's scope commit, part of the key (#1309 card 1c): the latest commit that touched the
 /// flow file or any path the flow's screens scope. The same flow on unrelated new code keeps its
 /// preview; a change to what the flow covers is a new preview. The paths are the draft's own, so a
@@ -525,7 +592,25 @@ fn save_state(dir: &Path, state: &Value) {
 }
 
 fn write_state(dir: &Path, state: &Value) -> std::io::Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(state).map_err(std::io::Error::other)?;
+    // #2468: the checkout fields belong to the run, set once when it starts. A later write of
+    // the SAME run (same runId: terminal state, progress) carries forward what the stored state
+    // holds; it never recomputes them. A new run (another runId) inherits nothing.
+    let mut state = state.clone();
+    let stored = std::fs::read(dir.join(STATE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+    if let Some(stored) = stored.filter(|s| {
+        state.get("head").is_none()
+            && state.get("runId").is_some()
+            && s.get("runId") == state.get("runId")
+    }) {
+        for key in ["head", "behindOrigin", "warning"] {
+            if let Some(value) = stored.get(key) {
+                state[key] = value.clone();
+            }
+        }
+    }
+    let mut bytes = serde_json::to_vec_pretty(&state).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
     super::atomic::atomic_write(&dir.join(STATE), &bytes)
 }
@@ -1215,6 +1300,8 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     let mut running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
         "runId":uuid::Uuid::new_v4().to_string(),"state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
         "screens":{},"edges":{}});
+    // #2468: the door writes the `running` state the runner reuses, so it records the checkout.
+    record_checkout(&mut running, &project);
     if let Err(error) = write_state(&dir, &running) {
         return io_answer(
             current,
@@ -1917,9 +2004,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
     if state["digest"] != digest.as_str() || state["state"] != "running" {
-        state = json!({"preview":true,"digest":digest,"commit":commit,
-            "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
-            "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
+        state = new_run_state(&project, &digest, &commit);
     }
     state["kind"] = if flow["status"] == "approved" {
         "replay"
@@ -5591,5 +5676,266 @@ mod start_lock_wiring_tests {
         assert_ne!(answer["reason"], "preview.busy", "{answer}");
         assert_eq!(answer["state"], "ready", "{answer}");
         assert!(!lock.exists(), "the taken-over lock is released on return");
+    }
+}
+
+#[cfg(test)]
+mod run_checkout_fields_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
+    /// Red: `run_checkout` does not exist yet. Card #2468: the run records the project HEAD
+    /// (`head`) and how many commits it was behind origin/main (`behindOrigin`), as fields only.
+    #[test]
+    fn a_run_records_head_and_behind_origin_as_fields_outside_the_key() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        let head = String::from_utf8(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_owned();
+        let checkout = run_checkout(dir);
+        assert_eq!(checkout["head"], head.as_str());
+        assert_eq!(checkout["behindOrigin"], 0);
+        assert!(
+            behind_warning(&checkout).is_none(),
+            "no warning when not behind"
+        );
+    }
+
+    /// The card's proof: HEAD behind origin/main (count > 0) gives the warning; it fails if the
+    /// warning is turned off or the count forced to 0.
+    #[test]
+    fn a_checkout_behind_origin_main_gets_the_warning() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let checkout = run_checkout(dir);
+        assert_eq!(checkout["behindOrigin"], 1, "{checkout}");
+        let warning = behind_warning(&checkout).expect("behind origin/main must warn");
+        assert!(warning.contains("git pull"), "{warning}");
+    }
+
+    /// The door's `running` state is the one the runner reuses; `record_checkout` on it must give
+    /// head, count and warning. Removing the door's call is caught by the end-to-end observation
+    /// in the PR (a stored state from `journey preview --force`); this pins the shared helper.
+    #[test]
+    fn record_checkout_fills_a_door_state_for_a_checkout_behind_origin() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let mut state = json!({"state":"running","runId":"r"});
+        record_checkout(&mut state, dir);
+        assert_eq!(state["behindOrigin"], 1, "{state}");
+        assert!(
+            state["head"].is_string() && state["warning"].is_string(),
+            "{state}"
+        );
+    }
+
+    /// The real run-start path: a run started on a checkout behind origin/main records its head,
+    /// the count and the warning. Removing any of those assignments fails this.
+    #[test]
+    fn a_new_run_state_records_head_behind_count_and_warning() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "one",
+            ],
+        );
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "two",
+            ],
+        );
+        git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        let state = new_run_state(dir, "d", "c");
+        assert_eq!(state["head"].as_str().map(str::len), Some(40), "{state}");
+        assert_eq!(state["behindOrigin"], 1, "{state}");
+        assert!(
+            state["warning"]
+                .as_str()
+                .is_some_and(|w| w.contains("git pull")),
+            "{state}"
+        );
+        assert_eq!(state["digest"], "d");
+    }
+}
+
+#[cfg(test)]
+mod checkout_on_every_write_tests {
+    use super::*;
+
+    /// A later write keeps the run's own `head`/`behindOrigin`/`warning` and does not recompute
+    /// them; a state that never had them gains none.
+    #[test]
+    fn a_later_write_carries_the_runs_checkout_fields_without_recomputing() {
+        let project = tempfile::tempdir().unwrap();
+        let dir = project.path().join(PREVIEWS).join("flow");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(project.path())
+            .args(["init", "-q"])
+            .status()
+            .unwrap();
+        write_state(&dir, &json!({"state":"ready","digest":"d","commit":"c"})).unwrap();
+        let bare: Value = serde_json::from_slice(&std::fs::read(dir.join(STATE)).unwrap()).unwrap();
+        assert!(
+            bare.get("head").is_none() && bare.get("behindOrigin").is_none(),
+            "{bare}"
+        );
+        write_state(
+            &dir,
+            &json!({"runId":"r1","state":"running","head":"h","behindOrigin":3,"warning":"w"}),
+        )
+        .unwrap();
+        write_state(&dir, &json!({"runId":"r1","state":"ready"})).unwrap();
+        let stored: Value =
+            serde_json::from_slice(&std::fs::read(dir.join(STATE)).unwrap()).unwrap();
+        assert_eq!(stored["head"], "h", "{stored}");
+        assert_eq!(stored["behindOrigin"], 3, "{stored}");
+        assert_eq!(stored["warning"], "w", "{stored}");
+        // A new run (another runId) must not inherit the previous run's checkout fields.
+        write_state(&dir, &json!({"runId":"r2","state":"running"})).unwrap();
+        let fresh: Value =
+            serde_json::from_slice(&std::fs::read(dir.join(STATE)).unwrap()).unwrap();
+        assert!(
+            fresh.get("head").is_none()
+                && fresh.get("behindOrigin").is_none()
+                && fresh.get("warning").is_none(),
+            "{fresh}"
+        );
     }
 }

@@ -9,7 +9,9 @@
     "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
     "plugins/graphhelm/hooks/test_session_hook.py",
     "tools/task-record/note_reply.py",
-    "tools/task-record/test_note_reply.py"
+    "tools/task-record/test_note_reply.py",
+    "plugins/graphhelm/hooks/test_no_duplicate_defs.py",
+    "plugins/graphhelm-codex-hooks/hooks/test_ready_step.py"
   ],
   "proof": "python -m pytest plugins/graphhelm/hooks/test_lane_stop_hook.py (growing delay, incremental scan with ready hint, ring with ready step wakes once, existing rewake tests); break-once: ready lookup removed -> the ready-step test fails; then the zero-message proof on a docs PR with a reviewer assigned by record only; python -m pytest plugins/graphhelm/hooks/test_session_hook.py -k 'session_is_gone or quiet_heartbeat or sweep_removes'; break-once: drop the dead-heartbeat condition -> the dead-waiter test fails",
   "exportedSymbols": [

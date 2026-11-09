@@ -186,6 +186,8 @@ Repeat the remove and add for each Codex plugin you installed. To check that the
 current, compare its `gitCommitSha` in `installed_plugins.json` (Claude, under the host's `plugins`
 folder) with `git rev-parse origin/main` of `stabem/GraphHelm`.
 
+In the new session, the first context line says `GraphHelm FRESH` when the briefing was read, or `briefing deferred (slow host)` when the host was too slow to read it in time.
+
 The main plugin brings the `graphhelm-guide`, `graphhelm-setup` and `graphhelm-resume` skills.
 It does **not** install the CLI, start the Runtime, or replace the main `graphhelm` MCP
 registration. Steps 2, 4 and 6 do that. The hooks companion's task-handoff MCP is a separate

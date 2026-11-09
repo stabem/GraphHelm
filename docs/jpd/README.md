@@ -19,6 +19,14 @@ part any project can adopt with the `graphhelm` CLI; the full design is
    come back `caught`.
 4. **Only the owner approves** (an agent never does, except the `keel-journey-qa` skill acting on the owner's explicit delegation, which approves only when all seven points pass). A draft journey is never proof and never runs a command or a
    mutating request.
+
+   **Scoped grant (#2625).** `graphhelm journey approve-grant <id> --grant <file> --actor <name>` lets a
+   named actor approve without the owner token. The grant file lists `grants` entries, each with `id`,
+   `actor`, `scope` (must include `journey.approve`) and optional `revoked`. The command refuses unless one
+   entry names that actor, has the scope, and is not revoked. A successful approval also writes an audit
+   record at `.graphhelm/journey-grant-audit/<flow>.json` (grant id, actor, flow, approved revision and
+   digest, time). The plain `journey approve` command is still owner-only. To revoke, set `"revoked": true`
+   on the grant entry; there is no separate revoke command yet.
 5. **Failures are kept.** A later green run does not erase an earlier failure.
 
 ## The journey file

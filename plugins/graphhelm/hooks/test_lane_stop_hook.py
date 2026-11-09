@@ -103,6 +103,28 @@ class ClosedIssueLeaseTests(unittest.TestCase):
         self.assertEqual([item["claimSequence"] for item in out["released"]], [13082, 13124])
         self.assertEqual(out["refused"], [])
 
+    def test_a_task_in_the_view_whose_pr_merged_on_github_gets_its_merge_recorded(self):
+        """#2701: the projection holds a task with no merge record (no pr_opened was ever read for
+        it); GitHub says its PR is merged, so the merge is recorded and no fix step stays."""
+        view = {"tasks": [
+            {"taskId": "issue-2591", "pr": 2591, "mergeSha": None, "blockedBy": {"reviewer": "x"}},
+            {"taskId": "issue-2000", "pr": 2000, "mergeSha": "b" * 40, "blockedBy": None},
+            {"taskId": "issue-2700", "pr": 2700, "mergeSha": None, "blockedBy": None},
+        ]}
+        sha = "c" * 40
+
+        def lookup(pr, repo):
+            return {"state": "MERGED", "mergedAt": "2026-11-07T00:00:00Z", "mergeCommit": {"oid": sha},
+                    "closingIssuesReferences": [{"number": 2591}]} if pr == 2591 else {"state": "OPEN"}
+
+        with mock.patch.object(tasks_reconcile, "post") as post:
+            out = tasks_reconcile.record_unrecorded_merges(
+                view, "http://127.0.0.1:1", lambda actor: f"cred-{actor}", "gh-team", "stabem/GraphHelm",
+                lookup=lookup, skip={2700 + 1})
+        self.assertEqual([call.args[3] for call in post.call_args_list], [2591], "only the merged PR is recorded")
+        self.assertEqual(post.call_args.args[6], sha)
+        self.assertEqual(out, [2591])
+
     def test_an_overdue_lease_already_released_for_its_closed_issue_is_not_released_twice(self):
         view = {"leases": [{"taskId": "issue-1309", "lane": "gh-claude-14", "claimSequence": 13082,
                             "overdue": True, "leaseSeconds": 1800, "expiresAt": "x"}]}

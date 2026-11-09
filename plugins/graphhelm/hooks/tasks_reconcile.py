@@ -533,6 +533,8 @@ def reconcile(args):
     # #1556: a closed issue ends every lease still open on it, whichever lane holds it and however
     # old (a lane's own release reaches only its latest claim). Before the lapse sweep, so a lease
     # that is both overdue and on a closed issue is released once, for the closed issue.
+    done += record_unrecorded_merges(view, base, credential, args.execution, args.repo,
+                                     skip=set(batch))
     ended = release_closed_issues(view, base, credential, args.execution, args.repo)
     lapsed = release_overdue(view, base, credential, args.execution, args.repo,
                              skip={(item["lane"], item["claimSequence"]) for item in ended["released"]})
@@ -552,6 +554,43 @@ def reconcile(args):
     return {**reply, "merged": done, "closed": closed, "released": released, "heartbeat": beats,
             "closedIssues": ended, "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened),
             "unreadable": unreadable}
+
+
+def record_unrecorded_merges(view, base, credential, execution, repo, lookup=None, skip=frozenset()):
+    """#2701: a task the tasks route shows with no merge sha, whose PR GitHub reports MERGED, gets
+    its `task.merged` recorded as graphhelm. The pr_opened-driven pass above never reaches a task
+    that has no readable `task.pr_opened`, so its BLOCK/review step stayed ready for days. `skip`
+    holds the PRs this run already read. At most MAX_PRS_PER_STOP PRs are read per run; an
+    unreadable one is left for the next run. Returns the PR numbers recorded."""
+    lookup = lookup or (lambda pr, name: github(pr, name))
+    tasks = view.get("tasks") if isinstance(view, dict) else None
+    if not isinstance(tasks, list):
+        return []
+    recorded, read = [], 0
+    for item in tasks:
+        if not isinstance(item, dict) or item.get("mergeSha"):
+            continue
+        pr, task_id = item.get("pr"), item.get("taskId")
+        if (type(pr) is not int or pr < 1 or pr in skip
+                or not re.fullmatch(r"issue-[1-9][0-9]*", str(task_id))):
+            continue
+        if read >= MAX_PRS_PER_STOP:
+            break
+        read += 1
+        try:
+            result = lookup(pr, repo)
+            if result.get("state") != "MERGED":
+                continue
+            sha = (result.get("mergeCommit") or {}).get("oid")
+            if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+                continue
+            closes = [issue["number"] for issue in result.get("closingIssuesReferences") or []
+                      if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
+            post(base, credential("graphhelm"), execution, pr, task_id, repo, sha, closes)
+            recorded.append(pr)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+            continue
+    return recorded
 
 
 def stalled(view):

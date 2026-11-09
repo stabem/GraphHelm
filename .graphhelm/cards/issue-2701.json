@@ -1,0 +1,11 @@
+{
+  "promise": "A task the tasks projection shows with no merge record, whose PR GitHub reports merged, gets its task.merged recorded by the Stop-time reconcile, so the lane no longer gets a stale BLOCK or review step for it.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/tasks_reconcile.py",
+    "plugins/graphhelm/hooks/test_lane_stop_hook.py",
+    ".graphhelm/cards/issue-2701.json"
+  ],
+  "proof": "python -m pytest plugins/graphhelm/hooks/test_lane_stop_hook.py -k unrecorded (red before the change: no record_unrecorded_merges); then the full plugins/graphhelm/hooks suite",
+  "exportedSymbols": ["record_unrecorded_merges"],
+  "journeys": []
+}

@@ -29,6 +29,21 @@ rt="$dir/project/.graphhelm"
 
 # Resolve live listeners, never a port alone: a crashed fixture's port may have been reused.
 # Vite's command names this checkout and its exact strict port; serve names the fixture dir.
+# #2656: a seeding POST may be slow under load. Retry it a bounded number of times, then exit with
+# a named failure instead of curl's bare code. Usage: seed_post <name> <curl args...>
+seed_post() {
+  local name="$1"; shift
+  local attempt code=0
+  for attempt in 1 2 3; do
+    curl -sf --max-time 10 "$@" && return 0
+    code=$?
+    echo "fixture: seeding call '$name' failed (curl exit $code, attempt $attempt of 3)" >&2
+    sleep 1
+  done
+  echo "fixture: seeding call '$name' did not succeed after 3 attempts (curl exit $code)" >&2
+  return "$code"
+}
+
 fixture_listeners() {
   local action=$1; shift
   if [ -r /proc/$$/winpid ]; then
@@ -497,14 +512,14 @@ FLOW
     token=$(head -1 "$rt/events.token"); id=$(node -e 'console.log(require("crypto").randomUUID())')
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     printf '{"signal":{"id":"planner-question-%s","source":{"type":"tool","id":"planner"},"type":"operator_note","severity":"low","description":"Should the deploy go to staging first, or straight to production?","recommendations":["Staging first","Straight to production"],"evidence":["demo"],"emittedAt":"%s","to":"studio-operator"}}' "$id" "$now" > "$dir/.graphhelm/question.json"
-    curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
+    seed_post question -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token" \
       -H "Content-Type: application/json" -H "Idempotency-Key: $id" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent" \
       --data-binary @"$dir/.graphhelm/question.json" > "$dir/.graphhelm/question.out"
     # #1041: one Keel card from the node `deploy` (studio-keel-card). Its evidence is the promise,
     # each scope path and the proof command, in that order (docs/keel/RECORDS.md).
     cid=$(node -e 'console.log(require("crypto").randomUUID())')
     printf '{"signal":{"id":"deploy-card-%s","source":{"type":"node","id":"deploy"},"type":"keel.card","severity":"low","description":"Keel card: the deploy goes to staging first.","evidence":["The release reaches staging before production","deploy/staging.yaml","deploy/production.yaml","graphhelm journey preview studio-deploy"],"emittedAt":"%s"}}' "$cid" "$now" > "$dir/.graphhelm/card.json"
-    curl -sf --max-time 10 -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"       -H "Content-Type: application/json" -H "Idempotency-Key: $cid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"       --data-binary @"$dir/.graphhelm/card.json" > "$dir/.graphhelm/card.out"
+    seed_post card -X POST "http://127.0.0.1:$rport/v1/executions/demo/signal" -H "Authorization: Bearer $token"       -H "Content-Type: application/json" -H "Idempotency-Key: $cid" -H "X-GraphHelm-Actor: planner" -H "X-GraphHelm-Actor-Type: agent"       --data-binary @"$dir/.graphhelm/card.json" > "$dir/.graphhelm/card.out"
     # #585: studio-handover shows "While you were away" after 20+ events since the owner was last
     # here; the flow sets that last-seen time in the browser, these are the events after it.
     for n in $(seq 1 22); do

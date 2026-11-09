@@ -75,7 +75,7 @@ def _watchdog_answer() -> str:
     argv = _first_line_sys.argv
     host = argv[argv.index("--host") + 1] if "--host" in argv[:-1] else ""
     output_format = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else ("native" if host in {"claude", "codex"} else "portable")
-    context = _watchdog_quote(globals().get("KEEL_CONTEXT", "") + "\nGraphHelm briefing UNOBSERVED.")
+    context = _watchdog_quote(globals().get("KEEL_CONTEXT", "") + "\nGraphHelm briefing deferred (slow host).")
     if _watched_phase == "start" and output_format != "portable":
         return '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":' + context + "}}\n"
     if output_format == "portable":
@@ -331,12 +331,27 @@ def _binding_values(execution: str, token_file: str, url: str, node_id: str | No
     return execution, token_file, url, origin, node_id
 
 
+def _lane_token_file(directory: Path) -> str:
+    """#2683: the lane token a workspace keeps beside its work, when team.json names none."""
+    candidate = directory / ".graphhelm-lane.token"
+    return str(candidate) if candidate.is_file() else ""
+
+
 def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None] | None:
+    found = _binding(payload)
+    if found is None and os.environ.get("GRAPHHELM_EXECUTION_ID"):
+        # An environment that names an execution but yields no token anywhere is still a refused
+        # binding: the start says so (UNOBSERVED) instead of going quiet.
+        raise ValueError("invalid execution binding")
+    return found
+
+
+def _binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None] | None:
     execution = os.environ.get("GRAPHHELM_EXECUTION_ID", "")
     token_file = os.environ.get("GRAPHHELM_TOKEN_FILE", "")
     url = os.environ.get("GRAPHHELM_RUNTIME_URL", "http://127.0.0.1:8791").rstrip("/")
     node_id = os.environ.get("GRAPHHELM_NODE_ID")
-    if execution:
+    if execution and token_file:
         return _binding_values(execution, token_file, url, node_id)
     if payload is None:
         return None
@@ -344,8 +359,10 @@ def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None
     if not isinstance(session, str) or not ID.fullmatch(session):
         return None
     try:
-        actor = _lane_actor(payload)
-        if actor is None:
+        # #2683: an environment that names the execution but no token file is a partial binding:
+        # the lane token and team.json fill the rest, so it does not raise.
+        actor = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
+        if actor is None or not ID.fullmatch(actor):
             return None
         repo = Path(payload.get("cwd", ""))
         if not repo.is_absolute():
@@ -361,7 +378,7 @@ def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None
             if not isinstance(team, dict):
                 return None
             candidate = _binding_values(execution or team.get("executionId", ""),
-                                        token_file if os.environ.get("GRAPHHELM_TOKEN_FILE") else team.get("tokenFile", ""),
+                                        token_file or team.get("tokenFile", "") or _lane_token_file(directory),
                                         (url if os.environ.get("GRAPHHELM_RUNTIME_URL") else
                                          str(team.get("runtimeUrl", ""))).rstrip("/"),
                                         node_id)
@@ -369,7 +386,7 @@ def binding(payload: dict | None = None) -> tuple[str, str, str, str, str | None
                 return None
             os.environ["GRAPHHELM_ACTOR"] = actor
             return candidate
-    except (OSError, TypeError, json.JSONDecodeError, RecursionError):
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
         return None
     return None
 
@@ -704,6 +721,7 @@ def _write_state(path: Path, value: dict, durable: bool = True) -> None:
 # and exits at once (`_StateTimeout`, `_answered_without_state`); an abandoned write may not land.
 STATE_WRITE_BUDGET = 2.0
 _answered_without_state = False
+_OBSERVED: dict = {}  # #2683: the briefing line a start already read, kept for a stalled state step
 
 
 class _StateTimeout(BaseException):
@@ -1268,6 +1286,50 @@ def _lane(payload: dict) -> str | None:
     return lane if isinstance(lane, str) and ID.fullmatch(lane) else None
 
 
+def _actor_headers(lane: str | None) -> dict:
+    """#2683: a lane's reads name the lane, as its writes do; the Runtime answers 401 to a lane token
+    that arrives without its actor."""
+    return {"X-GraphHelm-Actor": lane, "X-GraphHelm-Actor-Type": "agent"} if lane else {}
+
+
+def _is_slow(error: BaseException) -> bool:
+    return isinstance(error, (_StateTimeout, TimeoutError)) or (
+        isinstance(error, urllib.error.URLError) and isinstance(error.reason, TimeoutError))
+
+
+def _deferred_start_context(payload: dict | None) -> str:
+    """#2683: the base line a slow host still gets. The briefing is read directly, bounded by what is
+    left of the watchdog's time and with no state file or waiter in its way; when it does not fit,
+    the line says the briefing is deferred, not that it was never observed."""
+    deferred = KEEL_CONTEXT + "\nGraphHelm briefing deferred (slow host)."
+    if "line" in _OBSERVED:
+        return _OBSERVED["line"]
+    remaining = HOOK_WATCHDOG - (time.time() - _FIRST_LINE_AT) - 1.0
+    if payload is None or remaining < 0.5:
+        return deferred
+    outcome: list = []
+
+    def run() -> None:
+        try:
+            bound = binding(payload)
+            if bound is None:
+                return
+            execution, token_file, url, _origin, node_id = bound
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing",
+                            token_from_file(token_file), "GET", headers=_actor_headers(_lane(payload)),
+                            timeout=min(remaining, BRIEFING_TIMEOUT))
+            data = reply.get("data")
+            if isinstance(data, dict):
+                outcome.append(KEEL_CONTEXT + "\n" + _context(_briefing_digest(data), "FRESH", execution, _session(payload), node_id))
+        except Exception:
+            return  # the deferred line below says it; nothing else to add
+
+    worker = threading.Thread(target=run, name="graphhelm-deferred-briefing", daemon=True)
+    worker.start()
+    worker.join(remaining)
+    return outcome[0] if outcome else deferred
+
+
 def _session_details(phase: str, execution: str, session: str, host: str, lane: str, node_id: str | None) -> str:
     details = {"protocol": SESSION_PROTOCOL, "phase": phase, "executionId": execution, "host": host,
                "sessionId": session, "lane": lane, "declaredNodeId": node_id}
@@ -1339,7 +1401,8 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
     freshness = "CACHED" if isinstance(digest, dict) else "FRESH"
     if not isinstance(digest, dict):
         try:
-            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", _token_bounded(token_file), "GET", timeout=BRIEFING_TIMEOUT)
+            reply = request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/briefing", _token_bounded(token_file), "GET",
+                            headers=_actor_headers(_lane(payload)), timeout=BRIEFING_TIMEOUT)
             data = reply.get("data")
             if not isinstance(data, dict):
                 raise ValueError("invalid briefing")
@@ -1353,6 +1416,8 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
                 print(f"graphhelm-session-hook: waiter not started ({type(error).__name__})", file=sys.stderr)
             raise
         digest = _briefing_digest(data)
+        # #2683: a state step that stalls after this read must not hide what was already observed.
+        _OBSERVED["line"] = KEEL_CONTEXT + "\n" + _context(digest, "FRESH", execution, session, node_id)
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
         _write_state_bounded(path, state)
@@ -1574,6 +1639,7 @@ def main() -> int:
     # work itself, as it did before #2344. This is the one path where the hook still opens files.
     if args.phase in {"start", "end"} and (host, args.phase) != ("codex", "end"):
         _use_helper(host)
+    payload = None
     try:
         if args.phase == "wait":
             if not args.session_id or args.events is None or args.heartbeat is None:
@@ -1598,14 +1664,17 @@ def main() -> int:
         # `_StateTimeout` lands here too: the hook answers UNOBSERVED now, records nothing more for
         # the session, and `__main__` exits at once.
         print(f"graphhelm-hook: {args.phase} unobserved ({type(error).__name__})", file=sys.stderr)
+        start_context = KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."
+        if args.phase == "start" and _is_slow(error):
+            start_context = _deferred_start_context(payload if isinstance(error, _StateTimeout) else None)
         if args.phase == "inspect":
             print(json.dumps({"phase": "inspect", "configuration": "invalid", "activation": "unobserved"}))
             return 1
         if args.phase == "start":
             if output_format == "portable":
-                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}, separators=(",", ":")))
+                print(json.dumps({"format": "graphhelm-portable-v1", "phase": "start", "host": host, "sessionId": None, "activation": "unobserved", "context": start_context}, separators=(",", ":")))
             else:
-                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": KEEL_CONTEXT + "\nGraphHelm briefing UNOBSERVED."}}))
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": start_context}}))
         elif output_format == "portable":
             report = {"format": "graphhelm-portable-v1", "phase": args.phase, "host": host, "activation": "unobserved"}
             if args.phase == "end":

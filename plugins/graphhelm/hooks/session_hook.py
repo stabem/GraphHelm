@@ -712,6 +712,7 @@ def _write_state(path: Path, value: dict, durable: bool = True) -> None:
 # and exits at once (`_StateTimeout`, `_answered_without_state`); an abandoned write may not land.
 STATE_WRITE_BUDGET = 2.0
 _answered_without_state = False
+_OBSERVED: dict = {}  # #2683: the briefing line a start already read, kept for a stalled state step
 
 
 class _StateTimeout(BaseException):
@@ -1292,6 +1293,8 @@ def _deferred_start_context(payload: dict | None) -> str:
     left of the watchdog's time and with no state file or waiter in its way; when it does not fit,
     the line says the briefing is deferred, not that it was never observed."""
     deferred = KEEL_CONTEXT + "\nGraphHelm briefing deferred (slow host)."
+    if "line" in _OBSERVED:
+        return _OBSERVED["line"]
     remaining = HOOK_WATCHDOG - (time.time() - _FIRST_LINE_AT) - 1.0
     if payload is None or remaining < 0.5:
         return deferred
@@ -1404,6 +1407,8 @@ def _start_impl(payload: dict, host: str, output_format: str = "native") -> None
                 print(f"graphhelm-session-hook: waiter not started ({type(error).__name__})", file=sys.stderr)
             raise
         digest = _briefing_digest(data)
+        # #2683: a state step that stalls after this read must not hide what was already observed.
+        _OBSERVED["line"] = KEEL_CONTEXT + "\n" + _context(digest, "FRESH", execution, session, node_id)
         state = state or {"version": 2, "executionId": execution, "sessionId": session, "host": host, "origin": origin}
         state["briefing"] = digest
         _write_state_bounded(path, state)

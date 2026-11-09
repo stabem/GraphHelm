@@ -248,6 +248,75 @@ NOTES_REASON = ("GraphHelm: read the notes addressed to you on the team executio
                 "then record your operator_note reply with replyTo before stopping.")
 
 
+def _same_lane(name, lane) -> bool:
+    """A reviewer name matches a lane by its id, or by its name without the `openbot-` prefix
+    (the projection holds both forms, e.g. `Hinata` and `openbot-neji`)."""
+    def norm(value) -> str:
+        value = str(value or "").strip().lower()
+        return value[len("openbot-"):] if value.startswith("openbot-") else value
+    return bool(name) and norm(name) == norm(lane)
+
+
+def ready_steps(data: dict, lane: str) -> list[dict]:
+    """#2643 slice 3: the steps ready for `lane` in the Runtime's tasks projection: a review
+    assigned to it, or a BLOCK on its own PR to fix. A merged task is never ready."""
+    steps: list[dict] = []
+    for item in data.get("tasks") or []:
+        if not isinstance(item, dict) or item.get("mergeSha"):
+            continue
+        issue, head = item.get("issue"), item.get("headSha")
+        if not isinstance(issue, int) or not isinstance(head, str) or not head:
+            continue
+        reviewers = [item.get("currentReviewer"), *(item.get("assignedReviewers") or [])]
+        if item.get("step") == "review" and any(_same_lane(name, lane) for name in reviewers):
+            steps.append({"issue": issue, "step": "review", "head": head,
+                          "reason": f"assigned review of PR {item.get('pr')}"})
+        elif _same_lane(item.get("lane"), lane) and item.get("blockedBy"):
+            steps.append({"issue": issue, "step": "fix", "head": head,
+                          "reason": f"BLOCK to fix on PR {item.get('pr')}"})
+    return steps
+
+
+# #2643 slice 3: the lookup is one more Runtime call on every Stop, so it gets its own short,
+# hard wall-time bound: the notes scan already uses up to SCAN_CHILD_TIMEOUT_SECONDS of the host's
+# Stop time, and a stalled Runtime must not hold the stop for a second budget.
+LOOKUP_BUDGET_SECONDS = 1.5
+
+
+def lookup_ready(payload: dict) -> list[dict]:
+    """#2643 slice 3: the lane's ready steps, within LOOKUP_BUDGET_SECONDS. A lookup that is not
+    done in time finds no step: the stop is never held for it."""
+    found: list[dict] = []
+
+    def run() -> None:
+        found.extend(_lookup_ready(payload))
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(LOOKUP_BUDGET_SECONDS)
+    return [] if thread.is_alive() else list(found)
+
+
+def _lookup_ready(payload: dict) -> list[dict]:
+    """Ask the Runtime (existing tasks endpoint, this lane's own token) for the lane's ready
+    steps. Any failure means no ready step: an unreadable lookup never blocks a stop."""
+    try:
+        bound = binding(payload)
+        if bound is None:
+            return []
+        execution, token_file, url, _origin, _node = bound
+        lane = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload) or ""
+        if not ID.fullmatch(lane):
+            return []
+        token = token_from_file(token_file)
+        reply = request(f"{url}/v1/executions/{quote(execution, safe='')}/tasks", token, "GET",
+                        timeout=LOOKUP_BUDGET_SECONDS)
+        data = reply.get("data") if isinstance(reply, dict) else None
+        return ready_steps(data, lane) if isinstance(data, dict) else []
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def evaluate(payload: dict, host: str = "claude", ready: list[dict] | None = None,
              turn_state: dict | None = None, new_event: bool = False,
              ring_base: Path | None = None) -> str | None:
@@ -457,10 +526,10 @@ def main() -> int:
         payload = hook_input()
     except (ValueError, OSError):
         return 0
-    # #2643: the ready list comes from the Runtime lookup (next slice); until it lands, no step is
-    # ready and the turn state is fresh for this Stop cycle.
+    # #2643: the ready list comes from the Runtime's tasks projection; the turn state is fresh for
+    # this Stop cycle.
     reason = evaluate(payload, "codex" if "--host=codex" in sys.argv else "claude",
-                      ready=[], turn_state=new_turn_state())
+                      ready=lookup_ready(payload), turn_state=new_turn_state())
     if reason:
         print(json.dumps({"decision": "block", "reason": reason}))
     return 0

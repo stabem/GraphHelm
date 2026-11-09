@@ -494,6 +494,19 @@ def _heartbeat_dead(path: Path) -> bool:
         return False
 
 
+def _session_gone(payload: dict, bound: tuple, host: str, heartbeat: Path) -> bool:
+    """#2697: the session is gone when its heartbeat is past the dead bound AND its rewake hook (which
+    the host runs for the life of the session, 24 h at most) is no longer alive. A long quiet interval
+    alone is not death."""
+    if not _heartbeat_dead(heartbeat):
+        return False
+    rewake = state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".rewake.pid")
+    try:
+        return not _pid_alive(int(rewake.read_text(encoding="ascii")))
+    except (OSError, ValueError):
+        return True
+
+
 def sweep_dead_waiters(limit: int = SWEEP_LIMIT) -> int:
     """#2697: remove the pid files of waiters whose process is gone (a killed session leaves one
     behind, and a few hundred had built up). At most `limit` per call; never touches a live pid."""
@@ -598,7 +611,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
     try:
       # SessionEnd removes this marker explicitly. Its age only says the host has been idle;
       # treating age as death drops an otherwise-live lane after a long quiet interval.
-      while heartbeat.exists() and not _heartbeat_dead(heartbeat):
+      while heartbeat.exists() and not _session_gone(payload, bound, host, heartbeat):
         result = subprocess.run([cli, "wake-wait", "--events", str(events),
                                  "--execution", bound[0], "--session-id", session],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -665,7 +678,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
                 pid_path.unlink()
         except (FileNotFoundError, ValueError, OSError):
             pass
-        if _heartbeat_dead(heartbeat):
+        if _session_gone(payload, bound, host, heartbeat):
             exit_reason = "heartbeat_dead"
             heartbeat.unlink(missing_ok=True)
         _log_waiter_exit(session, exit_reason)

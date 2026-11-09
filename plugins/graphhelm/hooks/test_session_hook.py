@@ -293,6 +293,23 @@ class SessionHookTests(unittest.TestCase):
             self.assertFalse(pid_file.exists())
             self.assertFalse(heartbeat.exists())
 
+    def test_an_old_heartbeat_with_a_live_rewake_is_not_a_dead_session(self):
+        hook = self.load_hook()
+        state = Path(self.temp.name) / "rewake-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file), "http://127.0.0.1:1", "http://127.0.0.1:1", None)
+        payload = {"session_id": "session-live"}
+        with patch.dict(os.environ, {"GRAPHHELM_HOOK_STATE_DIR": str(state)}):
+            heartbeat = hook._heartbeat_path(payload, bound, "claude")
+            heartbeat.write_text("", encoding="ascii")
+            old = time.time() - hook.HEARTBEAT_DEAD_AFTER - 60
+            os.utime(heartbeat, (old, old))
+            rewake = hook.state_path("run-test", "session-live", "claude", bound[3]).with_suffix(".rewake.pid")
+            rewake.write_text(str(os.getpid()), encoding="ascii")
+            self.assertFalse(hook._session_gone(payload, bound, "claude", heartbeat))
+            rewake.write_text("999999999", encoding="ascii")
+            self.assertTrue(hook._session_gone(payload, bound, "claude", heartbeat))
+
     def test_a_live_waiter_with_a_quiet_heartbeat_keeps_running(self):
         hook = self.load_hook()
         heartbeat = Path(self.temp.name) / "quiet.alive"
@@ -365,7 +382,7 @@ class SessionHookTests(unittest.TestCase):
                  f"http://127.0.0.1:{self.server.server_port}", None)
         heartbeat = Path(self.temp.name) / "alive"
         heartbeat.touch()
-        old = 1
+        old = time.time() - 2 * 3600  # stale (past the 30 min mark) but not a dead session (#2697)
         os.utime(heartbeat, (old, old))
         stale_burn = json.dumps({"ok": True, "data": {
             "timedOut": True,

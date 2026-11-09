@@ -1936,6 +1936,10 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
         let checkout = run_checkout(&project);
         state["head"] = checkout["head"].clone();
         state["behindOrigin"] = checkout["behindOrigin"].clone();
+        // The warning says what to do; the count is only as current as the last fetch.
+        if checkout["behindOrigin"].as_u64().unwrap_or(0) > 0 {
+            state["warning"] = json!("This run used a checkout behind origin/main (as of the last fetch). Update the project (git pull), then run again.");
+        }
     }
     state["kind"] = if flow["status"] == "approved" {
         "replay"

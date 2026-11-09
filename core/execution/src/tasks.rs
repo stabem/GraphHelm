@@ -1692,7 +1692,7 @@ pub fn parse_task_event(
                     }
                     record.reason = Some(reason.to_owned());
                 }
-                "resumed" if !document.contains_key("reason") => {}
+                "started" | "resumed" if !document.contains_key("reason") => {}
                 _ => return None,
             }
             record.repo = Some(repository(document).ok()??);

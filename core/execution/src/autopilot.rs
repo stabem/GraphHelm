@@ -164,6 +164,21 @@ pub fn takes_work(lane: &str, tasks: &[TaskState], records: &[TaskEventRecord]) 
     worked && !requester
 }
 
+/// #2421: an assigned reviewer that posts no ack (`review_activity`: `started`, `waiting` or
+/// `resumed`) for the current head within this window is re-routed, live or not. A liveness read
+/// alone missed reviewers that were up but never picked the assignment up (median 8.5 ks silent).
+pub const REVIEW_ACK_SECONDS: i64 = 30 * 60;
+
+/// True when the current reviewer of the PR's current head has not acked and the slice has been
+/// quiet for `REVIEW_ACK_SECONDS`. An ack from another reviewer or for another head does not count.
+fn review_unacked(task: &TaskState, idle: Option<i64>) -> bool {
+    let acked = task.review_activity.as_ref().is_some_and(|activity| {
+        Some(&activity.reviewer) == task.current_reviewer.as_ref()
+            && Some(&activity.head_sha) == task.head_sha.as_ref()
+    });
+    !acked && idle.is_some_and(|seconds| seconds >= REVIEW_ACK_SECONDS)
+}
+
 /// Every broken open item at `now`, requests first (oldest first), then slices in fold order.
 /// `silent` holds the lanes the liveness read judged silent; a slice with no lane counts as having
 /// no live author.
@@ -244,7 +259,10 @@ pub fn classify(
                 {
                     Some((Stage::ReviewUnassigned, None))
                 }
-                Some(reviewer) if task.pr.is_some() && silent.contains(reviewer) => {
+                Some(reviewer)
+                    if task.pr.is_some()
+                        && (silent.contains(reviewer) || review_unacked(task, idle)) =>
+                {
                     Some((Stage::ReviewerSilent, Some(reviewer.clone())))
                 }
                 _ => None,
@@ -260,7 +278,7 @@ pub fn classify(
                     {
                         Some((Stage::ReviewUnassigned, None))
                     }
-                    Some(reviewer) if silent.contains(reviewer) => {
+                    Some(reviewer) if silent.contains(reviewer) || review_unacked(task, idle) => {
                         Some((Stage::ReviewerSilent, Some(reviewer.clone())))
                     }
                     _ => None,
@@ -514,6 +532,21 @@ mod tests {
         state
     }
 
+    /// #2421: the assigned reviewer acked the current head (`review_activity` started) at OLD.
+    fn acked(mut state: TaskState, reviewer: &str) -> TaskState {
+        state.review_activity = Some(crate::tasks::ReviewActivity {
+            activity: "started".into(),
+            reviewer: reviewer.into(),
+            head_sha: "abc".into(),
+            review_context_sequence: 1,
+            revision: 1,
+            sequence: 1,
+            occurred_at: at(OLD),
+            reason: None,
+        });
+        state
+    }
+
     fn request(id: &str, recorded: &str) -> RequestView {
         RequestView {
             request_id: id.into(),
@@ -625,6 +658,7 @@ mod tests {
             );
             // The current head's reviewer, gone silent, is reviewer_silent.
             task.current_reviewer = Some("rev".into());
+            let task = acked(task, "rev");
             assert_eq!(
                 stages(std::slice::from_ref(&task), &[], &["rev"]),
                 [Stage::ReviewerSilent],
@@ -654,6 +688,7 @@ mod tests {
     fn an_assigned_reviewer_that_went_silent_is_reviewer_silent() {
         let mut task = with_pr(slice("lane-a", TaskStep::Review, OLD));
         task.current_reviewer = Some("rev".into());
+        let task = acked(task, "rev");
         assert!(stages(std::slice::from_ref(&task), &[], &[]).is_empty());
         let diagnosis = found(&[task], &[], &["rev"]);
         assert_eq!(diagnosis[0].stage, Stage::ReviewerSilent);
@@ -863,7 +898,16 @@ mod tests {
         let (kind, document) =
             route(diagnosis, &tasks[0], &lane, "graphhelm", NOW).expect("the stage routes");
         let next = u64::try_from(records.len()).unwrap() + 1;
-        records.push(record(kind.as_str(), "graphhelm", &document, next));
+        // The route happens at NOW, so the new reviewer's clock starts there (#2421).
+        let routed_at = parse_task_event(
+            kind.as_str(),
+            "graphhelm",
+            &document.to_string(),
+            next,
+            Some(at(NOW)),
+        )
+        .expect("the routed record parses");
+        records.push(routed_at);
         let after = fold_task_events(&records);
         assert!(
             found(&after, &[], quiet).is_empty(),
@@ -893,6 +937,33 @@ mod tests {
             state.current_reviewer.as_deref(),
             Some("auto-reviewer-pr-70")
         );
+    }
+
+    #[test]
+    fn a_live_reviewer_with_no_ack_past_the_window_is_reviewer_silent() {
+        // #2421: up but never picked the assignment up; liveness alone reads it as fine.
+        let mut records = opened_pr();
+        let assigned = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-7", "revision": 1, "at": OLD, "pr": 70, "headSha": HEAD,
+            "reviewer": "lane-r", "ordinal": 1});
+        records.push(record("task.review_assigned", "graphhelm", &assigned, 3));
+        let state = routed(records, &[], Stage::ReviewerSilent);
+        assert_eq!(
+            state.current_reviewer.as_deref(),
+            Some("auto-reviewer-pr-70")
+        );
+    }
+
+    #[test]
+    fn a_live_reviewer_inside_the_ack_window_is_left_alone() {
+        let mut records = opened_pr();
+        let assigned = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-7", "revision": 1, "at": OLD, "pr": 70, "headSha": HEAD,
+            "reviewer": "lane-r", "ordinal": 1});
+        records.push(record("task.review_assigned", "graphhelm", &assigned, 3));
+        let tasks = fold_task_events(&records);
+        let inside = at("2026-10-24T10:20:00Z");
+        assert!(classify(&tasks, &[], &silent(&[]), &inside, Grace::default()).is_empty());
     }
 
     #[test]

@@ -88,8 +88,8 @@ and its screen expects the refusal's `status` and the `json` reason the check re
 failed connection: a refused connection is not the app's refusal. A flow cannot send `Host` (it is
 reserved), so a check on the request's host, or a refusal of a non-loopback peer, cannot be proven this
 way; name that gap `OBSERVER_MISSING` instead of faking it. Example:
-`.graphhelm/journeys/studio2-auth-refusal.journey.yaml` (the Studio's no-cookie and foreign-origin
-refusals, played from loopback).
+`.graphhelm/journeys/studio2-auth-refusal.journey.yaml` (the Studio's no-cookie, foreign-`Origin`
+and cross-site `Sec-Fetch-Site` refusals, played from loopback).
 
 **Launcher.** A flow that sends requests needs the app running on an isolated port. Declare a
 launcher in `.graphhelm/journey-fixture.json`:

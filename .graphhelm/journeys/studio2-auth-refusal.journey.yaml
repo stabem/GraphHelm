@@ -1,0 +1,35 @@
+schema: graphhelm.journey-flow/1
+id: studio2-auth-refusal
+title: The Studio refuses a request with no session or a foreign origin
+name: Studio auth refusal
+feature: Studio
+purpose: "A request to a protected Studio route with no session cookie is refused as session_required, and one that names a foreign Origin is refused as foreign_origin; both from loopback, so this proves those two checks and not a refusal from an off-loopback peer."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [client]
+secrets: []
+risks: [authentication]
+screens:
+  - id: foreign-origin
+    title: The same route answers a request that names a foreign Origin
+    url: /health
+    state: stable
+    expect: [{role: status, name: "403", because: the Studio middleware refuses an Origin that is not its own authority}, {role: json, name: reason=foreign_origin, because: the refusal names the foreign origin check}]
+    scope: [apps/studio/dev-session.ts]
+  - id: no-session
+    title: A protected route answers a request that has no session cookie
+    url: /health
+    state: stable
+    expect: [{role: status, name: "403", because: the Studio middleware refuses a protected path without the session cookie}, {role: json, name: reason=session_required, because: the refusal names the missing session and is not a transport failure}]
+    scope: [apps/studio/dev-session.ts]
+edges:
+  - id: no-session.foreign-origin
+    from: no-session
+    to: foreign-origin
+    why: "A request that also claims a foreign Origin is refused for that origin, so the origin check is separate from the missing session."
+    acts:
+      - {kind: http, role: GET, name: /health, headers: {origin: http://foreign.example}}
+paths:
+  main: [no-session.foreign-origin]
+drift: []

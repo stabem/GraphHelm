@@ -73,6 +73,16 @@ roles are `status` (HTTP status, exact), `json` (`a.b.0=value` compares a field,
 exists), `text` (body contains), `exit` (exit code, exact) and `stdout` (stdout contains). Each act
 is bounded at 30 seconds. An act that cannot run is `fail`; an unmet expectation is `drift`.
 
+**Proving a refusal (#2627).** A flow has one `base`, and a flow with `http` acts cannot also play
+browser acts. To prove that an app refuses a request, write a backend-only flow: its `http` act sends
+the request the app should refuse (no session cookie, or a header such as `origin: http://foreign.example`)
+and its screen expects the refusal's `status` and the `json` reason the check returns. Never expect only a
+failed connection: a refused connection is not the app's refusal. A flow cannot send `Host` (it is
+reserved), so a check on the request's host, or a refusal of a non-loopback peer, cannot be proven this
+way; name that gap `OBSERVER_MISSING` instead of faking it. Example:
+`.graphhelm/journeys/studio2-auth-refusal.journey.yaml` (the Studio's no-cookie and foreign-origin
+refusals, played from loopback).
+
 **Launcher.** A flow that sends requests needs the app running on an isolated port. Declare a
 launcher in `.graphhelm/journey-fixture.json`:
 `{"schema":"graphhelm-journey-fixture/1","script":"launch.sh","isolated":true}`. The script is

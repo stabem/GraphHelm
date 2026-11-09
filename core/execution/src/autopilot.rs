@@ -967,6 +967,22 @@ mod tests {
     }
 
     #[test]
+    fn an_ack_for_an_older_head_does_not_count() {
+        // #2421: review_unacked must match the current head; an ack for another head is no ack.
+        let mut task = with_pr(slice("lane-a", TaskStep::Review, OLD));
+        task.current_reviewer = Some("rev".into());
+        let mut older = acked(task.clone(), "rev");
+        older
+            .review_activity
+            .as_mut()
+            .expect("the fixture acked")
+            .head_sha = "an-older-head".into();
+        assert_eq!(stages(&[older], &[], &[]), [Stage::ReviewerSilent]);
+        // The same reviewer's ack for the current head does count.
+        assert!(stages(&[acked(task, "rev")], &[], &[]).is_empty());
+    }
+
+    #[test]
     fn a_silent_author_is_released_to_the_started_author() {
         let state = routed(vec![claimed()], &["lane-a"], Stage::AuthorSilent);
         assert_eq!(state.released_by.as_deref(), Some("graphhelm"));

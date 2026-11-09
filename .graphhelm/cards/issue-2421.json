@@ -1,0 +1,14 @@
+{
+  "promise": "A reviewer assigned to a PR head that posts no review_activity ack (started, waiting or resumed) for that same head within 30 min is reported reviewer_silent, live or not, so the coordinator re-routes the review. An ack for another head or from another reviewer does not count.",
+  "scopePaths": [
+    "core/execution/src/autopilot.rs",
+    "core/execution/src/tasks.rs",
+    "docs/process/LANES.md",
+    ".graphhelm/cards/issue-2421.json"
+  ],
+  "proof": "cargo test -p graphhelm-execution autopilot; cargo +1.97.1 test --locked -p graphhelm-protocols --test authored_strings_across_the_workspace; break-once: removing the head check in review_unacked must fail an_ack_for_an_older_head_does_not_count",
+  "exportedSymbols": [
+    "REVIEW_ACK_SECONDS"
+  ],
+  "journeys": []
+}

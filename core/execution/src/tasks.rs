@@ -1844,6 +1844,26 @@ const fn timed_step(step: &str) -> bool {
     )
 }
 
+/// #2703/#2739: the time a record gives the clock. A record that leaves the step as it was and
+/// names a head other than the slice's current one (both known) gives none, so it cannot restart
+/// the wait of the current head's reviewer. Any other record gives its own time: a record that
+/// changes the step must always book it, and a record with no head, or one on a slice that has no
+/// head yet, speaks for the current head.
+fn clock_time(
+    step_unchanged: bool,
+    event_head: Option<&String>,
+    current_head: Option<&String>,
+    occurred_at: Option<PersistedTimestamp>,
+) -> Option<PersistedTimestamp> {
+    let older_head =
+        event_head.is_some() && current_head.is_some() && !same_opt_head(event_head, current_head);
+    if step_unchanged && older_head {
+        None
+    } else {
+        occurred_at
+    }
+}
+
 /// Moves the clock when a record changes the slice's step. A record that leaves the step as it
 /// was (an assignment, a stray verdict) only starts the clock when it had no start yet.
 pub fn clock_step(
@@ -3116,14 +3136,12 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 && event.lane == state.lane;
         // #2703: a record for an older head that leaves the step as it was does not move the
         // clock, so it cannot restart the wait of the current head's reviewer.
-        let older_head = event.head_sha.is_some()
-            && state.head_sha.is_some()
-            && !same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref());
-        let at = if before == after && older_head {
-            None
-        } else {
-            event.occurred_at.clone()
-        };
+        let at = clock_time(
+            before == after,
+            event.head_sha.as_ref(),
+            state.head_sha.as_ref(),
+            event.occurred_at.clone(),
+        );
         clock_step(
             &mut state.clock,
             timed(before),
@@ -3671,5 +3689,125 @@ mod older_head_clock_tests {
         ));
         let state = fold_task_events(&records).remove(0);
         assert_eq!(state.clock.spent.get("review"), Some(&60_000));
+    }
+
+    // #2739. The rule has three conditions; each test below fails when one is dropped.
+
+    fn head(value: &str) -> String {
+        value.to_owned()
+    }
+
+    #[test]
+    fn the_clock_time_rule_names_each_condition() {
+        let now = Some(at("2026-10-24T10:05:00Z"));
+        let (a, b) = (head("aaaaaaa"), head("bbbbbbb"));
+        // Older head, step unchanged: no time.
+        assert_eq!(clock_time(true, Some(&a), Some(&b), now.clone()), None);
+        // Older head, but the record CHANGES the step: the step change is always booked.
+        // (`before == after` dropped makes this None and the fold would reset the clock.)
+        assert_eq!(clock_time(false, Some(&a), Some(&b), now.clone()), now);
+        // The same head, or a prefix of it (`same_head`), is the current head.
+        assert_eq!(clock_time(true, Some(&a), Some(&a), now.clone()), now);
+        assert_eq!(
+            clock_time(true, Some(&head("aaaaaaaa")), Some(&a), now.clone()),
+            now
+        );
+        // A record with no head speaks for the current head (`event.head_sha.is_some()` dropped).
+        assert_eq!(clock_time(true, None, Some(&b), now.clone()), now);
+        // A slice with no head yet has no older head (`state.head_sha.is_some()` dropped).
+        assert_eq!(clock_time(true, Some(&a), None, now.clone()), now);
+        // No time stays no time.
+        assert_eq!(clock_time(true, Some(&a), Some(&b), None), None);
+        assert_eq!(clock_time(false, None, None, None), None);
+    }
+
+    #[test]
+    fn a_verdict_on_a_slice_with_no_head_yet_moves_the_clock() {
+        // #2739, fold level (`state.head_sha.is_some()`): a verdict that arrives before any
+        // pr_opened is a stray verdict and leaves the step as it was, but there is no current
+        // head for it to be older than, so it is the slice's latest record.
+        let records = [
+            event(
+                "task.claimed",
+                1,
+                "2026-10-24T10:00:00Z",
+                serde_json::json!({}),
+            ),
+            event(
+                "task.review_verdict",
+                2,
+                "2026-10-24T10:04:00Z",
+                serde_json::json!({"pr": 70, "headSha": "ccccccc", "verdict": "BLOCK",
+                    "commentUrl": "https://github.com/o/r/pull/70#c1", "reviewer": "lane-a"}),
+            ),
+        ];
+        let state = fold_task_events(&records).remove(0);
+        assert_eq!(state.head_sha, None);
+        assert_eq!(state.clock.last_at, Some(at("2026-10-24T10:04:00Z")));
+    }
+
+    #[test]
+    fn a_record_without_a_head_moves_the_clock_of_a_slice_that_has_one() {
+        // #2739, fold level (`event.head_sha.is_some()`): a critic verdict recorded after the PR
+        // carries no head and leaves the step as it was; it is not for an older head.
+        let records = [
+            event(
+                "task.claimed",
+                1,
+                "2026-10-24T10:00:00Z",
+                serde_json::json!({}),
+            ),
+            event(
+                "task.pr_opened",
+                2,
+                "2026-10-24T10:01:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "journeys": []}),
+            ),
+            event(
+                "task.critic_verdict",
+                3,
+                "2026-10-24T10:06:00Z",
+                serde_json::json!({"round": 1, "score": 8, "passScore": 8, "maxRounds": 3,
+                    "verdict": "pass", "lane": "lane-a"}),
+            ),
+        ];
+        let state = fold_task_events(&records).remove(0);
+        assert_eq!(state.head_sha.as_deref(), Some("aaaaaaa"));
+        assert_eq!(state.clock.last_at, Some(at("2026-10-24T10:06:00Z")));
+    }
+
+    #[test]
+    fn the_fold_of_the_same_records_is_the_same_every_time() {
+        // #2739, replay determinism: the clock comes from the records' own times and order, never
+        // from the wall clock, so folding the same stream twice gives the same clock.
+        let records = [
+            event(
+                "task.claimed",
+                1,
+                "2026-10-24T10:00:00Z",
+                serde_json::json!({}),
+            ),
+            event(
+                "task.pr_opened",
+                2,
+                "2026-10-24T10:01:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "journeys": []}),
+            ),
+            event(
+                "task.pr_opened",
+                3,
+                "2026-10-24T10:02:00Z",
+                serde_json::json!({"pr": 70, "headSha": "bbbbbbb", "journeys": []}),
+            ),
+            event(
+                "task.review_assigned",
+                4,
+                "2026-10-24T10:03:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "reviewer": "lane-b"}),
+            ),
+        ];
+        let first = fold_task_events(&records).remove(0).clock;
+        let second = fold_task_events(&records).remove(0).clock;
+        assert_eq!(first, second);
     }
 }

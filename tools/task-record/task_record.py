@@ -38,6 +38,17 @@ import urllib.request
 from pathlib import Path
 import os
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is never followed: it would carry the bearer token to wherever the answer points."""
+
+    def redirect_request(self, *_):
+        return None
+
+
+def _urlopen(request, timeout):
+    return urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout)
+
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -1133,7 +1144,7 @@ def _runtime_json(args, path, token, *, max_bytes=MAX_RESPONSE_BYTES):
     request = urllib.request.Request(url, method="GET", headers={"Authorization": f"Bearer {token}",
                                     "X-GraphHelm-Actor": args.lane, "X-GraphHelm-Actor-Type": "agent"})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _urlopen(request, timeout=30) as response:
             raw = response.read(max_bytes + 1)
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as error:
         sys.exit(f"task_record: {getattr(args, 'read_context', '')}the stored task history cannot be read "
@@ -1306,7 +1317,7 @@ def send(args, doc, now, attachments=None):
     attempts = 2 if args.kind == "review_activity" else 1 if args.kind == "proof_recorded" else 3
     for attempt in range(attempts):
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with _urlopen(request, timeout=30) as response:
                 reply = json.load(response)
         except TimeoutError:
             if attempt == attempts - 1:
@@ -1315,6 +1326,9 @@ def send(args, doc, now, attachments=None):
                          "run the same command again to learn which")
             continue
         except urllib.error.HTTPError as error:
+            if 300 <= error.code < 400:
+                sys.exit(f"task_record: {args.url} answered with a redirect (HTTP {error.code}); "
+                         "the agent token is never sent to a redirect target, no record sent")
             reply = json.loads(error.read() or b"{}")
         except urllib.error.URLError as error:
             sys.exit(f"task_record: no Runtime at {args.url}: {error.reason}")

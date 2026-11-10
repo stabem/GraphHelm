@@ -187,7 +187,7 @@ class ReconcileRuntimeTimeoutTests(unittest.TestCase):
         argv = ["tasks_reconcile.py", "--execution", "gh-team", "--url", "http://127.0.0.1:1",
                 "--token-file", str(token), "--repo", "stabem/GraphHelm", "--lane", "graphhelm", *extra]
         with mock.patch.object(sys, "argv", argv), \
-                mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=refuse), \
+                mock.patch.object(tasks_reconcile, "_urlopen", side_effect=refuse), \
                 mock.patch.object(sys, "stderr", new=devnull):
             self.assertEqual(tasks_reconcile.main(), 1)
         return seen
@@ -229,7 +229,7 @@ class ReconcileRunBudgetTests(unittest.TestCase):
         self.addCleanup(devnull.close)
         started = time.monotonic()
         with mock.patch.object(sys, "argv", argv), \
-                mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=slow_endless), \
+                mock.patch.object(tasks_reconcile, "_urlopen", side_effect=slow_endless), \
                 mock.patch.object(sys, "stderr", new=devnull):
             self.assertEqual(tasks_reconcile.main(), 1)
         self.assertLess(time.monotonic() - started, 5, "the run must end near its budget")
@@ -249,7 +249,7 @@ class ReconcileRunBudgetTests(unittest.TestCase):
         devnull = open(os.devnull, "w", encoding="utf-8")
         self.addCleanup(devnull.close)
         with mock.patch.object(sys, "argv", argv), \
-                mock.patch.object(tasks_reconcile.urllib.request, "urlopen",
+                mock.patch.object(tasks_reconcile, "_urlopen",
                                   side_effect=urllib.error.URLError("offline")), \
                 mock.patch.object(sys, "stderr", new=devnull):
             self.assertEqual(tasks_reconcile.main(), 1)
@@ -258,6 +258,62 @@ class ReconcileRunBudgetTests(unittest.TestCase):
         self.assertIn("tasks reconcile: start", lines[0])
         self.assertIn("runtime-timeout 45", lines[0])
         self.assertIn("offline", lines[1])
+
+
+class RedirectSink(BaseHTTPRequestHandler):
+    seen = []
+
+    def do_GET(self):
+        self.seen.append(self.headers.get("Authorization"))
+        raw = json.dumps({"ok": True, "data": {}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+class RedirectFront(BaseHTTPRequestHandler):
+    target = ""
+
+    def do_GET(self):
+        self.send_response(302)
+        self.send_header("Location", self.target + self.path)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+class ReconcileRedirectTests(unittest.TestCase):
+    def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(self):
+        """A redirect used to be followed with the bearer token still attached."""
+        RedirectSink.seen = []
+        sink = ThreadingHTTPServer(("127.0.0.1", 0), RedirectSink)
+        front = ThreadingHTTPServer(("127.0.0.1", 0), RedirectFront)
+        RedirectFront.target = f"http://127.0.0.1:{sink.server_port}"
+        for server in (sink, front):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{front.server_port}"
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as refused:
+                tasks_reconcile.get(base + "/v1/executions/e/tasks", "secret-token-value", "lane-a")
+            with self.assertRaises(urllib.error.HTTPError):
+                tasks_reconcile.post_end(base, "secret-token-value", "e", "merged", "issue-1",
+                                         "stabem/GraphHelm", "lane-a", {"pr": 1})
+        finally:
+            for server in (sink, front):
+                server.shutdown()
+                server.server_close()
+        self.assertEqual(refused.exception.code, 302)
+        self.assertEqual(RedirectSink.seen, [])
 
 
 class ReconciledDigestTests(unittest.TestCase):
@@ -504,13 +560,13 @@ class LaneStopTests(unittest.TestCase):
         self.claim(766)
         token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text(encoding="utf-8").strip()
         requests = []
-        urlopen = tasks_reconcile.urllib.request.urlopen
+        urlopen = tasks_reconcile._urlopen
 
         def capture(request, *args, **kwargs):
             requests.append(request)
             return urlopen(request, *args, **kwargs)
 
-        with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
+        with mock.patch.object(tasks_reconcile, "_urlopen", side_effect=capture):
             tasks_reconcile.records(self.url, token, "lane-test", "codex-4")
 
         self.assertIsInstance(tasks_reconcile.head(self.url, token, "lane-test"), int,
@@ -580,7 +636,7 @@ class LaneStopTests(unittest.TestCase):
         token = Path(self.env["GRAPHHELM_TOKEN_FILE"]).read_text(encoding="utf-8").strip()
         cache = Path(self.tmp.name) / "records.cache.json"
         opened = []
-        urlopen = tasks_reconcile.urllib.request.urlopen
+        urlopen = tasks_reconcile._urlopen
 
         def capture(request, *args, **kwargs):
             if "/evidence/" in request.full_url:
@@ -590,7 +646,7 @@ class LaneStopTests(unittest.TestCase):
         def shape(found):
             return [(kind, doc, event["sequence"]) for kind, doc, event in found]
 
-        with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
+        with mock.patch.object(tasks_reconcile, "_urlopen", side_effect=capture):
             first = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
             read_first = len(opened)
             second = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
@@ -615,7 +671,7 @@ class LaneStopTests(unittest.TestCase):
         stored["anchor"] = "sha256:" + "0" * 64
         cache.write_text(json.dumps(stored), encoding="utf-8")
         before = len(opened)
-        with mock.patch.object(tasks_reconcile.urllib.request, "urlopen", side_effect=capture):
+        with mock.patch.object(tasks_reconcile, "_urlopen", side_effect=capture):
             fourth = shape(tasks_reconcile.records(self.url, token, "lane-test", cache=cache))
         self.assertEqual(len(opened) - before, len(third), "a foreign anchor reads every record again")
         self.assertEqual(fourth, third)

@@ -42,9 +42,9 @@ pub use limits::{
     STATUS_READ_BUDGET_MILLIS, TASKS_READ_BUDGET_MILLIS,
 };
 pub use local::{
-    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, MAX_SEALED_EVIDENCE_BATCH,
-    PrefixCache, ReadLockHeld, RecoveredTail, concatenated_journal, journal_line_roundtrips,
-    with_repository_read_lock,
+    LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, LockTiming,
+    MAX_SEALED_EVIDENCE_BATCH, PrefixCache, ReadLockHeld, RecoveredTail, concatenated_journal,
+    journal_line_roundtrips, take_lock_timing, with_repository_read_lock,
 };
 pub use memory::{
     MemoryAdmissionRefusalAppend, MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend,

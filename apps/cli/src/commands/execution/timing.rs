@@ -67,9 +67,24 @@ pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
         return work();
     }
     let outer = PHASES.with(|cell| cell.replace(Some(BTreeMap::new())));
+    // #2694: the store's lock wait and anchor validation this request spent, reported as phases
+    // of their own (they are also inside the phases that contain them).
+    let _ = graphhelm_events::take_lock_timing();
     let started = Instant::now();
     let result = work();
     let total = started.elapsed();
+    let locks = graphhelm_events::take_lock_timing();
+    PHASES.with(|cell| {
+        if let Some(phases) = cell.borrow_mut().as_mut() {
+            for (name, spent) in [("lock.wait", locks.wait), ("lock.anchors", locks.anchors)] {
+                if !spent.is_zero() {
+                    let entry = phases.entry(name).or_default();
+                    entry.0 += 1;
+                    entry.1 += spent;
+                }
+            }
+        }
+    });
     let phases = PHASES.with(|cell| cell.replace(outer)).unwrap_or_default();
     eprintln!("{}", line(route, total, &phases));
     result
@@ -129,6 +144,24 @@ fn line(route: &str, total: Duration, phases: &BTreeMap<&'static str, (u64, Dura
 
 #[cfg(test)]
 mod tests {
+    /// #2694: a store lock taken on this thread shows up as lock timing, once, then starts over.
+    #[test]
+    fn a_store_lock_is_reported_once_as_lock_timing() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let _ = graphhelm_events::take_lock_timing();
+        store.with_shared_lock(|| Ok(())).unwrap();
+        let first = graphhelm_events::take_lock_timing();
+        assert!(
+            !first.anchors.is_zero(),
+            "the anchors were validated under the lock"
+        );
+        assert_eq!(
+            graphhelm_events::take_lock_timing(),
+            graphhelm_events::LockTiming::default()
+        );
+    }
+
     #[test]
     fn the_line_carries_only_route_phase_names_counts_and_milliseconds() {
         let mut phases = std::collections::BTreeMap::new();

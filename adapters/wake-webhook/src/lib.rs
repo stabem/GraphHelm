@@ -76,6 +76,8 @@ pub enum Outcome {
     Rejected(u16),
     /// A 503 that outlived the retries, or a transport failure.
     Failed(String),
+    /// Failed on too many passes in a row: logged and given up, so one lane cannot hold the rest.
+    GaveUp,
 }
 
 /// `<lane>:<step>:<head>`: one step wakes a lane once.

@@ -261,49 +261,163 @@ fn due_leases(
     Some(due)
 }
 
-/// #2714 slice 3: the reviews assigned since the webhook cursor, as steps for their reviewer's
-/// webhook. The cursor (`wake-webhook.cursor` beside the events directory) is the last sequence
-/// handled; the first run takes the current head and handles nothing, so history is never replayed
-/// to the lanes. Reads the tail only. `None`-like (empty) when the feature is off or anything is
-/// unreadable: a webhook never fails or slows a route.
+/// #2714: the authors of the PRs this Runtime has seen opened, so a BLOCK or a merge can name the
+/// lane to wake. Kept in `wake-webhook.authors.json` beside the events directory (small, newest
+/// last, at most `AUTHORS_KEPT`); a PR opened before the webhook was turned on has no author here.
+type Authors = std::collections::BTreeMap<u64, String>;
+const AUTHORS_KEPT: usize = 500;
+
+fn read_authors(path: &Path) -> Authors {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| {
+            serde_json::from_str::<std::collections::BTreeMap<String, String>>(&text).ok()
+        })
+        .map(|raw| {
+            raw.into_iter()
+                .filter_map(|(pr, lane)| pr.parse::<u64>().ok().map(|pr| (pr, lane)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn write_authors(path: &Path, authors: &Authors) {
+    let mut kept: Vec<(&u64, &String)> = authors.iter().collect();
+    kept.sort();
+    let start = kept.len().saturating_sub(AUTHORS_KEPT);
+    let raw: std::collections::BTreeMap<String, &String> = kept[start..]
+        .iter()
+        .map(|(pr, lane)| (pr.to_string(), *lane))
+        .collect();
+    if let Err(error) = std::fs::write(path, serde_json::json!(raw).to_string()) {
+        eprintln!("wake webhook: authors not written ({})", error.kind());
+    }
+}
+
+/// What a task record means for the webhook.
+#[derive(Debug, PartialEq, Eq)]
+enum Trigger {
+    /// A step is ready for a lane.
+    Step(graphhelm_wake_webhook::Step),
+    /// A step would be ready, but the PR's author is not known here: said in the delivery log.
+    NoAuthor(u64),
+    /// Nothing to send (another record kind, or the author was only learned).
+    Nothing,
+}
+
+/// The step a task record makes ready, or what it teaches (`task.pr_opened` records its PR's
+/// author). `document` is the record's parsed description, `actor` the record's signer.
+/// review_assigned -> its reviewer (review); BLOCK -> the PR's author (fix); APPROVE and
+/// APPROVE-WITH-RISK -> the approving reviewer, who merges (merge); merged -> the PR's author, for
+/// the lane's next item (next).
+fn trigger_for(
+    kind: &str,
+    document: &serde_json::Value,
+    actor: &str,
+    authors: &mut Authors,
+) -> Trigger {
+    use graphhelm_wake_webhook::{Reason, Step};
+    let pr = document["pr"].as_u64();
+    let issue = document["taskId"]
+        .as_str()
+        .and_then(|id| id.strip_prefix("issue-"))
+        .and_then(|number| number.parse::<u64>().ok());
+    let step = |lane: &str, name: &str, skill: &str, head: &str, because: Reason| {
+        Trigger::Step(Step {
+            lane: lane.to_owned(),
+            step: name.to_owned(),
+            skill: skill.to_owned(),
+            issue: issue.unwrap_or(0),
+            pr,
+            head: head.to_owned(),
+            because,
+        })
+    };
+    match (kind, pr, document["headSha"].as_str()) {
+        ("task.pr_opened", Some(pr), _) => {
+            if let Some(lane) = document["lane"].as_str() {
+                authors.insert(pr, lane.to_owned());
+            }
+            Trigger::Nothing
+        }
+        ("task.review_assigned", Some(_), Some(head)) => match document["reviewer"].as_str() {
+            Some(reviewer) => step(
+                reviewer,
+                "review",
+                "blind-review",
+                head,
+                Reason::ReviewAssigned,
+            ),
+            None => Trigger::Nothing,
+        },
+        ("task.review_verdict", Some(pr), Some(head)) => match document["verdict"].as_str() {
+            Some("BLOCK") => match authors.get(&pr) {
+                Some(author) => step(author, "fix", "implement", head, Reason::BlockVerdict),
+                None => Trigger::NoAuthor(pr),
+            },
+            Some("APPROVE" | "APPROVE-WITH-RISK") => {
+                step(actor, "merge", "merge", head, Reason::Approved)
+            }
+            _ => Trigger::Nothing,
+        },
+        ("task.merged", Some(pr), _) => match (authors.get(&pr), document["mergeSha"].as_str()) {
+            (Some(author), Some(sha)) => {
+                step(author, "next", "graphhelm-resume", sha, Reason::Merged)
+            }
+            (None, Some(_)) => Trigger::NoAuthor(pr),
+            _ => Trigger::Nothing,
+        },
+        _ => Trigger::Nothing,
+    }
+}
+
+/// The task records of the tail that are worth opening for the webhook.
+fn webhook_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "task.pr_opened" | "task.review_assigned" | "task.review_verdict" | "task.merged"
+    )
+}
+
+/// #2714 slices 3-4: the steps made ready since the webhook cursor, each with the sequence of the
+/// record that made it ready, and the last sequence read. The cursor (`wake-webhook.cursor` beside
+/// the events directory) is the last sequence HANDLED; the first run takes the current head and
+/// handles nothing, so history is never replayed to the lanes. Reads the tail only. `None` when the
+/// feature is off or anything is unreadable: a webhook never fails or slows a route.
 fn webhook_steps(
     events: &Path,
     execution: &str,
     sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
-) -> Vec<graphhelm_wake_webhook::Step> {
-    let Some(dir) = events.parent() else {
-        return Vec::new();
-    };
+    dispatcher: &graphhelm_wake_webhook::Dispatcher,
+) -> Option<(Vec<(u64, graphhelm_wake_webhook::Step)>, u64)> {
+    let dir = events.parent()?;
     let cursor_path = dir.join("wake-webhook.cursor");
-    let Ok(store) = crate::commands::event_store(events) else {
-        return Vec::new();
-    };
-    let Ok(streams) = store.list_streams() else {
-        return Vec::new();
-    };
-    let Some(stream) = streams
+    let store = crate::commands::event_store(events).ok()?;
+    let stream = store
+        .list_streams()
+        .ok()?
         .into_iter()
-        .find(|stream| stream.stream_id == execution)
-    else {
-        return Vec::new();
-    };
+        .find(|stream| stream.stream_id == execution)?;
     let cursor = std::fs::read_to_string(&cursor_path)
         .ok()
         .and_then(|text| text.trim().parse::<u64>().ok());
-    let Ok((tail, head)) = store.read_stream_after(
-        &stream.scope,
-        &stream.stream_id,
-        cursor.unwrap_or(u64::MAX - 1),
-    ) else {
-        return Vec::new();
-    };
+    let (tail, head) = store
+        .read_stream_after(
+            &stream.scope,
+            &stream.stream_id,
+            cursor.unwrap_or(u64::MAX - 1),
+        )
+        .ok()?;
     let Some(cursor) = cursor else {
         // First run: start at the head, hand nothing to any lane.
         if let Some(head) = head {
             write_cursor(&cursor_path, head.next_sequence.saturating_sub(1));
         }
-        return Vec::new();
+        return None;
     };
+    let authors_path = dir.join("wake-webhook.authors.json");
+    let mut authors = read_authors(&authors_path);
+    let learned = authors.len();
     let mut steps = Vec::new();
     let mut opener = None;
     let mut last = cursor;
@@ -312,7 +426,7 @@ fn webhook_steps(
         let EventKind::SignalRecorded(signal) = &event.kind else {
             continue;
         };
-        if signal.kind != "task.review_assigned" {
+        if !webhook_kind(&signal.kind) {
             continue;
         }
         let opener = opener.get_or_insert_with(|| super::ports::build_opener(sealing).ok());
@@ -344,33 +458,21 @@ fn webhook_steps(
             else {
                 continue;
             };
-            let (Some(reviewer), Some(head), Some(pr), Some(issue)) = (
-                document["reviewer"].as_str(),
-                document["headSha"].as_str(),
-                document["pr"].as_u64(),
-                document["taskId"]
-                    .as_str()
-                    .and_then(|id| id.strip_prefix("issue-"))
-                    .and_then(|number| number.parse::<u64>().ok()),
-            ) else {
-                continue;
-            };
-            steps.push(graphhelm_wake_webhook::Step {
-                lane: reviewer.to_owned(),
-                step: "review".to_owned(),
-                skill: "blind-review".to_owned(),
-                issue,
-                pr: Some(pr),
-                head: head.to_owned(),
-                because: graphhelm_wake_webhook::Reason::ReviewAssigned,
-            });
+            let actor = envelope["source"]["id"].as_str().unwrap_or_default();
+            match trigger_for(&signal.kind, &document, actor, &mut authors) {
+                Trigger::Step(step) => steps.push((event.sequence, step)),
+                Trigger::NoAuthor(pr) => {
+                    dispatcher.log_skip(&format!("pr-{pr}:{}", signal.kind), "skipped-no-author");
+                }
+                Trigger::Nothing => {}
+            }
             break;
         }
     }
-    // Handled up to `last` (a step whose delivery fails is retried by nothing here: the delivery
-    // log records it, and the lane still has its message and the tasks projection).
-    write_cursor(&cursor_path, last);
-    steps
+    if authors.len() != learned {
+        write_authors(&authors_path, &authors);
+    }
+    Some((steps, last))
 }
 
 /// The webhook cursor, written best-effort: a cursor that cannot be written is said (the error
@@ -385,26 +487,50 @@ fn write_cursor(path: &Path, sequence: u64) {
 /// One process-wide pass at a time: two sweeps must not both take the same cursor.
 static WEBHOOK_PASS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Phase W: delivers the new review steps to their lane webhooks. Off (no config file under the
-/// project's `.graphhelm/`) costs one failed file read.
+/// Phase W: delivers the steps made ready since the cursor to their lane webhooks, in order. The
+/// cursor moves past a step only when it is FINAL: accepted, a duplicate, rejected (a 401 or 404 is
+/// logged and skipped), the lane off, or given up after too many failed passes. A step whose
+/// delivery failed (a 503, a timeout, a refused connection) holds the cursor just before its own
+/// record, so the next pass tries it again after its backoff, and the steps behind it wait.
+/// Off (no config file under the project's `.graphhelm/`) costs one failed file read.
 fn webhook_pass(
     events: &Path,
     execution: &str,
     sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
 ) {
-    let Some(dispatcher) = events
-        .parent()
-        .and_then(graphhelm_wake_webhook::Dispatcher::load)
-    else {
+    let Some(dir) = events.parent() else {
+        return;
+    };
+    let Some(dispatcher) = graphhelm_wake_webhook::Dispatcher::load(dir) else {
         return;
     };
     let Ok(_pass) = WEBHOOK_PASS.try_lock() else {
         return;
     };
-    for step in webhook_steps(events, execution, sealing) {
-        // Every outcome is already in the delivery log; none of them fails the sweep.
-        drop(dispatcher.notify(&step));
+    let Some((steps, last)) = webhook_steps(events, execution, sealing, &dispatcher) else {
+        return;
+    };
+    let cursor = settle(&steps, last, |step| dispatcher.notify(step));
+    write_cursor(&dir.join("wake-webhook.cursor"), cursor);
+}
+
+/// Where the cursor goes after delivering `steps` in order (`last` is the last sequence read): past
+/// everything when every step is final, else just before the first step whose delivery failed; no
+/// step behind a failed one is sent.
+fn settle(
+    steps: &[(u64, graphhelm_wake_webhook::Step)],
+    last: u64,
+    mut notify: impl FnMut(&graphhelm_wake_webhook::Step) -> Option<graphhelm_wake_webhook::Outcome>,
+) -> u64 {
+    for (sequence, step) in steps {
+        if matches!(
+            notify(step),
+            Some(graphhelm_wake_webhook::Outcome::Failed(_))
+        ) {
+            return sequence.saturating_sub(1);
+        }
     }
+    last
 }
 
 /// The sweep: read the stream's projection, ring every lease whose cursor lies before the
@@ -1550,5 +1676,192 @@ mod tests {
             0,
             "arm and status must not read the whole stream while the fold is kept"
         );
+    }
+
+    // ---- #2714 slice 4: which record wakes which lane, and when the cursor may move.
+
+    fn doc(fields: serde_json::Value) -> serde_json::Value {
+        let mut base = serde_json::json!({
+            "taskId": "issue-2714", "pr": 2790,
+            "headSha": "0123456789abcdef0123456789abcdef01234567",
+        });
+        base.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        base
+    }
+
+    fn step_of(trigger: Trigger) -> (String, String, String, String) {
+        match trigger {
+            Trigger::Step(step) => (step.lane, step.step, step.skill, step.head),
+            other => panic!("expected a step, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_record_wakes_the_lane_that_has_the_next_step() {
+        let mut authors = Authors::new();
+        // Learning the author wakes no one.
+        assert_eq!(
+            trigger_for(
+                "task.pr_opened",
+                &doc(serde_json::json!({"lane": "openbot-sasuke"})),
+                "openbot-sasuke",
+                &mut authors
+            ),
+            Trigger::Nothing
+        );
+        assert_eq!(
+            authors.get(&2790).map(String::as_str),
+            Some("openbot-sasuke")
+        );
+        let head = "0123456789abcdef0123456789abcdef01234567";
+        let (lane, name, skill, at) = step_of(trigger_for(
+            "task.review_assigned",
+            &doc(serde_json::json!({"reviewer": "openbot-neji"})),
+            "openbot-tsunade",
+            &mut authors,
+        ));
+        assert_eq!(
+            (lane.as_str(), name.as_str(), skill.as_str(), at.as_str()),
+            ("openbot-neji", "review", "blind-review", head)
+        );
+        // BLOCK goes to the AUTHOR, not to the reviewer who wrote it.
+        let (lane, name, skill, _) = step_of(trigger_for(
+            "task.review_verdict",
+            &doc(serde_json::json!({"verdict": "BLOCK"})),
+            "openbot-neji",
+            &mut authors,
+        ));
+        assert_eq!(
+            (lane.as_str(), name.as_str(), skill.as_str()),
+            ("openbot-sasuke", "fix", "implement")
+        );
+        // Both approvals go to the approving reviewer, who merges.
+        for verdict in ["APPROVE", "APPROVE-WITH-RISK"] {
+            let (lane, name, skill, _) = step_of(trigger_for(
+                "task.review_verdict",
+                &doc(serde_json::json!({"verdict": verdict})),
+                "openbot-neji",
+                &mut authors,
+            ));
+            assert_eq!(
+                (lane.as_str(), name.as_str(), skill.as_str()),
+                ("openbot-neji", "merge", "merge"),
+                "{verdict}"
+            );
+        }
+        // A merge goes to the author for the lane's next item, keyed by the merge commit.
+        let sha = "89abcdef89abcdef89abcdef89abcdef89abcdef";
+        let (lane, name, _, at) = step_of(trigger_for(
+            "task.merged",
+            &doc(serde_json::json!({"mergeSha": sha})),
+            "openbot-neji",
+            &mut authors,
+        ));
+        assert_eq!(
+            (lane.as_str(), name.as_str(), at.as_str()),
+            ("openbot-sasuke", "next", sha)
+        );
+        // Other records wake no one.
+        assert_eq!(
+            trigger_for(
+                "task.claimed",
+                &doc(serde_json::json!({})),
+                "x",
+                &mut authors
+            ),
+            Trigger::Nothing
+        );
+    }
+
+    #[test]
+    fn a_block_or_a_merge_for_a_pr_with_no_known_author_is_said_not_sent() {
+        let mut authors = Authors::new();
+        assert_eq!(
+            trigger_for(
+                "task.review_verdict",
+                &doc(serde_json::json!({"verdict": "BLOCK"})),
+                "openbot-neji",
+                &mut authors
+            ),
+            Trigger::NoAuthor(2790)
+        );
+        assert_eq!(
+            trigger_for(
+                "task.merged",
+                &doc(serde_json::json!({"mergeSha": "89abcdef89abcdef89abcdef89abcdef89abcdef"})),
+                "openbot-neji",
+                &mut authors
+            ),
+            Trigger::NoAuthor(2790)
+        );
+    }
+
+    #[test]
+    fn the_authors_survive_a_restart_and_stay_bounded() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("wake-webhook.authors.json");
+        let mut authors = Authors::new();
+        for pr in 1..=(AUTHORS_KEPT as u64 + 20) {
+            authors.insert(pr, format!("lane-{pr}"));
+        }
+        write_authors(&path, &authors);
+        let back = read_authors(&path);
+        assert_eq!(back.len(), AUTHORS_KEPT);
+        assert!(!back.contains_key(&1) && back.contains_key(&(AUTHORS_KEPT as u64 + 20)));
+    }
+
+    fn a_step(lane: &str) -> graphhelm_wake_webhook::Step {
+        graphhelm_wake_webhook::Step {
+            lane: lane.to_owned(),
+            step: "review".to_owned(),
+            skill: "blind-review".to_owned(),
+            issue: 1,
+            pr: Some(2),
+            head: "abcdef12".to_owned(),
+            because: graphhelm_wake_webhook::Reason::ReviewAssigned,
+        }
+    }
+
+    #[test]
+    fn the_cursor_moves_only_past_steps_that_are_final() {
+        use graphhelm_wake_webhook::Outcome;
+        let steps = vec![(10, a_step("a")), (20, a_step("b")), (30, a_step("c"))];
+        for (outcome, label) in [
+            (Some(Outcome::Accepted), "accepted"),
+            (Some(Outcome::Duplicate), "duplicate"),
+            (Some(Outcome::Rejected(401)), "401"),
+            (Some(Outcome::Rejected(404)), "404"),
+            (Some(Outcome::GaveUp), "given up"),
+            (None, "lane off or already delivered"),
+        ] {
+            let mut sent = 0;
+            let cursor = settle(&steps, 40, |_| {
+                sent += 1;
+                outcome.clone()
+            });
+            assert_eq!(
+                (cursor, sent),
+                (40, 3),
+                "{label}: final, the cursor passes all"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_delivery_holds_the_cursor_and_the_steps_behind_it_wait() {
+        use graphhelm_wake_webhook::Outcome;
+        let steps = vec![(10, a_step("a")), (20, a_step("b")), (30, a_step("c"))];
+        let mut sent = Vec::new();
+        let cursor = settle(&steps, 40, |step| {
+            sent.push(step.lane.clone());
+            (step.lane == "b").then(|| Outcome::Failed("503 after retries".to_owned()))
+        });
+        assert_eq!(
+            cursor, 19,
+            "just before the failed step's own record, so it is read again"
+        );
+        assert_eq!(sent, ["a", "b"], "nothing behind the failed step is sent");
     }
 }

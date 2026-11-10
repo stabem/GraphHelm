@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { Session } from "../login/session";
 import { Runtime } from "../runtime/client";
+import { pollWhileVisible } from "../runtime/poll-while-visible";
 import { activeRun, activeRunWaits, agentCount, journeysToFix, type ProjectSummary } from "./project-summary";
 
 /** How often every project's subtitle is read again: at most three reads per project. */
@@ -35,9 +36,8 @@ export function useSummaries(sessions: Session[]): Record<string, ProjectSummary
         });
       }
     };
-    read();
-    const timer = setInterval(read, SUMMARY_MS);
-    return () => { live = false; clearInterval(timer); };
+    const stop = pollWhileVisible(read, SUMMARY_MS);
+    return () => { live = false; stop(); };
   }, [sessions]);
   return summaries;
 }

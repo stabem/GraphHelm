@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { addFolder, loginWaiting, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
+import { pollWhileVisible } from "./runtime/poll-while-visible";
 import { rereadOnReturn } from "./runtime/reread-on-return";
 import { refusedToken, Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
 import { Sidebar, type ProjectEntry } from "./sidebar/Sidebar";
@@ -150,11 +151,7 @@ function Shell({ session, projects, closed, route, go, pickJourney, pickPast, on
     }
   }, [runtime, onRefused, session.key]);
 
-  useEffect(() => {
-    void readRuns();
-    const timer = setInterval(() => void readRuns(), POLL_MS);
-    return () => clearInterval(timer);
-  }, [readRuns]);
+  useEffect(() => pollWhileVisible(() => void readRuns(), POLL_MS), [readRuns]);
 
   const readJourneys = useCallback(() => {
     runtime.journeys().then((flows) => { setJourneys(flows); setJourneysError(null); }, (error: unknown) => setJourneysError(error instanceof Error ? error.message : "The journeys could not be read."));

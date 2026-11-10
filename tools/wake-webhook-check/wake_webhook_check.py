@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 PINNED_HOST = "signal.openbot.run"
+URL_PORTS = {None, 443}
 LANE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -37,7 +38,7 @@ def url_problem(url: str) -> str | None:
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or parts.hostname != PINNED_HOST:
         return f"must be https on {PINNED_HOST}"
-    if parts.username or parts.password or parts.fragment or parts.port not in (None, 443):
+    if parts.username or parts.password or parts.fragment or parts.port not in URL_PORTS:
         return "must have no credentials, fragment or port"
     if not parts.path.startswith("/"):
         return "must have a path"

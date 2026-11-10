@@ -71,8 +71,16 @@ export function lanesDots(task: BoardTask | null, step: TaskStepName | null, stu
   });
 }
 
-/** The dots of a Graph issue card: squares before the stage are done; the stage is in progress,
- * or stalled when the card sits in the Ready column; the rest are not started. */
+/** The index of the dot a Graph card stands on, on the Lanes step scale: the slice's own step,
+ * or past the last dot once it is merged or proven. An unknown step lights no dot. */
+export function graphStage(task: BoardTask, proven: boolean): number {
+  if (proven || task.step === "merged") return STEPS.length;
+  return STEPS.indexOf(task.step);
+}
+
+/** The dots of a Graph issue card: steps before `at` (an index on the Lanes step scale, from
+ * `graphStage`) are done; `at` is in progress, or stalled when the card sits in the Ready column;
+ * the rest are not started. */
 export function graphDots(task: BoardTask, at: number, stalled: boolean, silentSince: string | null, now: Date): StepDot[] {
   return STEPS.map((name, index) => {
     const state: DotState = index < at ? "done" : index === at ? (stalled ? "stalled" : "in progress") : "not started";

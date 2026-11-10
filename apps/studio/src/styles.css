@@ -139,7 +139,6 @@ button { font: inherit; }
 .add-folder { all: unset; cursor: pointer; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--edge); text-align: center; line-height: 20px; color: var(--muted); }
 .add-folder-form { display: flex; flex-wrap: wrap; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--edge-strong); }
 .add-folder-form input { flex: 1 1 100%; min-width: 0; background: var(--card); color: inherit; border: 1px solid var(--edge-strong); border-radius: 6px; padding: 4px 6px; font-size: 11px; }
-.add-folder-error { flex: 1 1 100%; color: var(--muted); font-size: 11px; }
 .project-folder { font-size: var(--fs-meta); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* #1901: the open project's team run and journeys, indented as Sidebar.dc.html draws them. */
 .project-counts { display: flex; flex-direction: column; gap: 2px; padding-left: 4px; border-left: 1px solid var(--edge-strong); margin-left: 5px; color: var(--muted); }
@@ -340,7 +339,6 @@ button { font: inherit; }
 .yaml-boolean { color: #d7a8f0; }
 .yaml-null, .yaml-dash { color: #9a9aa2; }
 .compare-bar { display: flex; align-items: center; gap: var(--s3); padding: 8px 12px; border-bottom: 1px solid var(--edge); flex-wrap: wrap; }
-.compare-step { flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .compare-count, .compare-note { font-size: 11px; color: var(--muted); }
 .compare-note { margin: 0; padding: 4px 12px; }
 .seg-group { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: #1e1e22; }
@@ -393,8 +391,8 @@ button { font: inherit; }
 .board-column.folded .count { margin-left: 0; padding: 0 6px; border-radius: 999px; background: var(--card); color: var(--faint); font: 400 var(--fs-meta)/20px var(--mono); }
 .board-column.folded .folded-name { writing-mode: vertical-rl; letter-spacing: 1px; color: var(--faint); font: 600 var(--fs-meta) var(--mono); text-transform: uppercase; }
 /* #1934: one column header and count chip in every view (Tokens.dc.html "Sample column"). */
-.board-column h3, .kanban-col h2, .col-head { margin: 0; min-height: 24px; display: flex; align-items: center; gap: var(--s2); font: 600 var(--fs-meta) var(--mono); text-transform: uppercase; }
-.board-column h3 .count, .kanban-col h2 .count, .col-head .count, .box-head .count { margin-left: auto; padding: 0 var(--s2); border-radius: 999px; background: var(--card); color: var(--faint); font: 400 var(--fs-meta)/20px var(--mono); }
+.board-column h3, .kanban-col h2 { margin: 0; min-height: 24px; display: flex; align-items: center; gap: var(--s2); font: 600 var(--fs-meta) var(--mono); text-transform: uppercase; }
+.board-column h3 .count, .kanban-col h2 .count, .box-head .count { margin-left: auto; padding: 0 var(--s2); border-radius: 999px; background: var(--card); color: var(--faint); font: 400 var(--fs-meta)/20px var(--mono); }
 .board-column > ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .board-column .none { color: var(--faint); font-size: 11px; }
 /* #1901: WHAT I ASKED, the first board column of Lanes.dc.html. */
@@ -450,9 +448,6 @@ button { font: inherit; }
 .request .mono { color: var(--muted); }
 .blocks { display: flex; gap: 3px; }
 .block { width: 9px; height: 9px; border-radius: 2px; background: var(--edge); }
-.block.done { background: var(--live); }
-.block.now { background: var(--accent); }
-.block.stuck { background: #ff6b6b; }
 .last-action { font-size: var(--fs-meta); color: var(--muted); overflow-wrap: anywhere; }
 .question { padding: 8px; border-radius: 8px; background: #241010; border: 1px solid #5a2a2a; display: flex; flex-direction: column; gap: 4px; line-height: 1.35; overflow-wrap: anywhere; }
 .question > .mono { font-size: var(--fs-meta); color: #ff9b9b; }
@@ -544,16 +539,7 @@ button { font: inherit; }
 @media (max-width: 1100px) { .lane-panels { grid-template-columns: 1fr; } }
 
 /* #1801: the Graph region's owner requests and Kanban. */
-.requests { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.requests-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .seg { display: inline-flex; gap: 4px; }
-.seg .b.on { border-color: var(--accent); }
-.request-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s3); }
-.request-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(140px, 1fr)); gap: 12px; padding: 10px; border: 1px solid var(--edge); border-radius: 8px; }
-.request-ask, .request-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
-.result-proven strong { color: #3ddc97; }
-.result-merged strong { color: #8b7cff; }
-.result-in-progress strong { color: #ff8a3d; }
 .kanban { display: flex; gap: var(--s3); min-width: 0; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
 .kanban-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .kanban-col ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
@@ -562,9 +548,6 @@ button { font: inherit; }
   /* v20: on a phone the Graph's Kanban columns stack, so every column is reached by vertical scroll. */
   .kanban { flex-direction: column; overflow-x: visible; }
   .kanban-col { flex: 0 0 auto; min-width: 0; }
-}
-@media (max-width: 720px) {
-  .request-row { grid-template-columns: 1fr; }
 }
 
 /* #1802: the Graph review modal. */
@@ -617,7 +600,6 @@ button { font: inherit; }
 .gv-ask { width: 23.077%; padding: var(--card-pad); border-radius: var(--card-radius); border: 1px solid var(--accent); background: var(--card); display: flex; flex-direction: column; gap: var(--s2); }
 .gv-ask-when { font-size: var(--fs-meta); color: var(--accent); }
 .gv-ask-text { font-size: 13px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.gv-bar { display: flex; gap: 3px; flex-wrap: wrap; }
 .gv-sq { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .gv-sq.small { width: 8px; height: 8px; }
 .gv-issue { width: 24.038%; min-height: 108px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--edge-strong); background: var(--card); display: flex; flex-direction: column; gap: 4px; text-align: left; }

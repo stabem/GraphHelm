@@ -61,6 +61,21 @@ pub(crate) fn emit_lag(samples: &mut Vec<Duration>) {
     samples.clear();
 }
 
+/// Adds the store's lock wait and anchor validation to a request's phases, each when it was
+/// non-zero (#2694).
+fn add_lock_phases(
+    phases: &mut BTreeMap<&'static str, (u64, Duration)>,
+    locks: graphhelm_events::LockTiming,
+) {
+    for (name, spent) in [("lock.wait", locks.wait), ("lock.anchors", locks.anchors)] {
+        if !spent.is_zero() {
+            let entry = phases.entry(name).or_default();
+            entry.0 += 1;
+            entry.1 += spent;
+        }
+    }
+}
+
 /// Runs `work` as one timed request named `route`, and logs its phases when timing is on.
 pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     if !enabled() {
@@ -69,20 +84,18 @@ pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     let outer = PHASES.with(|cell| cell.replace(Some(BTreeMap::new())));
     // #2694: the store's lock wait and anchor validation this request spent, reported as phases
     // of their own (they are also inside the phases that contain them).
+    // The store reads its clock on the lock path only while this thread tracks, so with timing
+    // off (the early return above) no clock is read there at all.
+    graphhelm_events::track_lock_timing(true);
     let _stale = graphhelm_events::take_lock_timing();
     let started = Instant::now();
     let result = work();
     let total = started.elapsed();
+    graphhelm_events::track_lock_timing(false);
     let locks = graphhelm_events::take_lock_timing();
     PHASES.with(|cell| {
         if let Some(phases) = cell.borrow_mut().as_mut() {
-            for (name, spent) in [("lock.wait", locks.wait), ("lock.anchors", locks.anchors)] {
-                if !spent.is_zero() {
-                    let entry = phases.entry(name).or_default();
-                    entry.0 += 1;
-                    entry.1 += spent;
-                }
-            }
+            add_lock_phases(phases, locks);
         }
     });
     let phases = PHASES.with(|cell| cell.replace(outer)).unwrap_or_default();
@@ -149,8 +162,10 @@ mod tests {
     fn a_store_lock_is_reported_once_as_lock_timing() {
         let directory = tempfile::tempdir().unwrap();
         let store = crate::commands::event_store(directory.path()).unwrap();
+        graphhelm_events::track_lock_timing(true);
         let _stale = graphhelm_events::take_lock_timing();
         store.with_shared_lock(|| Ok(())).unwrap();
+        graphhelm_events::track_lock_timing(false);
         let first = graphhelm_events::take_lock_timing();
         assert!(
             !first.anchors.is_zero(),
@@ -160,6 +175,73 @@ mod tests {
             graphhelm_events::take_lock_timing(),
             graphhelm_events::LockTiming::default()
         );
+    }
+
+    /// Shino's condition 1: with timing off (the default) the lock path reads no clock, so
+    /// nothing is accumulated however many locks are taken.
+    #[test]
+    fn the_lock_timing_stays_default_when_it_is_off() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        graphhelm_events::track_lock_timing(false);
+        let _stale = graphhelm_events::take_lock_timing();
+        store.with_shared_lock(|| Ok(())).unwrap();
+        store.with_shared_lock(|| Ok(())).unwrap();
+        assert_eq!(
+            graphhelm_events::take_lock_timing(),
+            graphhelm_events::LockTiming::default()
+        );
+    }
+
+    /// Shino's condition 2: the wait for the store's lock is measured. One thread holds the
+    /// store's lock for a while; a second thread with timing on waits for it, and its `wait`
+    /// covers (most of) that hold. Removing the wait measurement fails this.
+    #[test]
+    fn a_blocked_lock_is_reported_as_wait() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::commands::event_store(directory.path()).unwrap();
+        let hold = std::time::Duration::from_millis(300);
+        let (held, holding) = std::sync::mpsc::channel();
+        let wait = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                store
+                    .with_shared_lock(|| {
+                        held.send(()).unwrap();
+                        std::thread::sleep(hold);
+                        Ok(())
+                    })
+                    .unwrap();
+            });
+            holding.recv().unwrap();
+            graphhelm_events::track_lock_timing(true);
+            let _stale = graphhelm_events::take_lock_timing();
+            store.with_shared_lock(|| Ok(())).unwrap();
+            graphhelm_events::track_lock_timing(false);
+            graphhelm_events::take_lock_timing().wait
+        });
+        assert!(
+            wait >= hold / 2,
+            "the second lock waited for the first: {wait:?}"
+        );
+    }
+
+    /// The reporting itself: a non-zero wait and anchors become `lock.wait` / `lock.anchors`
+    /// phases; zero ones add nothing.
+    #[test]
+    fn the_lock_phases_are_reported_when_non_zero() {
+        let mut phases = std::collections::BTreeMap::new();
+        super::add_lock_phases(
+            &mut phases,
+            graphhelm_events::LockTiming {
+                wait: std::time::Duration::from_millis(5),
+                anchors: std::time::Duration::ZERO,
+            },
+        );
+        assert_eq!(
+            phases.get("lock.wait"),
+            Some(&(1_u64, std::time::Duration::from_millis(5)))
+        );
+        assert!(!phases.contains_key("lock.anchors"));
     }
 
     #[test]

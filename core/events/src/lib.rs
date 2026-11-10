@@ -44,7 +44,7 @@ pub use limits::{
 pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, LockTiming,
     MAX_SEALED_EVIDENCE_BATCH, PrefixCache, ReadLockHeld, RecoveredTail, concatenated_journal,
-    journal_line_roundtrips, take_lock_timing, with_repository_read_lock,
+    journal_line_roundtrips, take_lock_timing, track_lock_timing, with_repository_read_lock,
 };
 pub use memory::{
     MemoryAdmissionRefusalAppend, MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend,

@@ -335,6 +335,21 @@ thread_local! {
             anchors: std::time::Duration::ZERO,
         })
     };
+    // Off unless a caller turns it on for this thread: with it off the lock path reads no clock.
+    static LOCK_TRACKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Turns the lock timing on or off for this thread. A caller that times a request (serve, with
+/// `GRAPHHELM_SERVE_TIMING=1`) turns it on around the request; with it off (the default) the
+/// store's lock path reads no clock and [`take_lock_timing`] stays at its default.
+pub fn track_lock_timing(on: bool) {
+    LOCK_TRACKING.with(|cell| cell.set(on));
+}
+
+fn lock_clock() -> Option<std::time::Instant> {
+    LOCK_TRACKING
+        .with(std::cell::Cell::get)
+        .then(std::time::Instant::now)
 }
 
 /// The lock timing this thread accumulated since the last call, and a fresh start.
@@ -1351,7 +1366,7 @@ impl LocalEventRepository {
         // DOES still serialise two threads sharing ONE handle is the journal mutex inside
         // `validate_anchors`, and no surface shares a handle today. Left as a seed rather than
         // changed without a guard that can fail.
-        let waiting = std::time::Instant::now();
+        let waiting = lock_clock();
         let _gate = self
             .operation_gate
             .lock()
@@ -1395,14 +1410,20 @@ impl LocalEventRepository {
             });
         }
         drop(turnstile);
-        LOCK_TIMING.with(|cell| cell.borrow_mut().wait += waiting.elapsed());
-        let anchors = std::time::Instant::now();
+        if let Some(started) = waiting {
+            LOCK_TIMING.with(|cell| cell.borrow_mut().wait += started.elapsed());
+        }
+        let anchors = lock_clock();
         let before = self.validate_anchors();
-        LOCK_TIMING.with(|cell| cell.borrow_mut().anchors += anchors.elapsed());
+        if let Some(started) = anchors {
+            LOCK_TIMING.with(|cell| cell.borrow_mut().anchors += started.elapsed());
+        }
         let result = before.and_then(|()| operation());
-        let anchors = std::time::Instant::now();
+        let anchors = lock_clock();
         let after = self.validate_anchors();
-        LOCK_TIMING.with(|cell| cell.borrow_mut().anchors += anchors.elapsed());
+        if let Some(started) = anchors {
+            LOCK_TIMING.with(|cell| cell.borrow_mut().anchors += started.elapsed());
+        }
         let result = match (result, after) {
             (Ok(value), Ok(())) => Ok(value),
             (_, Err(error)) => Err(error),

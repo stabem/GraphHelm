@@ -32,3 +32,31 @@ it("shows a successful board when each read is slower than the poll interval", a
     vi.unstubAllGlobals();
   }
 });
+
+it("drops the read alert once a later read works", async () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 })));
+  const board = await new Runtime("synthetic").board("fixture");
+  vi.unstubAllGlobals();
+  let reads = 0;
+  // The second read fails; the first and every later one work.
+  const read = vi.fn(async () => { reads += 1; if (reads === 2) throw new Error("offline"); return board; });
+  const runtime = { board: read, requests: async () => [] } as unknown as Runtime;
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+
+  try {
+    await act(async () => root.render(createElement(RequestsView, { runtime, executionIds: ["fixture"], journeys: [] })));
+    await act(async () => vi.advanceTimersByTimeAsync(5_001));
+    expect(reads).toBe(2);
+    expect(host.textContent).toContain("Requests could not be read");
+    await act(async () => vi.advanceTimersByTimeAsync(5_001));
+    expect(reads).toBe(3);
+    expect(host.textContent).not.toContain("Requests could not be read");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.useRealTimers();
+  }
+});

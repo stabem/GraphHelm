@@ -73,12 +73,16 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
     return () => { alive = false; };
   }, [runtime, executionId, task.issue]);
 
+  // Focus moves to Close once, when the dialog opens. `onClose` is read through a ref: the caller
+  // passes a new function on every poll, and an effect keyed on it pulled focus back each time.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
 
   const journey = journeys?.find((row) => row.id === journeyId) ?? null;
   const shot = journey?.before?.screens.find((row) => row.screen === screen) ?? null;

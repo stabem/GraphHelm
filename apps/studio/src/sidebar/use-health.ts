@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { pollWhileVisible } from "../runtime/poll-while-visible";
+
 /** How often the Runtime's health is read again for the restart notice. */
 const HEALTH_MS = 30_000;
 
@@ -45,9 +47,8 @@ export function useRestart(base: string): Restart | null {
         .then((response) => response.json() as Promise<{ data?: unknown }>)
         .then((reply) => { if (live) setRestart(restartOf(reply.data)); }, () => { /* keep the last answer */ });
     };
-    read();
-    const timer = setInterval(read, HEALTH_MS);
-    return () => { live = false; clearInterval(timer); };
+    const stop = pollWhileVisible(read, HEALTH_MS);
+    return () => { live = false; stop(); };
   }, [base]);
   return restart;
 }

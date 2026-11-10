@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import { OWNER, type JourneyFlow, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
+import { pollWhileVisible } from "../runtime/poll-while-visible";
 import { controlBody, draftFor, messageBody, newId, type Draft, type LaneControl } from "./drafts";
 import { actionText } from "./format";
 import { When } from "../time/Stamp";
@@ -128,6 +129,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
       }
       if (sequence !== readSequence.current) return;
       setBoard(next);
+      // A read that worked ends the alert an earlier failed read raised.
+      setError(null);
       // Each lane's log is read again only when its last record moved.
       for (const agent of agents(next)) {
         if (agent.lane in seen.current && seen.current[agent.lane] === agent.lastRecordAt) continue;
@@ -155,9 +158,8 @@ export function LanesView({ runtime, runs, choices, filter: runFilter, onFilter,
   }, [picked, firstShown]);
 
   useEffect(() => {
-    void read();
-    const timer = setInterval(() => void read(), POLL_MS);
-    return () => { clearInterval(timer); readSequence.current += 1; readInFlight.current = null; requestsSequence.current += 1; requestsInFlight.current = null; };
+    const stop = pollWhileVisible(() => void read(), POLL_MS);
+    return () => { stop(); readSequence.current += 1; readInFlight.current = null; requestsSequence.current += 1; requestsInFlight.current = null; };
   }, [read]);
 
   if (runs.length === 0) return <section id="panel-lanes" aria-label="Lanes" className="view"><Empty title="No work yet" hint="Lanes appear here once a team picks up a task." onStart={onStart} /></section>;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { OWNER, type Capacity, type FileCollisions, type LaneAction, type Runtime, type TasksBoard } from "../runtime/client";
+import { pollWhileVisible } from "../runtime/poll-while-visible";
 import { controlBody, draftFor, messageBody, newId, reviewAssignedBody, type Draft } from "./drafts";
 import { actionText } from "./format";
 import { When } from "../time/Stamp";
@@ -83,13 +84,12 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
     const read = () => {
       const current = ++sequence;
       return runtime.collisions(executionId).then(
-        (view) => { if (live && current === sequence) setCollisions(view); },
+        (view) => { if (live && current === sequence) { setCollisions(view); setCollisionsError(null); } },
         (error: unknown) => { if (live && current === sequence) setCollisionsError(actionErrorDetails("File collisions could not be read", error, "The Runtime could not return file collision data.", "Dismiss this alert or reload Lanes to try again.")); },
       );
     };
-    void read();
-    const timer = setInterval(() => void read(), COLLISIONS_MS);
-    return () => { live = false; clearInterval(timer); };
+    const stop = pollWhileVisible(() => void read(), COLLISIONS_MS);
+    return () => { live = false; stop(); };
   }, [runtime, executionId]);
 
   useEffect(() => {
@@ -98,13 +98,12 @@ export function LanesPanels({ runtime, executionId, board, requests, actions, on
     const read = () => {
       const current = ++sequence;
       return runtime.capacity().then(
-        (view) => { if (live && current === sequence) setCapacity(view); },
+        (view) => { if (live && current === sequence) { setCapacity(view); setCapacityError(null); } },
         (error: unknown) => { if (live && current === sequence) setCapacityError(actionErrorDetails("Capacity could not be read", error, "The Runtime could not return capacity data.", "Dismiss this alert or reload Lanes to try again.")); },
       );
     };
-    void read();
-    const timer = setInterval(() => void read(), CAPACITY_MS);
-    return () => { live = false; clearInterval(timer); };
+    const stop = pollWhileVisible(() => void read(), CAPACITY_MS);
+    return () => { live = false; stop(); };
   }, [runtime]);
 
   const needs = useMemo(() => needsAction(board, requests), [board, requests]);

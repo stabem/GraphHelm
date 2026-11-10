@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import type { BoardTask, JourneyFlow, Runtime, TasksBoard } from "../runtime/client";
+import { pollWhileVisible } from "../runtime/poll-while-visible";
 import { ReviewModal } from "./ReviewModal";
 import { reviewable } from "./review";
 import { idleText, stepAged } from "../lanes/board";
@@ -73,6 +74,8 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
         setBoard(combineBoards(parts));
         setRequests(combineRequests(parts));
       }
+      // A read that worked ends the alert an earlier failed read raised.
+      setError(null);
     } catch (reason) {
       if (sequence === readSequence.current) setError(actionErrorDetails("Requests could not be read", reason, "The Runtime could not return the request board.", "Retry reading the requests."));
     } finally {
@@ -82,9 +85,8 @@ export function RequestsView({ runtime, executionIds, journeys, onOpenProof, wai
   const retryRead = () => { setError(null); void read(); };
 
   useEffect(() => {
-    void read();
-    const timer = setInterval(() => void read(), POLL_MS);
-    return () => { clearInterval(timer); readSequence.current += 1; readInFlight.current = null; };
+    const stop = pollWhileVisible(() => void read(), POLL_MS);
+    return () => { stop(); readSequence.current += 1; readInFlight.current = null; };
   }, [read]);
 
   const many = executionIds.length > 1;

@@ -108,6 +108,23 @@ async fn ring_once(rendezvous_id: &str) -> Option<WakeConsumeReason> {
     }
 }
 
+/// The arming actor of each live lease, by its arming sequence: from the digest of the read the
+/// projection came from, so a lease armed in the tail after a warm fold is covered (#2694).
+fn arming_actors<'a>(
+    leases: impl Iterator<Item = (u64, &'a str, &'a str)>,
+    projection: &graphhelm_events::ExecutionProjection,
+) -> std::collections::BTreeMap<u64, &'a str> {
+    leases
+        .filter(|(sequence, session, _)| {
+            projection
+                .wake_leases
+                .get(*session)
+                .is_some_and(|live| live.armed_at_sequence == *sequence)
+        })
+        .map(|(sequence, _, actor)| (sequence, actor))
+        .collect()
+}
+
 /// Phase 1 of the sweep: what is due? Replay the stream and keep every live lease whose
 /// cursor lies before relevant content, respecting each operator note recipient. `None` on any failure — the sweep is
 /// fire-and-forget and every failure path is a silent no-op.
@@ -150,17 +167,7 @@ fn due_leases(
     let (history, _) = store
         .read_stream_after(&stream.scope, &stream.stream_id, cursor)
         .ok()?;
-    let actors: std::collections::BTreeMap<u64, &str> = glance
-        .digest
-        .wake_leases()
-        .filter(|(sequence, session, _)| {
-            projection
-                .wake_leases
-                .get(*session)
-                .is_some_and(|live| live.armed_at_sequence == *sequence)
-        })
-        .map(|(sequence, _, actor)| (sequence, actor))
-        .collect();
+    let actors = arming_actors(glance.digest.wake_leases(), &projection);
     let mut content_head = 0;
     let mut notes: std::collections::BTreeMap<&str, u64> =
         actors.values().map(|actor| (*actor, 0)).collect();
@@ -1244,6 +1251,30 @@ mod tests {
             crate::commands::execution::status::WHOLE_READS.with(std::cell::Cell::get),
             0,
             "neither sweep phase may read the whole stream while the fold is kept"
+        );
+        // Itachi's condition on #2715: a lease armed in the tail AFTER the warm sweep is still
+        // due, and its arming actor is the one that armed it.
+        lease(8);
+        let due = due_leases(events, "exec-fold", None).expect("the sweep reads the stream");
+        assert!(
+            due.iter().any(|lease| lease.session_id == "session-8"),
+            "a lease armed in the tail after the warm sweep is due"
+        );
+        let store = crate::commands::event_store(events).unwrap();
+        let glance = crate::commands::execution::status::glance(
+            &store,
+            events,
+            &scope,
+            "exec-fold",
+            &graphhelm_events::ReadBudget::unbounded(),
+        )
+        .unwrap();
+        let projection = glance.projection.unwrap();
+        let actors = arming_actors(glance.digest.wake_leases(), &projection);
+        assert_eq!(
+            actors.get(&8),
+            Some(&"system-test"),
+            "the tail-armed lease carries its own arming actor"
         );
     }
 }

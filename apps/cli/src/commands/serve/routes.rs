@@ -3874,6 +3874,21 @@ fn graph_source(
     }
 }
 
+/// The graph a resume body names, or `None` for a snapshot resume (neither `"file"` nor `"graph"`).
+/// A body with only `"graph"` used to be read as a snapshot resume and its inline graph was
+/// dropped without a word; any present field now goes through `graph_source`.
+#[allow(clippy::result_large_err)] // see `graph_source`
+fn resume_source(
+    payload: &serde_json::Value,
+    roots: Option<&[PathBuf]>,
+) -> Result<Option<GraphSource>, Response> {
+    let present = |name: &str| !matches!(payload.get(name), None | Some(serde_json::Value::Null));
+    if !present("file") && !present("graph") {
+        return Ok(None);
+    }
+    graph_source(payload, RESUME_COMMAND, roots).map(Some)
+}
+
 #[allow(clippy::result_large_err)] // see `graph_source`
 fn load_and_publish(
     source: &GraphSource,
@@ -5230,13 +5245,9 @@ pub(super) async fn resume(
         &payload,
         &["resumed"]
     );
-    let source = if payload.get("file").is_some() {
-        match graph_source(&payload, RESUME_COMMAND, state.path_roots.as_deref()) {
-            Ok(source) => Some(source),
-            Err(response) => return response,
-        }
-    } else {
-        None
+    let source = match resume_source(&payload, state.path_roots.as_deref()) {
+        Ok(source) => source,
+        Err(response) => return response,
     };
     let fixtures = payload
         .get("fixtures")
@@ -9317,5 +9328,30 @@ mod signal_fill_tests {
         )
         .unwrap();
         assert_eq!(signal, serde_json::json!("not a signal"));
+    }
+}
+
+/// A resume body picks its graph by the fields it carries, not by `"file"` alone.
+#[cfg(test)]
+mod resume_source_tests {
+    use super::{GraphSource, resume_source};
+
+    #[test]
+    fn a_resume_body_with_only_a_graph_selects_that_graph() {
+        let graph = serde_json::json!({"graph": {"spec": {}}});
+        assert!(matches!(
+            resume_source(&graph, None),
+            Ok(Some(GraphSource::Inline(_)))
+        ));
+        assert!(matches!(
+            resume_source(&serde_json::json!({}), None),
+            Ok(None)
+        ));
+        assert!(matches!(
+            resume_source(&serde_json::json!({"file": null}), None),
+            Ok(None)
+        ));
+        let both = serde_json::json!({"file": "a.yaml", "graph": {"spec": {}}});
+        assert!(resume_source(&both, None).is_err());
     }
 }

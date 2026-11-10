@@ -1,0 +1,14 @@
+{
+  "promise": "Slice 4 of the wake webhook: a delivery that fails (503 after its retries, timeout, refused connection) holds the webhook cursor just before its own record and is retried on later passes with a doubling wait, given up after 5 failures; a 401 or 404 is logged and skipped, accepted, duplicate, off and given-up are final and let the cursor pass. A BLOCK verdict wakes the PR's author (fix), APPROVE and APPROVE-WITH-RISK wake the approving reviewer (merge), a merge wakes the author for the lane's next item; the authors are learned from task.pr_opened records into a bounded file, and a BLOCK or merge for an unknown author is logged as skipped-no-author. tools/wake-webhook-check lets the owner check one lane (dry run, or one real signed selftest POST) without printing a secret.",
+  "scopePaths": [
+    "adapters/wake-webhook/src/lib.rs",
+    "adapters/wake-webhook/src/dispatch.rs",
+    "apps/cli/src/commands/serve/wake.rs",
+    "tools/wake-webhook-check/wake_webhook_check.py",
+    "tools/wake-webhook-check/test_wake_webhook_check.py",
+    ".graphhelm/cards/issue-2714-slice4.json"
+  ],
+  "proof": "cargo test -p graphhelm-wake-webhook (28 passed incl. backoff, give-up, 401/404 final); cargo test -p graphhelm-cli --bin graphhelm serve::wake (12 passed incl. each record wakes the right lane, unknown author said not sent, authors bounded, cursor passes only final steps, a failed step holds the cursor and nothing behind it is sent); python -m unittest discover -s tools/wake-webhook-check (7 passed). Not observed: a real POST (needs the owner's secrets); the break-once of the cursor rule; clippy on this head until the closing run",
+  "exportedSymbols": [],
+  "journeys": []
+}

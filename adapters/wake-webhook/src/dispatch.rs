@@ -18,6 +18,11 @@ const LOG_FILE: &str = "wake-webhook.log";
 /// `OpenOptions` flags, named: the log is created when missing and only ever appended to.
 const CREATE: bool = true;
 const APPEND: bool = true;
+/// A delivery that failed (a 503 that outlived its retries, a timeout, a refused connection) is
+/// tried again on a later pass, no sooner than `FIRST_BACKOFF_SECS` doubled for each earlier
+/// failure, and given up after `MAX_FAILED_PASSES` failures so one dead lane cannot hold the rest.
+const MAX_FAILED_PASSES: u64 = 5;
+const FIRST_BACKOFF_SECS: u64 = 30;
 
 /// Sends ready steps to their lane's webhook, once each.
 pub struct Dispatcher {
@@ -41,6 +46,7 @@ fn outcome_code(outcome: &Outcome) -> String {
         Outcome::Duplicate => "duplicate".to_owned(),
         Outcome::Rejected(code) => format!("rejected-{code}"),
         Outcome::Failed(_) => "failed".to_owned(),
+        Outcome::GaveUp => "gave-up".to_owned(),
     }
 }
 
@@ -72,14 +78,37 @@ impl Dispatcher {
         })
     }
 
-    /// True when `step`'s delivery id is already in the log as delivered (accepted or duplicate).
+    /// True when `step`'s delivery id is already in the log as final (delivered, or given up).
     fn delivered(&self, id: &str) -> bool {
         std::fs::read_to_string(self.dir.join(LOG_FILE)).is_ok_and(|log| {
             log.lines().any(|line| {
                 let mut parts = line.split_whitespace();
-                parts.nth(1) == Some(id) && matches!(parts.next(), Some("accepted" | "duplicate"))
+                parts.nth(1) == Some(id)
+                    && matches!(parts.next(), Some("accepted" | "duplicate" | "gave-up"))
             })
         })
+    }
+
+    /// How many times `id` failed so far, and the unix time of the last failure.
+    fn failures(&self, id: &str) -> (u64, u64) {
+        let log = std::fs::read_to_string(self.dir.join(LOG_FILE)).unwrap_or_default();
+        let mut count = 0;
+        let mut last = 0;
+        for line in log.lines() {
+            let mut parts = line.split_whitespace();
+            let (Some(at), Some(line_id), Some("failed")) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            if line_id == id {
+                count += 1;
+                last = chrono::DateTime::parse_from_rfc3339(at).map_or(last, |moment| {
+                    u64::try_from(moment.timestamp()).unwrap_or(last)
+                });
+            }
+        }
+        (count, last)
     }
 
     fn secret(&self, lane: &str) -> Option<Secret> {
@@ -107,6 +136,11 @@ impl Dispatcher {
         }
     }
 
+    /// Writes one line for something that made no step (`what` is a label, `code` the reason).
+    pub fn log_skip(&self, what: &str, code: &str) {
+        self.log(what, code);
+    }
+
     /// Delivers `step` to its lane once. `None` when the lane is off (no url or no secret: logged
     /// as skipped) or the step was already delivered; else the outcome.
     pub fn notify(&self, step: &Step) -> Option<Outcome> {
@@ -132,6 +166,17 @@ impl Dispatcher {
         };
         if self.delivered(&id) {
             return None;
+        }
+        let (failures, last_failure) = self.failures(&id);
+        if failures >= MAX_FAILED_PASSES {
+            self.log(&id, &outcome_code(&Outcome::GaveUp));
+            return Some(Outcome::GaveUp);
+        }
+        if failures > 0
+            && clock().0 < last_failure + FIRST_BACKOFF_SECS * 2_u64.pow(failures as u32 - 1)
+        {
+            // Still backing off: nothing is sent and nothing is logged; the caller holds its place.
+            return Some(Outcome::Failed("backing off".to_owned()));
         }
         let outcome = send(&self.client, url, &secret, step);
         self.log(&id, &outcome_code(&outcome));
@@ -311,5 +356,81 @@ mod tests {
         )
         .unwrap();
         assert!(Dispatcher::load(dir.path()).is_some());
+    }
+
+    fn old_failures(dir: &Path, id: &str, times: usize, at: &str) {
+        let line = format!(
+            "{at} {id} failed
+"
+        )
+        .repeat(times);
+        std::fs::write(dir.join(LOG_FILE), line).unwrap();
+    }
+
+    #[test]
+    fn a_failed_delivery_waits_out_its_backoff_then_is_tried_again() {
+        let dir = tempfile::tempdir().unwrap();
+        secret_for(dir.path(), "openbot-neji", "s");
+        let seen = std::cell::RefCell::new(vec![]);
+        let d = dispatcher(dir.path(), &["openbot-neji"]);
+        let id = delivery_id(&step("openbot-neji"));
+        // Failed a moment ago: still backing off, nothing sent.
+        old_failures(dir.path(), &id, 1, &clock().1);
+        assert_eq!(
+            d.notify_with(&step("openbot-neji"), &scripted(202, &seen)),
+            Some(Outcome::Failed("backing off".to_owned()))
+        );
+        assert!(seen.borrow().is_empty());
+        // Failed long ago: tried again, and delivered.
+        old_failures(dir.path(), &id, 1, "2000-01-01T00:00:00Z");
+        assert_eq!(
+            d.notify_with(&step("openbot-neji"), &scripted(202, &seen)),
+            Some(Outcome::Accepted)
+        );
+        assert_eq!(seen.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_delivery_that_keeps_failing_is_given_up_once_and_then_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        secret_for(dir.path(), "openbot-neji", "s");
+        let seen = std::cell::RefCell::new(vec![]);
+        let d = dispatcher(dir.path(), &["openbot-neji"]);
+        let id = delivery_id(&step("openbot-neji"));
+        old_failures(
+            dir.path(),
+            &id,
+            MAX_FAILED_PASSES as usize,
+            "2000-01-01T00:00:00Z",
+        );
+        assert_eq!(
+            d.notify_with(&step("openbot-neji"), &scripted(202, &seen)),
+            Some(Outcome::GaveUp)
+        );
+        assert_eq!(
+            d.notify_with(&step("openbot-neji"), &scripted(202, &seen)),
+            None,
+            "given up is final"
+        );
+        assert!(seen.borrow().is_empty(), "nothing was sent");
+        let log = std::fs::read_to_string(dir.path().join(LOG_FILE)).unwrap();
+        assert_eq!(log.matches("gave-up").count(), 1, "{log}");
+    }
+
+    #[test]
+    fn a_401_or_404_is_logged_and_final() {
+        let dir = tempfile::tempdir().unwrap();
+        secret_for(dir.path(), "openbot-neji", "s");
+        let seen = std::cell::RefCell::new(vec![]);
+        let d = dispatcher(dir.path(), &["openbot-neji"]);
+        assert_eq!(
+            d.notify_with(&step("openbot-neji"), &scripted(404, &seen)),
+            Some(Outcome::Rejected(404))
+        );
+        let log = std::fs::read_to_string(dir.path().join(LOG_FILE)).unwrap();
+        assert!(
+            log.contains("openbot-neji:review:abcdef12 rejected-404"),
+            "{log}"
+        );
     }
 }

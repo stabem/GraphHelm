@@ -158,7 +158,8 @@ fn account_execution_graph_usage(
     ] {
         usage.account_string(key)?;
     }
-    usage.account_container(graph.spec.entrypoints.len(), 64)?;
+    // 1024, like `PersistedTopology::new` and `persisted-graph-version.schema.json` (#2760).
+    usage.account_container(graph.spec.entrypoints.len(), 1024)?;
     usage.account_container(graph.spec.nodes.len(), 1024)?;
     usage.account_container(graph.spec.edges.len(), 4096)?;
     usage.account_container(graph.spec.policies.len(), 64)?;

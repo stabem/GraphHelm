@@ -31,7 +31,7 @@ use crate::{ExecutionProjection, LocalEventRepository, PreparedAppend, replay};
 ///
 /// This is what pins the decision to the world it was made in: `append_atomic` refuses with
 /// `SequenceConflict` when the stream's real head is not the one this number implies.
-fn next_after(history: &[EventEnvelope]) -> Result<u64, EventRepositoryError> {
+pub(crate) fn next_after(history: &[EventEnvelope]) -> Result<u64, EventRepositoryError> {
     match history.last() {
         None => Ok(1),
         Some(last) => last

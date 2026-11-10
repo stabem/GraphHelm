@@ -39,7 +39,7 @@ pub(super) fn check(graph: &ExecutionGraph, source: &str) -> Vec<Diagnostic> {
                 .get("retry")
                 .and_then(|value| value.get("maxAttempts"))
                 .and_then(serde_json::Value::as_u64)
-                .is_some_and(|attempts| attempts > retries + 1)
+                .is_some_and(|attempts| attempts > retries.saturating_add(1))
             {
                 diagnostics.push(error(
                     "GHG013_RETRY_BUDGET_EXCEEDED",

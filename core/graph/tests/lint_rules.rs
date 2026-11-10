@@ -93,6 +93,40 @@ fn topology_security_and_deployment_failures_are_not_silent() {
     );
 }
 
+/// #2760: `attempts > retries + 1` overflowed for a maximal budget, which the authoring schema
+/// allows (`maxRetriesPerNode` has a minimum and no maximum).
+#[test]
+fn a_maximal_retry_budget_does_not_overflow_the_lint() {
+    let mut valid = graph();
+    valid.spec.budgets.max_retries_per_node = Some(u64::MAX);
+    valid
+        .spec
+        .nodes
+        .get_mut("implement")
+        .unwrap()
+        .properties
+        .insert("retry".into(), serde_json::json!({"maxAttempts": 4}));
+    let report = lint(&valid, "fixture.yaml");
+    assert!(
+        report
+            .errors
+            .iter()
+            .all(|item| item.code != "GHG013_RETRY_BUDGET_EXCEEDED"),
+        "{report:?}"
+    );
+}
+
+/// #2760: the durable-content preflight capped entrypoints at 64, while the persisted topology
+/// and `persisted-graph-version.schema.json` allow 1024.
+#[test]
+fn the_preflight_accepts_as_many_entrypoints_as_the_persisted_topology() {
+    let mut wide = graph();
+    wide.spec.entrypoints = (0..1024).map(|index| format!("e{index}")).collect();
+    graphhelm_graph::preflight_execution_graph(&wide).expect("1024 entrypoints are within bounds");
+    wide.spec.entrypoints.push("e1024".into());
+    assert!(graphhelm_graph::preflight_execution_graph(&wide).is_err());
+}
+
 #[test]
 fn budgets_and_hard_policies_are_enforced_deterministically() {
     let mut invalid = graph();

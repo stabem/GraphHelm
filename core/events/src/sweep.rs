@@ -77,7 +77,11 @@ pub fn sweep(
 
     let overdue = overdue_at(&projection, as_of);
 
-    let at = repository.next_sequence(scope, stream)?;
+    // The position comes from the history this decision replayed, never from a second read
+    // (#2760, the rule `customs.rs` states for `claim` and `clear`): a writer that lands in
+    // between makes `append_atomic` answer `SequenceConflict` instead of accepting this sweep
+    // against a world it did not read.
+    let at = crate::customs::next_after(&history)?;
 
     // Keys are unique PER CALL, and the sequence supplies the uniqueness without a clock or a
     // generator, so replay stays deterministic.

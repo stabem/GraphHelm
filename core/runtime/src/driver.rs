@@ -1219,6 +1219,10 @@ async fn drive_inner(
     let mut in_flight: tokio::task::JoinSet<(String, Option<WorkOutcome>)> =
         tokio::task::JoinSet::new();
     let mut in_flight_nodes: BTreeSet<String> = BTreeSet::new();
+    // #2756: which node each task carries, so a task that panics (and so returns no node name)
+    // can still be attributed.
+    let mut in_flight_tasks: std::collections::HashMap<tokio::task::Id, String> =
+        std::collections::HashMap::new();
     let mut refused: BTreeSet<String> = BTreeSet::new();
     let max_parallel = graphhelm_execution::parallel_limit(&spec.budgets);
 
@@ -1619,18 +1623,42 @@ async fn drive_inner(
             let executor = executor.clone();
             let node_name = node.clone();
             in_flight_nodes.insert(node.clone());
-            in_flight.spawn(async move {
+            let task = in_flight.spawn(async move {
                 let outcome = executor.execute(&work).await.ok();
                 (node_name, outcome)
             });
+            in_flight_tasks.insert(task.id(), node.clone());
         }
 
         if in_flight.is_empty() {
             continue;
         }
         tokio::select! {
-            joined = in_flight.join_next() => {
-                if let Some(Ok((node, outcome))) = joined {
+            joined = in_flight.join_next_with_id() => {
+                let joined = match joined {
+                    Some(Ok((task, finished))) => {
+                        in_flight_tasks.remove(&task);
+                        Some(finished)
+                    }
+                    Some(Err(error)) => {
+                        // #2756: the task panicked, so the node's effects are unknown. Record
+                        // the truth -- Interrupted, never a silent drop: `(Running, Interrupted)
+                        // -> Blocked` raises it for triage and nothing dispatches it again.
+                        if let Some(node) = in_flight_tasks.remove(&error.id()) {
+                            in_flight_nodes.remove(&node);
+                            write_outcome(
+                                &store_open,
+                                &cache, &sealer, &ids, &scope, &stream,
+                                &execution_id, &actor, node,
+                                bare(NodeOutcome::Interrupted),
+                            )
+                            .await?;
+                        }
+                        None
+                    }
+                    None => None,
+                };
+                if let Some((node, outcome)) = joined {
                     in_flight_nodes.remove(&node);
                     match outcome {
                         Some(work) => {

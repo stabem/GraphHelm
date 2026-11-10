@@ -12,6 +12,8 @@ If the project's local `origin/main` is ahead of the commit the run used, the he
 
 > 1 commit behind origin/main (as of the last fetch). This run used a checkout behind origin/main (as of the last fetch). Update the project (git pull), then run again.
 
+The doubled "(as of the last fetch)" is a known defect (#2710): the Studio adds its own sentence before the Runtime's warning text. Once #2710 is fixed, the line will read once.
+
 The number is the count of commits behind `origin/main` at the last fetch. The Runtime counts against the local `origin/main` ref and does not fetch. So a count can be stale.
 
 ## What to do
@@ -20,7 +22,7 @@ The number is the count of commits behind `origin/main` at the last fetch. The R
 2. Update: `git pull` on the branch the project uses.
 3. Run again, so the run uses the new commit.
 
-No warning line means the run used the same commit as the local `origin/main` at the last fetch.
+No warning line means the checkout was not behind the local `origin/main` ref at the last fetch. It may be ahead of `origin/main`. A run whose count cannot be made (for example, `origin/main` is missing or git fails) also shows no warning, so the absence of the line does not prove the checkout is current.
 
 ## Not checked here
 

@@ -1,0 +1,10 @@
+{
+  "promise": "With GRAPHHELM_SERVE_TIMING=1 every hold of the store's lock is labelled by the operation that took it (append, open, read_stream_after, read_replay_stream and the others) and its duration reported as hold.<label>; a waiter reports how long it waited and behind which in-process holder (behind.<label>, or behind.none_in_process when another process or the turnstile queue holds it); and the store open reports its own phases (lock wait, anchors, state load, clean-open check, hit or miss, journal sync, reconcile plan, upgrade, cold-walk wait). Measurement only: no lock, order, format or result changes; with timing off no clock is read.",
+  "scopePaths": [
+    "core/events/src/local.rs",
+    ".graphhelm/cards/issue-2694-holders.json"
+  ],
+  "proof": "cargo test -p graphhelm-events a_lock_waiter_names_the_holder_it_queued_behind (a 300 ms exclusive holder labelled append: the waiter reports behind.append of at least 150 ms and the holder hold.append of at least 240 ms; with nobody registered the same wait is behind.none_in_process); cargo clippy -p graphhelm-events -p graphhelm-cli --all-targets -D warnings; the effect is read from a Runtime with GRAPHHELM_SERVE_TIMING=1, not in this PR",
+  "exportedSymbols": [],
+  "journeys": []
+}

@@ -1690,11 +1690,19 @@ async fn refused(request: Request, response: Response) -> Response {
 /// read documents, and use the development services. Starting, steering or ending a run
 /// (start, approve, assign, amend-budget, pause, resume, cancel, sweep), saving documents,
 /// approving journey flows, sweeping workspaces, native-chat sends, the Graph Architect,
-/// gateway route/credential writes and provider probes are the owner's.
+/// gateway route/credential writes, provider probes and reply suggestions are the owner's.
 fn agent_session_route_allowed(request: &Request) -> bool {
     let segments: Vec<_> = request.uri().path().split('/').collect();
     let method = request.method();
     if method == axum::http::Method::GET {
+        // Reply suggestions spend the Runtime's model credit and write replies for the operator,
+        // not for an agent, so they stay out of the execution-read wildcard below (#2784).
+        if matches!(
+            segments.as_slice(),
+            ["", "v1", "executions", _, "reply-suggestions"]
+        ) {
+            return false;
+        }
         return matches!(
             segments.as_slice(),
             ["", "v1", "executions", ..]
@@ -4203,6 +4211,47 @@ fn append_audit_line(path: &Path, line: &serde_json::Value) -> std::io::Result<(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// #2784: reply suggestions spend the Runtime's model credit and write replies for the
+    /// operator, so the agent session token is refused on that one route while every other
+    /// execution read it had stays allowed.
+    #[test]
+    fn the_agent_session_token_cannot_spend_reply_suggestions() {
+        let allowed = |method: axum::http::Method, uri: &str| {
+            let request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            agent_session_route_allowed(&request)
+        };
+        let get = axum::http::Method::GET;
+        for refused in [
+            "/v1/executions/exec-1/reply-suggestions",
+            "/v1/executions/exec-1/reply-suggestions?judgeRoute=x",
+        ] {
+            assert!(!allowed(get.clone(), refused), "{refused}");
+        }
+        for still_allowed in [
+            "/v1/executions",
+            "/v1/executions/exec-1",
+            "/v1/executions/exec-1/briefing",
+            "/v1/executions/exec-1/events",
+            "/v1/executions/exec-1/tasks",
+            "/v1/executions/exec-1/requests",
+            "/v1/executions/exec-1/evidence/abc",
+            "/v1/executions/exec-1/journeys",
+        ] {
+            assert!(allowed(get.clone(), still_allowed), "{still_allowed}");
+        }
+        assert!(
+            !allowed(
+                axum::http::Method::POST,
+                "/v1/executions/exec-1/reply-suggestions"
+            ),
+            "POST was never allowed"
+        );
+    }
 
     /// #1980: serve warms its own store and the project's owner store, each path once (the usual
     /// Runtime has `--events <project>/.graphhelm/events`), and no owner store that is not there.

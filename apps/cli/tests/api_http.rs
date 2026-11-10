@@ -2209,6 +2209,43 @@ fn reply_suggestions_on_a_finished_run_are_read_only() {
     assert_eq!(head_sequence(&base, &token, execution), before);
 }
 
+/// #2784: reply suggestions spend the Runtime's model credit, so the shared agent session token is
+/// refused as owner-only before the handler runs, while the owner token still reaches it and the
+/// agent token keeps its other execution reads.
+#[test]
+fn the_agent_session_token_is_refused_reply_suggestions() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-replies-agent-token";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, owner_token) = serve(&events);
+    let agent_token = std::fs::read_to_string(directory.path().join("events.agent.token"))
+        .expect("serve mints the agent session token beside the owner token")
+        .trim()
+        .to_owned();
+    let url = format!("{base}/v1/executions/{execution}/reply-suggestions?judgeRoute=missing");
+
+    let refused = raw_request(&url, Some(&agent_token)).unwrap();
+    assert_eq!(refused.status, 403, "{}", refused.body);
+    let body: Value = serde_json::from_str(&refused.body).unwrap();
+    assert_eq!(body["command"], "serve.unauthorized", "{body}");
+    assert_eq!(
+        body["diagnostics"][0]["code"], "GHCLI007_SERVE_UNAUTHORIZED",
+        "{body}"
+    );
+
+    assert_ne!(get_status(&url, Some(&owner_token)), 403);
+    assert_eq!(
+        get_status(
+            &format!("{base}/v1/executions/{execution}"),
+            Some(&agent_token)
+        ),
+        200
+    );
+}
+
 /// `limit` above the 1000 cap is refused with 400, never silently truncated to the cap.
 #[test]
 fn the_events_tail_refuses_a_limit_above_the_cap_instead_of_truncating() {

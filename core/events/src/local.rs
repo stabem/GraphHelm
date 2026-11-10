@@ -389,13 +389,53 @@ thread_local! {
     static MY_HOLDER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-fn holder_enter(label: &'static str) -> u64 {
-    let id = HOLDER_IDS.fetch_add(1, Ordering::Relaxed);
-    if let Ok(mut holders) = HOLDERS.lock() {
-        holders.push(Holder { id, label });
+fn tracking() -> bool {
+    LOCK_TRACKING.with(std::cell::Cell::get)
+}
+
+/// A registration in [`HOLDERS`], removed when it is dropped: an early return or a `?` cannot leave
+/// a stale label behind. While timing is off nothing is registered and no global lock is taken.
+struct HolderGuard(u64);
+
+impl HolderGuard {
+    fn enter(label: &'static str) -> Self {
+        if !tracking() {
+            return Self(0);
+        }
+        let id = HOLDER_IDS.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut holders) = HOLDERS.lock() {
+            holders.push(Holder { id, label });
+        }
+        MY_HOLDER.with(|cell| cell.set(id));
+        Self(id)
     }
-    MY_HOLDER.with(|cell| cell.set(id));
-    id
+
+    fn label(&self) -> &'static str {
+        if self.0 == 0 {
+            return "unlabelled";
+        }
+        HOLDERS
+            .lock()
+            .ok()
+            .and_then(|holders| {
+                holders
+                    .iter()
+                    .find(|entry| entry.id == self.0)
+                    .map(|entry| entry.label)
+            })
+            .unwrap_or("unlabelled")
+    }
+}
+
+impl Drop for HolderGuard {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            if let Ok(mut holders) = HOLDERS.lock() {
+                holders.retain(|holder| holder.id != self.0);
+            }
+            MY_HOLDER.with(|cell| cell.set(0));
+        }
+    }
 }
 
 fn holder_relabel(label: &'static str) {
@@ -406,13 +446,6 @@ fn holder_relabel(label: &'static str) {
     {
         holder.label = label;
     }
-}
-
-fn holder_leave(id: u64) {
-    if let Ok(mut holders) = HOLDERS.lock() {
-        holders.retain(|holder| holder.id != id);
-    }
-    MY_HOLDER.with(|cell| cell.set(0));
 }
 
 /// The label of the longest-registered holder right now, or `None` when no holder in THIS process
@@ -437,6 +470,11 @@ fn hold_phase(label: &'static str) -> &'static str {
         "list_streams" => "hold.list_streams",
         "read_stream" => "hold.read_stream",
         "evidence_exists" => "hold.evidence_exists",
+        "next_sequence" => "hold.next_sequence",
+        "active_version" => "hold.active_version",
+        "artifact_exists" => "hold.artifact_exists",
+        "committed_events_for_idempotency" => "hold.committed_events_for_idempotency",
+        "unlabelled" => "hold.unlabelled",
         _ => "hold.other",
     }
 }
@@ -454,6 +492,11 @@ fn behind_phase(label: Option<&'static str>) -> &'static str {
         Some("list_streams") => "behind.list_streams",
         Some("read_stream") => "behind.read_stream",
         Some("evidence_exists") => "behind.evidence_exists",
+        Some("next_sequence") => "behind.next_sequence",
+        Some("active_version") => "behind.active_version",
+        Some("artifact_exists") => "behind.artifact_exists",
+        Some("committed_events_for_idempotency") => "behind.committed_events_for_idempotency",
+        Some("unlabelled") => "behind.unlabelled",
         Some(_) => "behind.other",
     }
 }
@@ -918,7 +961,7 @@ impl LocalEventRepository {
         drop(turnstile);
         phase_end("open.lock_wait", tick);
         let open_hold = lock_clock();
-        let open_holder = holder_enter("open");
+        let open_holder = HolderGuard::enter("open");
         if file_identity(&open_directory(&root)?)? != root_identity {
             return Err(EventRepositoryError::IntegrityAt(
                 "open:root-identity-after-lock",
@@ -1189,7 +1232,7 @@ impl LocalEventRepository {
             repository.publish_active_marker(&published_in(&state))
         })();
         phase_end("hold.open", open_hold);
-        holder_leave(open_holder);
+        drop(open_holder);
         let named_unlock = {
             let lock = repository
                 .lock
@@ -1561,7 +1604,7 @@ impl LocalEventRepository {
             }
         }
         let held = lock_clock();
-        let holder = holder_enter("unlabelled");
+        let holder = HolderGuard::enter("unlabelled");
         let anchors = lock_clock();
         let before = self.validate_anchors();
         if let Some(started) = anchors {
@@ -1578,18 +1621,8 @@ impl LocalEventRepository {
             (_, Err(error)) => Err(error),
             (Err(error), Ok(())) => Err(error),
         };
-        let label = HOLDERS
-            .lock()
-            .ok()
-            .and_then(|holders| {
-                holders
-                    .iter()
-                    .find(|entry| entry.id == holder)
-                    .map(|entry| entry.label)
-            })
-            .unwrap_or("unlabelled");
-        phase_end(hold_phase(label), held);
-        holder_leave(holder);
+        phase_end(hold_phase(holder.label()), held);
+        drop(holder);
         let named_unlock =
             FileExt::unlock(&*file).map_err(|error| EventRepositoryError::StorageAt {
                 site: "with-lock:release",
@@ -7357,12 +7390,61 @@ mod limit_tests {
         );
     }
 
+    /// The holder registry is process-wide, so the tests that read it take turns.
+    static HOLDER_TESTS: Mutex<()> = Mutex::new(());
+
+    /// #2694 (review): an early return or `?` after a holder registered cannot leave its label behind.
+    #[test]
+    fn an_early_return_clears_the_holder() {
+        let _serial = HOLDER_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        fn early(fail: bool) -> Result<(), ()> {
+            let _holder = HolderGuard::enter("open");
+            assert!(holder_now().is_some(), "registered while it runs");
+            if fail {
+                return Err(());
+            }
+            Ok(())
+        }
+        start_lock_timing();
+        assert!(early(true).is_err());
+        assert!(early(false).is_ok());
+        stop_lock_timing();
+        assert_eq!(holder_now(), None, "no label outlives its holder");
+    }
+
+    /// #2694 (review): with timing off the lock path registers no holder and touches no registry.
+    #[test]
+    fn with_timing_off_no_holder_is_registered() {
+        let _serial = HOLDER_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        let store =
+            LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap();
+        stop_lock_timing();
+        store
+            .with_exclusive_lock(|| {
+                store.load_state("append")?;
+                assert_eq!(holder_now(), None, "nothing registered while timing is off");
+                assert_eq!(MY_HOLDER.with(std::cell::Cell::get), 0);
+                Ok(())
+            })
+            .unwrap();
+        assert!(take_store_phases().is_empty(), "and nothing was timed");
+    }
+
     /// #2694: a lock waiter reports who it was queued behind, and the holder reports its own hold.
     /// Another handle on the same root holds the exclusive lock (labelled by `load_state`) for a
     /// while; a second handle's read waits for it and names it; with nobody registered the same wait
     /// is labelled as none in this process (another process, or the turnstile queue).
     #[test]
     fn a_lock_waiter_names_the_holder_it_queued_behind() {
+        let _serial = HOLDER_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("repository");
         let first =

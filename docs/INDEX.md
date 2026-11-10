@@ -56,7 +56,7 @@ ADRs); a dated filename records when the design was approved, not that it is out
 - Releases: [0.1.0](releases/0.1.0.md), [0.1.1](releases/0.1.1.md), [1.0.0](releases/1.0.0.md), [unreleased](releases/UNRELEASED.md), [Windows binary](releases/WINDOWS_BINARY.md).
 - Harness and Studio subsystems: [Graph Architect, first compile](harness/GRAPH_ARCHITECT.md), [native development contracts](harness/NATIVE_DEVELOPMENT_CONTRACTS.md), [native handoff observation](harness/NATIVE_HANDOFF_OBSERVATION.md), [context reuse on Windows](harness/CONTEXT_REUSE_WINDOWS_PROOF.md), [native chat bridge](studio/NATIVE_CHAT_BRIDGE.md), [node deliveries](studio/NODE_DELIVERIES.md), [trajectory view](ux/TRAJECTORY_VIEW.md).
 - Operations and security: [MCP behind a reverse proxy](operations/MCP_REVERSE_PROXY.md), [VPS upgrade, backup and restore](operations/VPS_UPGRADE_BACKUP_RESTORE.md), [event/evidence store threat model](security/EVENT_EVIDENCE_STORE_THREAT_MODEL.md).
-- Guides and journeys: [user journeys](guides/journeys.md), [beacon reload proof (#959)](journeys/issue-959-beacon-reload-proof.md), [lane Stop reconciles a merged task](journeys/lane-stop-merged-task.md), [JPD plugin plan](jpd/plans/2026-08-22-graphhelm-jpd-plugin.md).
+- Guides and journeys: [user journeys](guides/journeys.md), [Studio run header and behind-origin warning](guides/studio-run-header.md), [beacon reload proof (#959)](journeys/issue-959-beacon-reload-proof.md), [lane Stop reconciles a merged task](journeys/lane-stop-merged-task.md), [JPD plugin plan](jpd/plans/2026-08-22-graphhelm-jpd-plugin.md).
 
 ## Acceptance records
 

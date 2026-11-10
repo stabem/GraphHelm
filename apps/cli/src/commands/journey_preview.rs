@@ -556,6 +556,8 @@ fn bounded_stdout(mut command: std::process::Command, limit: Duration) -> Option
             // A hung or unreadable child: kill it. A failed kill changes nothing, the answer is None.
             _ => {
                 drop(child.kill());
+                // Reap it: a killed child that is never waited on stays a zombie on Unix.
+                drop(child.wait());
                 break false;
             }
         }

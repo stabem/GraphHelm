@@ -24,6 +24,22 @@ fn token() -> McpCapabilityToken {
 }
 
 #[test]
+fn a_ttl_past_the_end_of_the_clock_saturates_instead_of_overflowing() {
+    // #2745: `now + ttl_seconds` panicked in a debug build and wrapped to a near-zero expiry in
+    // a release build for a caller-supplied ttl.
+    let minted = mint(
+        "sha256:aaaa".to_owned(),
+        "skill/keel".to_owned(),
+        "agent-builder".to_owned(),
+        &["tool:signal".to_owned()],
+        &[],
+        500,
+        u64::MAX,
+    );
+    assert_eq!(minted.expires_at, u64::MAX);
+}
+
+#[test]
 fn mint_carries_the_contributions_effects_for_audit_but_never_for_gating() {
     // The issue's own Deliverables list: "Capability token bound to package digest,
     // contribution id, actor, allowed tools, effects, and expiry." Effects ride the token as

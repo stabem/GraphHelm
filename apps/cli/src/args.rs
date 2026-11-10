@@ -1458,7 +1458,7 @@ pub struct ServeArgs {
     /// by default every existing caller that compares two head sequences across a request pair
     /// would start seeing a third append it never made. `--sweep-interval` makes the writer a
     /// deployment decision, and makes the tick testable without arming it for everyone.
-    #[arg(long = "sweep-interval")]
+    #[arg(long = "sweep-interval", value_parser = clap::value_parser!(u64).range(1..))]
     pub sweep_interval: Option<u64>,
     /// Append every request and the exact bytes served to this file, as JSON lines.
     ///

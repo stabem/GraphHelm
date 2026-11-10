@@ -35,6 +35,25 @@ const POSIX_LAUNCHER: &str = "apps/studio/tools/studio-up.sh";
 /// The Studio port both launchers bind (`studio-up.ps1`/`studio-up.sh`), and `studio open`'s default.
 const STUDIO_PORT: u16 = 5183;
 
+/// Why `update` built nothing for a clone that is still stale. Only a clone that reports how far
+/// behind it is gets the count and the stash advice: the managed clone that could not be moved
+/// reports neither, and it holds no owner changes to set aside.
+fn stale_refusal(clone: &serde_json::Value, source: &Path) -> String {
+    let reason = clone["reason"]
+        .as_str()
+        .unwrap_or("the clone could not be updated");
+    let keep = "To build the clone as it is: graphhelm update --keep-local";
+    match clone["behind"].as_u64() {
+        Some(behind) => format!(
+            "nothing was built: {reason}, so the clone is still {behind} commit(s) behind origin/main. \
+             To set the local changes aside and update: git -C \"{dir}\" stash, then git -C \"{dir}\" switch main, \
+             then graphhelm update again. {keep}",
+            dir = source.display()
+        ),
+        None => format!("nothing was built: {reason}. {keep}"),
+    }
+}
+
 /// A launcher flag in the running platform's spelling: `-ProjectPath` for the PowerShell
 /// launcher, `--project-path` for the POSIX one. Both launchers take the same flags.
 pub(super) fn launcher_flag(name: &str, posix: bool) -> String {
@@ -391,20 +410,7 @@ pub fn update_cli(args: &UpdateArgs) -> Outcome {
     // A clone that could not be fast-forwarded would only rebuild the old code: a long compile
     // that installs nothing new (owner run, 2026-10-12: 18 minutes, 28 commits behind).
     if clone["state"] == "stale" && !args.keep_local {
-        let reason = clone["reason"]
-            .as_str()
-            .unwrap_or("the clone could not be updated");
-        return refused_as(
-            UPDATE,
-            format!(
-                "nothing was built: {reason}, so the clone is still {} commit(s) behind origin/main. \
-                 To set the local changes aside and update: git -C \"{dir}\" stash, then git -C \"{dir}\" switch main, \
-                 then graphhelm update again. To build the clone as it is: graphhelm update --keep-local",
-                clone["behind"],
-                dir = source.display()
-            ),
-            "/source",
-        );
+        return refused_as(UPDATE, stale_refusal(&clone, &source), "/source");
     }
     let head = git(&source, &["rev-parse", "HEAD"]);
     let root = install_root(std::env::current_exe().ok().as_deref());
@@ -1249,6 +1255,26 @@ pub fn start(args: &StudioStartArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2745: a managed clone that could not be moved carries no `behind` count, and the refusal
+    /// printed "still null commit(s) behind" with advice meant for an owner's clone.
+    #[test]
+    fn a_stale_clone_without_a_count_is_refused_without_a_null() {
+        let moved = stale_refusal(
+            &json!({ "state": "stale", "reason": "the install clone could not be moved" }),
+            Path::new("clone"),
+        );
+        assert!(!moved.contains("null"), "{moved}");
+        assert!(!moved.contains("stash"), "{moved}");
+        assert!(moved.contains("--keep-local"), "{moved}");
+
+        let behind = stale_refusal(
+            &json!({ "state": "stale", "reason": "local changes", "behind": 28 }),
+            Path::new("clone"),
+        );
+        assert!(behind.contains("28 commit(s) behind"), "{behind}");
+        assert!(behind.contains("stash"), "{behind}");
+    }
 
     /// #2539: when the default Studio port is held, the next free port is chosen and the held ones
     /// are skipped. Fails if a taken port is returned again (the old behaviour refused instead).

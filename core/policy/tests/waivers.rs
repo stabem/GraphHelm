@@ -111,6 +111,30 @@ fn a_complete_waiver_against_a_structural_rule_is_refused_regardless() {
 }
 
 #[test]
+fn a_complete_waiver_against_an_unknown_enforcement_class_is_refused() {
+    // #2745: only the exact string "structural" used to block a waiver, so a misspelled class
+    // ("Structural") made a structural rule waivable. An unknown class fails closed.
+    let misspelled = rule(
+        "rule-misspelled",
+        serde_json::json!({
+            "conflictKey": "coverage", "operator": "minimum", "minimum": 90,
+            "enforcement": "Structural", "selector": {}, "waiver": complete_waiver(),
+        }),
+    );
+
+    let refusal = resolve_code_contract(&[misspelled], now())
+        .expect_err("a rule with an unknown enforcement class was waived");
+
+    assert_eq!(
+        refusal,
+        ResolutionRefusal::WaiverInvalid {
+            rule: "rule-misspelled".to_owned(),
+            missing: "<only quality and preference rules can be waived>".to_owned(),
+        }
+    );
+}
+
+#[test]
 fn a_complete_waiver_against_a_quality_rule_is_honoured_and_recorded() {
     // POSITIVE CONTROL for both cells above: without it, a resolver that refused every waiver
     // would pass them, and waivers would simply not work.

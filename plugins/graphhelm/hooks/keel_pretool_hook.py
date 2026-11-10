@@ -110,7 +110,7 @@ def decide(repo: Path, target: Path, tool_input: dict) -> str | None:
     if small and (is_test(relative) or not _denied_on_branch(repo)):
         return None
     return (f"Keel: this edit takes the branch past the summary-only row and there is no card at "
-            f"{card.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
+            f"{card.as_posix()} in {repo.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
             f"docs/keel/KEEL_CHECK.md), then edit {relative}.")
 
 

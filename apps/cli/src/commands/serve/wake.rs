@@ -1133,6 +1133,33 @@ mod tests {
     /// serve's shared fold. The cache must hold this stream at the head each reader saw, and what
     /// each one folded must equal a full `replay` of the fresh history: a cached fold that
     /// answered for an older head would hand a wake or consumption decision a stale stream.
+    /// #2694 (Kakashi's and Itachi's parity conditions): the head and the doorbell's content head
+    /// `status` answers equal what a whole-history read says. `HistoryDigest` is kept only in
+    /// serve's in-process fold cache (it is not serialised), so there is no old data to read 0.
+    fn status_heads_equal_the_whole_history(
+        events: &std::path::Path,
+        scope: &graphhelm_protocols::RepositoryScope,
+        stream: &str,
+        session: &str,
+        when: &str,
+    ) {
+        let whole = crate::commands::event_store(events)
+            .unwrap()
+            .read_replay_stream(scope, stream)
+            .unwrap();
+        let head = whole.last().map_or(0, |event| event.sequence);
+        let content_head = whole
+            .iter()
+            .filter(|event| crate::commands::execution::wake::is_content(event))
+            .map(|event| event.sequence)
+            .max()
+            .unwrap_or(0);
+        let status = crate::commands::execution::wake::status(events, Some(stream), session)
+            .unwrap_or_else(|_| panic!("status reads the stream {when}"));
+        assert_eq!(status["head"], head, "head {when}");
+        assert_eq!(status["contentHead"], content_head, "content head {when}");
+    }
+
     #[test]
     fn post_write_readers_resume_the_shared_fold_at_the_fresh_head() {
         crate::commands::execution::status::enable_shared_fold_cache();
@@ -1213,6 +1240,8 @@ mod tests {
             full(),
             "what the sweep left equals a full rebuild"
         );
+        // Cold (the first read of this stream folded it whole), with content at #2.
+        status_heads_equal_the_whole_history(events, &scope, "exec-fold", "session-1", "cold");
 
         lease(4);
         let store = crate::commands::event_store(events).unwrap();
@@ -1275,6 +1304,55 @@ mod tests {
             actors.get(&8),
             Some(&"system-test"),
             "the tail-armed lease carries its own arming actor"
+        );
+
+        // #2694: the lease arm and the lease status read the tail too. (This fixture has no
+        // started execution, so `arm` stops after its load, which is the part counted here;
+        // its read-back uses the same `glance` read.)
+        crate::commands::execution::status::WHOLE_READS.with(|count| count.set(0));
+        let status =
+            crate::commands::execution::wake::status(events, Some("exec-fold"), "session-6")
+                .unwrap_or_else(|_| panic!("status reads the stream"));
+        assert_eq!(
+            status["head"], 8,
+            "status answers the stream's head from the tail read"
+        );
+        // After a tail resume, on a stream that also holds a wake_lease_consumed.
+        let consumed = crate::commands::event_store(events)
+            .unwrap()
+            .read_replay_stream(&scope, "exec-fold")
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event.kind, EventKind::WakeLeaseConsumed(_)));
+        assert!(consumed, "the fixture holds a wake_lease_consumed");
+        status_heads_equal_the_whole_history(
+            events,
+            &scope,
+            "exec-fold",
+            "session-6",
+            "after a tail resume",
+        );
+        let arming = crate::commands::execution::wake::Arming {
+            session_id: "session-x",
+            rendezvous_id: "rdv-x",
+            cursor: None,
+            matures_in_seconds: None,
+        };
+        let refused = crate::commands::execution::wake::arm(
+            events,
+            Some("exec-fold"),
+            &arming,
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-test").unwrap(),
+            ),
+            OpaqueId::parse("arm-key").unwrap(),
+        );
+        assert!(refused.is_err(), "no execution started on this fixture");
+        assert_eq!(
+            crate::commands::execution::status::WHOLE_READS.with(std::cell::Cell::get),
+            0,
+            "arm and status must not read the whole stream while the fold is kept"
         );
     }
 }

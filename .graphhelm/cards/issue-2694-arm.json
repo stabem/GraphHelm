@@ -1,0 +1,12 @@
+{
+  "promise": "The lease arm (POST wake-lease) and the lease status (GET wake-lease) read the kept fold plus the events appended since (status::glance and read_stream_after), not the whole stream three times per arming. Nothing is kept in memory beyond the existing fold cache, the journal and write path are unchanged, and arm/status/readback now report timing phases.",
+  "scopePaths": [
+    "apps/cli/src/commands/execution/wake.rs",
+    "apps/cli/src/commands/execution/digest.rs",
+    "apps/cli/src/commands/serve/wake.rs",
+    ".graphhelm/cards/issue-2694-arm.json"
+  ],
+  "proof": "cargo test -p graphhelm-cli --bin graphhelm wake (17 passed; post_write_readers_resume_the_shared_fold_at_the_fresh_head now asserts zero whole-stream reads for status and the arm load); cargo test -p graphhelm-cli --test cli wake_http; cargo clippy -p graphhelm-cli --all-targets -D warnings",
+  "exportedSymbols": [],
+  "journeys": []
+}

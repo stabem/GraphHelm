@@ -258,6 +258,10 @@ pub(crate) fn resolve_stream(
     store: &LocalEventRepository,
     execution: Option<&str>,
 ) -> Result<(RepositoryScope, String, Vec<EventEnvelope>), Failure> {
+    // #2694: counted at the store boundary, so a reader that goes back to a whole-history read
+    // here is seen by the tests' zero-whole-reads assertions (`status::WHOLE_READS`).
+    #[cfg(test)]
+    status::WHOLE_READS.with(|count| count.set(count.get() + 1));
     match execution {
         Some(execution) => {
             let (scope, stream_id) = stream_of(execution)?;

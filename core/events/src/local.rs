@@ -339,11 +339,16 @@ thread_local! {
     static LOCK_TRACKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Turns the lock timing on or off for this thread. A caller that times a request (serve, with
-/// `GRAPHHELM_SERVE_TIMING=1`) turns it on around the request; with it off (the default) the
-/// store's lock path reads no clock and [`take_lock_timing`] stays at its default.
-pub fn track_lock_timing(on: bool) {
-    LOCK_TRACKING.with(|cell| cell.set(on));
+/// Turns the lock timing on for this thread. A caller that times a request (serve, with
+/// `GRAPHHELM_SERVE_TIMING=1`) starts it around the request and stops it after; with it off (the
+/// default) the store's lock path reads no clock and [`take_lock_timing`] stays at its default.
+pub fn start_lock_timing() {
+    LOCK_TRACKING.with(|cell| cell.set(true));
+}
+
+/// Turns the lock timing off for this thread (see [`start_lock_timing`]).
+pub fn stop_lock_timing() {
+    LOCK_TRACKING.with(|cell| cell.set(false));
 }
 
 fn lock_clock() -> Option<std::time::Instant> {

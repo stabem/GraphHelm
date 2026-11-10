@@ -86,12 +86,12 @@ pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     // of their own (they are also inside the phases that contain them).
     // The store reads its clock on the lock path only while this thread tracks, so with timing
     // off (the early return above) no clock is read there at all.
-    graphhelm_events::track_lock_timing(true);
+    graphhelm_events::start_lock_timing();
     let _stale = graphhelm_events::take_lock_timing();
     let started = Instant::now();
     let result = work();
     let total = started.elapsed();
-    graphhelm_events::track_lock_timing(false);
+    graphhelm_events::stop_lock_timing();
     let locks = graphhelm_events::take_lock_timing();
     PHASES.with(|cell| {
         if let Some(phases) = cell.borrow_mut().as_mut() {
@@ -162,10 +162,10 @@ mod tests {
     fn a_store_lock_is_reported_once_as_lock_timing() {
         let directory = tempfile::tempdir().unwrap();
         let store = crate::commands::event_store(directory.path()).unwrap();
-        graphhelm_events::track_lock_timing(true);
+        graphhelm_events::start_lock_timing();
         let _stale = graphhelm_events::take_lock_timing();
         store.with_shared_lock(|| Ok(())).unwrap();
-        graphhelm_events::track_lock_timing(false);
+        graphhelm_events::stop_lock_timing();
         let first = graphhelm_events::take_lock_timing();
         assert!(
             !first.anchors.is_zero(),
@@ -183,7 +183,7 @@ mod tests {
     fn the_lock_timing_stays_default_when_it_is_off() {
         let directory = tempfile::tempdir().unwrap();
         let store = crate::commands::event_store(directory.path()).unwrap();
-        graphhelm_events::track_lock_timing(false);
+        graphhelm_events::stop_lock_timing();
         let _stale = graphhelm_events::take_lock_timing();
         store.with_shared_lock(|| Ok(())).unwrap();
         store.with_shared_lock(|| Ok(())).unwrap();
@@ -213,10 +213,10 @@ mod tests {
                     .unwrap();
             });
             holding.recv().unwrap();
-            graphhelm_events::track_lock_timing(true);
+            graphhelm_events::start_lock_timing();
             let _stale = graphhelm_events::take_lock_timing();
             store.with_shared_lock(|| Ok(())).unwrap();
-            graphhelm_events::track_lock_timing(false);
+            graphhelm_events::stop_lock_timing();
             graphhelm_events::take_lock_timing().wait
         });
         assert!(

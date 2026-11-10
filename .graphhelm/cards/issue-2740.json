@@ -1,4 +1,4 @@
-﻿{
+{
   "promise": "The tests pin the no-waiter opt-out: an actor that only contains openbot- keeps its waiter and rewake, GRAPHHELM_NO_WAITER=0 does not opt out; and the idle-wake test no longer depends on the parent environment or on the rewake's first-scan timing.",
   "scopePaths": [
     "plugins/graphhelm/hooks/test_lane_stop_hook.py",

@@ -261,6 +261,152 @@ fn due_leases(
     Some(due)
 }
 
+/// #2714 slice 3: the reviews assigned since the webhook cursor, as steps for their reviewer's
+/// webhook. The cursor (`wake-webhook.cursor` beside the events directory) is the last sequence
+/// handled; the first run takes the current head and handles nothing, so history is never replayed
+/// to the lanes. Reads the tail only. `None`-like (empty) when the feature is off or anything is
+/// unreadable: a webhook never fails or slows a route.
+fn webhook_steps(
+    events: &Path,
+    execution: &str,
+    sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
+) -> Vec<graphhelm_wake_webhook::Step> {
+    let Some(dir) = events.parent() else {
+        return Vec::new();
+    };
+    let cursor_path = dir.join("wake-webhook.cursor");
+    let Ok(store) = crate::commands::event_store(events) else {
+        return Vec::new();
+    };
+    let Ok(streams) = store.list_streams() else {
+        return Vec::new();
+    };
+    let Some(stream) = streams
+        .into_iter()
+        .find(|stream| stream.stream_id == execution)
+    else {
+        return Vec::new();
+    };
+    let cursor = std::fs::read_to_string(&cursor_path)
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    let Ok((tail, head)) = store.read_stream_after(
+        &stream.scope,
+        &stream.stream_id,
+        cursor.unwrap_or(u64::MAX - 1),
+    ) else {
+        return Vec::new();
+    };
+    let Some(cursor) = cursor else {
+        // First run: start at the head, hand nothing to any lane.
+        if let Some(head) = head {
+            write_cursor(&cursor_path, head.next_sequence.saturating_sub(1));
+        }
+        return Vec::new();
+    };
+    let mut steps = Vec::new();
+    let mut opener = None;
+    let mut last = cursor;
+    for event in &tail {
+        last = last.max(event.sequence);
+        let EventKind::SignalRecorded(signal) = &event.kind else {
+            continue;
+        };
+        if signal.kind != "task.review_assigned" {
+            continue;
+        }
+        let opener = opener.get_or_insert_with(|| super::ports::build_opener(sealing).ok());
+        let Some(opener) = opener else {
+            continue;
+        };
+        for reference in &event.evidence_refs {
+            let Ok(graphhelm_events::EvidenceRead::Available(sealed)) =
+                store.sealed_evidence(&stream.scope, reference.evidence_id())
+            else {
+                continue;
+            };
+            if sealed.reference().content_sha256().as_str() != signal.envelope_sha256.as_str() {
+                continue;
+            }
+            let Ok(plaintext) = tokio::runtime::Handle::current()
+                .block_on(opener.open(stream.scope.clone(), &sealed))
+            else {
+                continue;
+            };
+            let Ok(envelope) =
+                plaintext.expose(|bytes| serde_json::from_slice::<serde_json::Value>(bytes))
+            else {
+                continue;
+            };
+            let Some(document) = envelope["description"]
+                .as_str()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+            else {
+                continue;
+            };
+            let (Some(reviewer), Some(head), Some(pr), Some(issue)) = (
+                document["reviewer"].as_str(),
+                document["headSha"].as_str(),
+                document["pr"].as_u64(),
+                document["taskId"]
+                    .as_str()
+                    .and_then(|id| id.strip_prefix("issue-"))
+                    .and_then(|number| number.parse::<u64>().ok()),
+            ) else {
+                continue;
+            };
+            steps.push(graphhelm_wake_webhook::Step {
+                lane: reviewer.to_owned(),
+                step: "review".to_owned(),
+                skill: "blind-review".to_owned(),
+                issue,
+                pr: Some(pr),
+                head: head.to_owned(),
+                because: graphhelm_wake_webhook::Reason::ReviewAssigned,
+            });
+            break;
+        }
+    }
+    // Handled up to `last` (a step whose delivery fails is retried by nothing here: the delivery
+    // log records it, and the lane still has its message and the tasks projection).
+    write_cursor(&cursor_path, last);
+    steps
+}
+
+/// The webhook cursor, written best-effort: a cursor that cannot be written is said (the error
+/// kind only) and the next pass handles the same records again, which the delivery log's
+/// once-per-id rule absorbs.
+fn write_cursor(path: &Path, sequence: u64) {
+    if let Err(error) = std::fs::write(path, sequence.to_string()) {
+        eprintln!("wake webhook: cursor not written ({})", error.kind());
+    }
+}
+
+/// One process-wide pass at a time: two sweeps must not both take the same cursor.
+static WEBHOOK_PASS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Phase W: delivers the new review steps to their lane webhooks. Off (no config file under the
+/// project's `.graphhelm/`) costs one failed file read.
+fn webhook_pass(
+    events: &Path,
+    execution: &str,
+    sealing: Option<&crate::commands::execution::signal::SignalKeyring>,
+) {
+    let Some(dispatcher) = events
+        .parent()
+        .and_then(graphhelm_wake_webhook::Dispatcher::load)
+    else {
+        return;
+    };
+    let Ok(_pass) = WEBHOOK_PASS.try_lock() else {
+        return;
+    };
+    for step in webhook_steps(events, execution, sealing) {
+        // Every outcome is already in the delivery log; none of them fails the sweep.
+        drop(dispatcher.notify(&step));
+    }
+}
+
 /// The sweep: read the stream's projection, ring every lease whose cursor lies before the
 /// latest relevant append, and record each consumption. Called fire-and-forget after a
 /// mutation route's own append succeeded; every failure path is a silent no-op.
@@ -269,6 +415,17 @@ pub(super) async fn sweep(
     execution: String,
     sealing: Option<Arc<crate::commands::execution::signal::SignalKeyring>>,
 ) {
+    // Phase W (#2714): new review assignments go to their lane's webhook, off this sweep's path.
+    {
+        let events_hook = events.clone();
+        let execution_hook = execution.clone();
+        let sealing_hook = sealing.clone();
+        drop(tokio::task::spawn_blocking(move || {
+            crate::commands::execution::timing::request("background.wake_webhook", || {
+                webhook_pass(&events_hook, &execution_hook, sealing_hook.as_deref());
+            });
+        }));
+    }
     // Phase 1 (blocking): what is due?
     let events_read = events.clone();
     let execution_read = execution.clone();

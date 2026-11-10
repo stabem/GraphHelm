@@ -140,6 +140,9 @@ pub trait Transport {
     fn post(&self, url: &str, headers: &[(&str, String)], body: &str) -> Result<u16, String>;
 }
 
+/// A 4xx/5xx is a status the caller reads, not a transport error (a 401 must not be retried).
+const STATUS_IS_ERROR: bool = false;
+
 /// The real transport: ureq, no redirects, a global deadline, a 4xx/5xx is a status not an error.
 pub struct Ureq {
     agent: ureq::Agent,
@@ -150,7 +153,7 @@ impl Ureq {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(deadline))
             .max_redirects(0)
-            .http_status_as_error(false)
+            .http_status_as_error(STATUS_IS_ERROR)
             .build()
             .into();
         Self { agent }

@@ -3586,8 +3586,14 @@ mod older_head_clock_tests {
         if let (Some(base), Some(more)) = (document.as_object_mut(), extra.as_object()) {
             base.extend(more.clone());
         }
-        parse_task_event(kind, "lane-a", &document.to_string(), sequence, Some(at(time)))
-            .expect("fixture event must parse")
+        parse_task_event(
+            kind,
+            "lane-a",
+            &document.to_string(),
+            sequence,
+            Some(at(time)),
+        )
+        .expect("fixture event must parse")
     }
 
     #[test]
@@ -3595,7 +3601,12 @@ mod older_head_clock_tests {
         // #2703, fold level: head A is opened, then head B (the current head). A review
         // assignment for the older head A must not restart the wait on head B.
         let records = [
-            event("task.claimed", 1, "2026-10-24T10:00:00Z", serde_json::json!({})),
+            event(
+                "task.claimed",
+                1,
+                "2026-10-24T10:00:00Z",
+                serde_json::json!({}),
+            ),
             event(
                 "task.pr_opened",
                 2,

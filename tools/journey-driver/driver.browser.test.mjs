@@ -575,3 +575,49 @@ test('a document navigation reaches the server with the browser\'s Sec-Fetch met
   assert.deepEqual(next,{path:'/next',mode:'navigate',dest:'document',site:'same-origin',cookie:true});
   assert.equal((await c.send('close')).ok,true);
 });
+
+// #2724: "document navigations only" was unguarded: giving the Sec-Fetch metadata to subresources
+// passed every test. A page with a script, an image, a stylesheet and a fetch() must reach the
+// server with none of the three headers; a same-origin iframe is a navigation and carries them,
+// with dest `iframe` and the site of the PARENT frame.
+test('Sec-Fetch metadata reaches navigations only: subresources get none; a same-origin iframe gets dest iframe',async t=>{
+  const seen=[];
+  const server=createServer((req,res)=>{
+    seen.push({path:req.url,mode:req.headers['sec-fetch-mode']??'-',dest:req.headers['sec-fetch-dest']??'-',site:req.headers['sec-fetch-site']??'-'});
+    const types={'/app.js':'text/javascript','/s.css':'text/css','/p.gif':'image/gif','/api':'application/json'};
+    res.setHeader('Content-Type',types[req.url]??'text/html; charset=utf-8');
+    if (req.url === '/') return res.end('<link rel="stylesheet" href="/s.css"><script src="/app.js"></script><img src="/p.gif" alt="pixel"><iframe src="/frame" title="same"></iframe><h1>Page</h1>');
+    if (req.url === '/app.js') return res.end('fetch("/api").then(r=>r.text())');
+    res.end(req.url === '/api' ? '{}' : req.url === '/s.css' || req.url === '/p.gif' ? '' : '<p>frame</p>');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t);
+  await open(c,`http://127.0.0.1:${server.address().port}/`);
+  const wanted=['/','/s.css','/app.js','/p.gif','/api','/frame'];
+  for (let tries=0;tries<50 && !wanted.every(path=>seen.some(entry=>entry.path === path));tries++) await new Promise(resolve=>setTimeout(resolve,100));
+  const of=path=>seen.find(entry=>entry.path === path);
+  for (const path of wanted) assert.ok(of(path),`${path} never reached the server: ${JSON.stringify(seen)}`);
+  assert.deepEqual(of('/'),{path:'/',mode:'navigate',dest:'document',site:'none'});
+  for (const path of ['/s.css','/app.js','/p.gif','/api'])
+    assert.deepEqual(of(path),{path,mode:'-',dest:'-',site:'-'},`subresource ${path} must carry no Sec-Fetch metadata`);
+  assert.deepEqual(of('/frame'),{path:'/frame',mode:'navigate',dest:'iframe',site:'same-origin'});
+  assert.equal((await c.send('close')).ok,true);
+});
+
+// #2724: a cross-origin frame is a navigation the driver refuses (the host allow-list), so it never
+// reaches the other server and the session reports driver.host_refused; allowing its origin for
+// subresources does not turn it into an allowed frame.
+test('a cross-origin iframe navigation is refused and never reaches the other server',async t=>{
+  const hits=[];
+  const other=createServer((req,res)=>{hits.push({path:req.url,site:req.headers['sec-fetch-site']??'-'});res.end('<p>other</p>');});
+  const main=createServer((req,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<h1>Page</h1><iframe src="http://other.localhost:${other.address().port}/xframe" title="cross"></iframe>`);});
+  await Promise.all([other,main].map(server=>new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))));
+  t.after(()=>Promise.all([other,main].map(server=>new Promise(resolve=>server.close(resolve)))));
+  const c=await client(t);
+  const r=await c.send('open',{base:`http://127.0.0.1:${main.address().port}/`,viewport,allowOrigins:[`http://other.localhost:${other.address().port}`]});
+  await new Promise(resolve=>setTimeout(resolve,500));
+  const snap=r.ok ? await c.send('snapshot',{expect:[]}) : r;
+  assert.equal(snap.code,'driver.host_refused',JSON.stringify(snap));
+  assert.deepEqual(hits,[],'the refused frame must not reach the other server');
+});

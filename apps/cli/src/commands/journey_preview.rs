@@ -5682,11 +5682,10 @@ mod start_lock_wiring_tests {
 #[cfg(test)]
 mod run_checkout_fields_tests {
     use super::*;
-    use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) {
         assert!(
-            Command::new("git")
+            graphhelm_process::command("git")
                 .arg("-C")
                 .arg(dir)
                 .args(args)
@@ -5733,7 +5732,7 @@ mod run_checkout_fields_tests {
             ],
         );
         let head = String::from_utf8(
-            Command::new("git")
+            graphhelm_process::command("git")
                 .arg("-C")
                 .arg(dir)
                 .args(["rev-parse", "HEAD"])
@@ -5904,7 +5903,7 @@ mod checkout_on_every_write_tests {
         let project = tempfile::tempdir().unwrap();
         let dir = project.path().join(PREVIEWS).join("flow");
         std::fs::create_dir_all(&dir).unwrap();
-        std::process::Command::new("git")
+        graphhelm_process::command("git")
             .arg("-C")
             .arg(project.path())
             .args(["init", "-q"])

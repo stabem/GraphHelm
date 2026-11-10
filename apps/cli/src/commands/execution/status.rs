@@ -763,6 +763,12 @@ fn glance_from(
 /// already started, and a long stream's cold fold has been measured at about one budget more.
 const WARM_JOIN: std::time::Duration = std::time::Duration::from_secs(30);
 
+// Test observer (#2694): how many whole-history reads `glance` made on this thread.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static WHOLE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// [`glance`] over the whole history, keeping its digest when `cache` is on and the fold answered.
 fn glance_whole(
     cache: Option<&FoldCache>,
@@ -772,6 +778,8 @@ fn glance_whole(
     stream: &str,
     budget: &graphhelm_events::ReadBudget,
 ) -> Result<Glance, graphhelm_events::EventRepositoryError> {
+    #[cfg(test)]
+    WHOLE_READS.with(|count| count.set(count.get() + 1));
     let history = super::timing::phase("stream.read", || store.read_replay_stream(scope, stream))?;
     let digest = super::digest::HistoryDigest::of(&history);
     let projection = super::timing::phase("fold", || match cache {

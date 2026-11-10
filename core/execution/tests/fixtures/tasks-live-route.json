@@ -8817,7 +8817,7 @@
           "since": "2026-10-14T00:19:17.244454100Z",
           "spent": {
             "implement": 668405,
-            "review": 11411952
+            "review": 7224446
           }
         },
         "critic": null,
@@ -12379,7 +12379,7 @@
         "since": "2026-10-14T00:19:17.244454100Z",
         "spent": {
           "implement": 668405,
-          "review": 11411952
+          "review": 7224446
         }
       },
       "critic": null,

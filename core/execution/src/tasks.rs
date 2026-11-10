@@ -3578,4 +3578,45 @@ mod older_head_clock_tests {
         assert_eq!(clock.last_at, Some(at("2026-10-24T11:59:00Z")));
         assert_eq!(clock.since, Some(at("2026-10-24T10:00:00Z")));
     }
+
+    fn event(kind: &str, sequence: u64, time: &str, extra: serde_json::Value) -> TaskEventRecord {
+        let mut document = serde_json::json!({"schema": "graphhelm-task-event-v1",
+            "taskId": "issue-7", "revision": 1, "at": time, "issue": 7,
+            "lane": "lane-a", "branch": "issue-7-x"});
+        if let (Some(base), Some(more)) = (document.as_object_mut(), extra.as_object()) {
+            base.extend(more.clone());
+        }
+        parse_task_event(kind, "lane-a", &document.to_string(), sequence, Some(at(time)))
+            .expect("fixture event must parse")
+    }
+
+    #[test]
+    fn an_older_head_review_assignment_does_not_move_the_current_heads_clock() {
+        // #2703, fold level: head A is opened, then head B (the current head). A review
+        // assignment for the older head A must not restart the wait on head B.
+        let records = [
+            event("task.claimed", 1, "2026-10-24T10:00:00Z", serde_json::json!({})),
+            event(
+                "task.pr_opened",
+                2,
+                "2026-10-24T10:01:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "journeys": []}),
+            ),
+            event(
+                "task.pr_opened",
+                3,
+                "2026-10-24T10:02:00Z",
+                serde_json::json!({"pr": 70, "headSha": "bbbbbbb", "journeys": []}),
+            ),
+            event(
+                "task.review_assigned",
+                4,
+                "2026-10-24T10:03:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "reviewer": "lane-b"}),
+            ),
+        ];
+        let state = fold_task_events(&records).remove(0);
+        assert_eq!(state.head_sha.as_deref(), Some("bbbbbbb"));
+        assert_eq!(state.clock.last_at, Some(at("2026-10-24T10:02:00Z")));
+    }
 }

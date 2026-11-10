@@ -35,6 +35,11 @@ pub(crate) struct Worktree {
 }
 
 pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    git_bytes(dir, args).map(|stdout| String::from_utf8_lossy(&stdout).into_owned())
+}
+
+/// `git`'s stdout as it was written: a patch of a file that is not UTF-8 is not text.
+fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = graphhelm_process::command("git")
         .arg("-C")
         .arg(dir)
@@ -42,10 +47,27 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
         .output()
         .map_err(|_| "git could not be started".to_owned())?;
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output.stdout)
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
     }
+}
+
+/// A leftovers folder nothing was saved to yet: `into`, or `into-2`, `into-3` and so on. Claimed
+/// worktrees all end in `wt`, so two of them removed for one PR named the same folder and the
+/// second overwrote the uncommitted work saved from the first.
+fn free_folder(into: &Path) -> PathBuf {
+    if !into.exists() {
+        return into.to_path_buf();
+    }
+    let name = into.file_name().map_or_else(
+        || "worktree".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    (2_u32..)
+        .map(|n| into.with_file_name(format!("{name}-{n}")))
+        .find(|candidate| !candidate.exists())
+        .unwrap_or_else(|| into.to_path_buf())
 }
 
 pub(crate) fn worktrees(repo: &Path) -> Result<Vec<Worktree>, String> {
@@ -123,8 +145,9 @@ pub(crate) fn save_leftovers(worktree: &Path, into: &Path) -> Result<Option<Stri
     if status.trim().is_empty() {
         return Ok(None);
     }
+    let into = &free_folder(into);
     std::fs::create_dir_all(into).map_err(|e| format!("leftovers folder: {e}"))?;
-    let patch = git(worktree, &["diff", "HEAD", "--binary"])?;
+    let patch = git_bytes(worktree, &["diff", "HEAD", "--binary"])?;
     std::fs::write(into.join("changes.patch"), patch).map_err(|e| format!("patch: {e}"))?;
     let untracked = git(
         worktree,
@@ -334,4 +357,22 @@ pub(crate) fn run(args: &WorkspaceSweepArgs) -> Outcome {
         outcome.exit_code = 3;
     }
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two worktrees of one PR share a folder name (`wt`). The second used to write over the
+    /// first's `changes.patch`; each now gets a folder of its own.
+    #[test]
+    fn a_used_leftovers_folder_is_never_handed_out_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let into = dir.path().join("wt");
+        assert_eq!(free_folder(&into), into);
+        std::fs::create_dir(&into).unwrap();
+        assert_eq!(free_folder(&into), dir.path().join("wt-2"));
+        std::fs::create_dir(dir.path().join("wt-2")).unwrap();
+        assert_eq!(free_folder(&into), dir.path().join("wt-3"));
+    }
 }

@@ -77,6 +77,7 @@ pub(super) fn findings(flow: &Value) -> Vec<(&'static str, String, &'static str)
                     METHODS.contains(&act["role"].as_str().unwrap_or_default())
                         && name.starts_with('/')
                         && !name.starts_with("//")
+                        && request_refusal(name).is_none()
                 }
                 Some("cli") => act["role"] == "exec" && !name.trim().is_empty(),
                 _ => {
@@ -133,6 +134,21 @@ pub(super) fn findings(flow: &Value) -> Vec<(&'static str, String, &'static str)
     found
 }
 
+/// Why a path may not go on the request line: it is written there raw, so whitespace or a
+/// control character in it would end the line and start one of the flow author's choosing.
+fn request_refusal(path: &str) -> Option<&'static str> {
+    path.contains(|character: char| character.is_whitespace() || character.is_control())
+        .then_some("the act's path holds whitespace or a control character")
+}
+
+/// Whether `name` is an HTTP field name (RFC 9110 `token`): the only form written to the wire.
+fn header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+}
+
 /// Sends one `http` act (or the start screen's GET) to `base` and reads the whole response.
 pub(super) fn request(
     base: &str,
@@ -141,6 +157,9 @@ pub(super) fn request(
     body: Option<&str>,
     headers: Option<&serde_json::Map<String, Value>>,
 ) -> Result<Observation, String> {
+    if let Some(refusal) = request_refusal(path) {
+        return Err(refusal.to_owned());
+    }
     let authority = base
         .split_once("://")
         .map_or(base, |(_, rest)| rest)
@@ -167,6 +186,7 @@ pub(super) fn request(
             continue;
         };
         if value.contains(['\r', '\n'])
+            || !header_name(name)
             || RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
         {
             continue;
@@ -856,6 +876,46 @@ mod tests {
             findings(&json!({"edges":[{"acts":[act]}]}))[0].0,
             "flow.backend_header_reserved"
         );
+    }
+
+    /// A header name and an act path are written raw into the request head, so a line break in
+    /// either one added a header (or a second request line) of the flow author's choosing. Cost:
+    /// one loopback socket, no network.
+    #[test]
+    fn a_line_break_in_a_header_name_or_a_path_never_reaches_the_wire() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = socket.read(&mut buf).unwrap();
+                seen.extend_from_slice(&buf[..n]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .unwrap();
+            String::from_utf8(seen).unwrap()
+        });
+        let act = json!({"kind":"http","role":"GET","name":"/x",
+            "headers":{"x-ok":"1","x-a\r\nx-injected":"1"}});
+        let seen = play(Path::new("."), &base, &act).unwrap();
+        assert_eq!(seen.status, Some(200));
+        let request = server.join().unwrap();
+        assert!(request.contains("x-ok: 1\r\n"), "{request}");
+        assert!(!request.contains("x-injected"), "{request}");
+
+        let broken = json!({"kind":"http","role":"GET","name":"/x HTTP/1.1\r\nx-injected: 1"});
+        assert_eq!(
+            findings(&json!({"edges":[{"acts":[broken.clone()]}]}))[0].0,
+            "flow.backend_act_invalid"
+        );
+        assert_eq!(
+            request_refusal("/x HTTP/1.1\r\nx-injected: 1"),
+            Some("the act's path holds whitespace or a control character")
+        );
+        assert_eq!(request_refusal("/x?a=1"), None);
     }
 
     /// The defect named: a backend expectation that passes on the wrong value (a status prefix,

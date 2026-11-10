@@ -4593,7 +4593,7 @@ Options:
           The TOOL half of the real-executor wiring: `--staging` and `--allow-program` are all-or-none (#1066), and need NO model credential. With them, tool nodes run on the real tool host: one Tier 1 worktree per execution under this staging directory, kept across that execution's tool calls and removed when its drive ends; a `commit` node lands `refs/graphhelm/executions/<execution id>` in the project — a plain ref, never a branch, never the operator's checkout. Without them, tool nodes are answered by node fixtures
 
       --project <PROJECT>
-          The deployer's own default workspace root for `start`/`resume`, used whenever a request omits `"project"` — never required, never part of the real-executor group above. Absent, the prior behavior is unchanged: the server's own process working directory. Exists because neither `start` nor `resume`'s MCP tool schema exposes a `project` field (issue #82) — an operator confined to the MCP surface has no channel to avoid the default colliding with `--staging` when the server happens to run from a `--staging` ancestor, so the deployer must be able to fix the default once, the same way `--staging` itself is fixed once, rather than every caller needing infrastructure knowledge it was never given. Meaningful only alongside the tool half (`--staging`/`--allow-program`; `drive` only ever consults it there); given without it, it is accepted but silently unused
+          The deployer's own default workspace root for `start`/`resume`, used whenever a request omits `"project"` — never required, never part of the real-executor group above. Absent, an initialised working directory (one holding `.graphhelm/`) is the project (#2360); otherwise the default is the server's own process working directory. Exists because neither `start` nor `resume`'s MCP tool schema exposes a `project` field (issue #82) — an operator confined to the MCP surface has no channel to avoid the default colliding with `--staging` when the server happens to run from a `--staging` ancestor, so the deployer must be able to fix the default once, the same way `--staging` itself is fixed once, rather than every caller needing infrastructure knowledge it was never given. It also names the project whose identity, documents and journeys the server serves
 
       --workspace-root <WORKSPACE_ROOT>
           The agent workspace root (#360) that `GET /v1/workspaces` lists and the owner's `POST /v1/workspaces/sweep` sweeps. Nothing in a request names a path; without this flag both routes refuse naming it
@@ -4832,7 +4832,7 @@ Options:
           [default: 5183]
 
       --no-browser
-          Launch no browser and return the one-time login link as `data.url`, for a caller that opens it in its own browser; without it the link is returned only when the browser fails to open
+          Launch no browser and return the reusable project link as `data.url`, for a caller that opens it in its own browser; without it the link is returned only when the browser fails to open
 
       --journey <JOURNEY>
           Land on this journey's Proof view (its contract id), for an owner approval

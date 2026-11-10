@@ -155,11 +155,9 @@ fn git_before(dir: &Path, args: &[&str], deadline: Instant) -> Result<String, St
 fn write_record(file: &Path, record: &Value) -> std::io::Result<()> {
     let parent = file.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let staging = file.with_extension("json.tmp");
     let mut bytes = serde_json::to_vec_pretty(record).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
-    std::fs::write(&staging, bytes)?;
-    std::fs::rename(&staging, file)
+    crate::commands::atomic::atomic_write(file, &bytes)
 }
 
 fn read_record(file: &Path) -> Option<Value> {
@@ -2339,6 +2337,20 @@ fn sweep_removes_a_moved_target_only_for_a_gone_worktree() {
 #[cfg(test)]
 mod moved_target_tests {
     use super::*;
+
+    /// The record used to be staged through a fixed `<record>.json.tmp` with a plain write, which
+    /// clobbered (and then renamed away) a file of that name it did not create.
+    #[test]
+    fn a_record_write_leaves_a_foreign_staging_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("lane-a--task.json");
+        let foreign = dir.path().join("lane-a--task.json.tmp");
+        std::fs::write(&foreign, "not ours").unwrap();
+        write_record(&file, &json!({"schema": SCHEMA})).unwrap();
+        assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "not ours");
+        let written: Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(written["schema"], SCHEMA);
+    }
 
     /// A root with rule `fast`, history `[old]`, and one gone-worktree record naming `target`.
     fn fixture(

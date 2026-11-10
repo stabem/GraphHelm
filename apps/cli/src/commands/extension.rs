@@ -219,10 +219,11 @@ pub fn run_mint_mcp_token(
             "/contribution",
         );
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(u64::MAX);
+    // #2758: no reading means no token. A fallback of `u64::MAX` would mint one whose saturated
+    // expiry never passes.
+    let Some(now) = seconds_since_epoch(std::time::SystemTime::now()) else {
+        return refuse(COMMAND, "the system clock could not be read", "/clock");
+    };
     let token = graphhelm_tool_broker::mcp_capability::mint(
         validated.package_digest,
         contribution.id.clone(),
@@ -236,6 +237,13 @@ pub fn run_mint_mcp_token(
         Ok(value) => Outcome::success(COMMAND, value),
         Err(_) => Outcome::internal(COMMAND, "the minted token could not be serialized"),
     }
+}
+
+/// Whole seconds since the Unix epoch, or `None` for a clock set before it.
+fn seconds_since_epoch(now: std::time::SystemTime) -> Option<u64> {
+    now.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
 }
 
 pub fn run_revoke_mcp_token(token_file: &Path) -> Outcome {
@@ -265,5 +273,24 @@ pub fn run_revoke_mcp_token(token_file: &Path) -> Outcome {
     match serde_json::to_value(&token) {
         Ok(value) => Outcome::success(COMMAND, value),
         Err(_) => Outcome::internal(COMMAND, "the revoked token could not be serialized"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    /// #2758: a clock that cannot be read used to become `now = u64::MAX`, and a saturating
+    /// expiry then minted a token that never expires. No reading means no token.
+    #[test]
+    fn a_clock_before_the_epoch_gives_no_mint_time() {
+        assert_eq!(
+            super::seconds_since_epoch(UNIX_EPOCH - Duration::from_secs(1)),
+            None
+        );
+        assert_eq!(
+            super::seconds_since_epoch(UNIX_EPOCH + Duration::from_secs(500)),
+            Some(500)
+        );
     }
 }

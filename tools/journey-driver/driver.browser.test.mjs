@@ -576,32 +576,41 @@ test('a document navigation reaches the server with the browser\'s Sec-Fetch met
   assert.equal((await c.send('close')).ok,true);
 });
 
-// #2724: "document navigations only" was unguarded: giving the Sec-Fetch metadata to subresources
-// passed every test. A page with a script, an image, a stylesheet and a fetch() must reach the
-// server with none of the three headers; a same-origin iframe is a navigation and carries them,
-// with dest `iframe` and the site of the PARENT frame.
-test('Sec-Fetch metadata reaches navigations only: subresources get none; a same-origin iframe gets dest iframe',async t=>{
+// #2724: every request reaches the server with the Sec-Fetch metadata the browser would have sent.
+// Site is the initiating frame's origin against the request's origin (same-origin, or cross-site,
+// never the first for a different origin); mode and dest come from the resource type. The Studio
+// authorizes same-origin fetch/XHR on Sec-Fetch-Site (#2615), so these must not go without it.
+test('Sec-Fetch metadata: same-origin subrequests and iframes say same-origin; a cross-site subresource says cross-site',async t=>{
   const seen=[];
-  const server=createServer((req,res)=>{
-    seen.push({path:req.url,mode:req.headers['sec-fetch-mode']??'-',dest:req.headers['sec-fetch-dest']??'-',site:req.headers['sec-fetch-site']??'-'});
-    const types={'/app.js':'text/javascript','/s.css':'text/css','/p.gif':'image/gif','/api':'application/json'};
+  const record=(req)=>seen.push({path:req.url,mode:req.headers['sec-fetch-mode']??'-',dest:req.headers['sec-fetch-dest']??'-',site:req.headers['sec-fetch-site']??'-'});
+  const other=createServer((req,res)=>{record({url:'other'+req.url,headers:req.headers});res.setHeader('Content-Type','image/gif');res.end('');});
+  const main=createServer((req,res)=>{
+    record(req);
+    const types={'/app.js':'text/javascript','/s.css':'text/css','/p.gif':'image/gif','/p2.gif':'image/gif','/api':'application/json','/post':'application/json'};
     res.setHeader('Content-Type',types[req.url]??'text/html; charset=utf-8');
-    if (req.url === '/') return res.end('<link rel="stylesheet" href="/s.css"><script src="/app.js"></script><img src="/p.gif" alt="pixel"><iframe src="/frame" title="same"></iframe><h1>Page</h1>');
-    if (req.url === '/app.js') return res.end('fetch("/api").then(r=>r.text())');
-    res.end(req.url === '/api' ? '{}' : req.url === '/s.css' || req.url === '/p.gif' ? '' : '<p>frame</p>');
+    if (req.url === '/') return res.end(`<link rel="stylesheet" href="/s.css"><script src="/app.js"></script><img src="/p.gif" alt="pixel"><img src="http://other.localhost:${other.address().port}/x.gif" alt="foreign"><iframe src="/frame" title="same"></iframe><iframe srcdoc="<img src='/p2.gif'>" title="doc"></iframe><h1>Page</h1>`);
+    if (req.url === '/app.js') return res.end('fetch("/api").then(r=>r.text());var x=new XMLHttpRequest();x.open("POST","/post");x.send("{}")');
+    res.end(req.url === '/api' || req.url === '/post' ? '{}' : req.url.endsWith('.css') || req.url.endsWith('.gif') ? '' : '<p>frame</p>');
   });
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await Promise.all([other,main].map(server=>new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))));
+  t.after(()=>Promise.all([other,main].map(server=>new Promise(resolve=>server.close(resolve)))));
   const c=await client(t);
-  await open(c,`http://127.0.0.1:${server.address().port}/`);
-  const wanted=['/','/s.css','/app.js','/p.gif','/api','/frame'];
+  await open(c,`http://127.0.0.1:${main.address().port}/`,[`http://other.localhost:${other.address().port}`]);
+  const wanted=['/','/s.css','/app.js','/p.gif','/api','/post','/frame','/p2.gif','other/x.gif'];
   for (let tries=0;tries<50 && !wanted.every(path=>seen.some(entry=>entry.path === path));tries++) await new Promise(resolve=>setTimeout(resolve,100));
   const of=path=>seen.find(entry=>entry.path === path);
-  for (const path of wanted) assert.ok(of(path),`${path} never reached the server: ${JSON.stringify(seen)}`);
-  assert.deepEqual(of('/'),{path:'/',mode:'navigate',dest:'document',site:'none'});
-  for (const path of ['/s.css','/app.js','/p.gif','/api'])
-    assert.deepEqual(of(path),{path,mode:'-',dest:'-',site:'-'},`subresource ${path} must carry no Sec-Fetch metadata`);
-  assert.deepEqual(of('/frame'),{path:'/frame',mode:'navigate',dest:'iframe',site:'same-origin'});
+  for (const path of wanted) assert.ok(of(path),`${path} never reached a server: ${JSON.stringify(seen)}`);
+  const expect=(path,mode,dest,site)=>assert.deepEqual(of(path),{path,mode,dest,site},path);
+  expect('/','navigate','document','none');
+  expect('/frame','navigate','iframe','same-origin');
+  expect('/api','cors','empty','same-origin');
+  expect('/post','cors','empty','same-origin');
+  expect('/s.css','no-cors','style','same-origin');
+  expect('/app.js','no-cors','script','same-origin');
+  expect('/p.gif','no-cors','image','same-origin');
+  // A srcdoc frame has the origin of its parent: its image is same-origin, not "cross-site".
+  expect('/p2.gif','no-cors','image','same-origin');
+  expect('other/x.gif','no-cors','image','cross-site');
   assert.equal((await c.send('close')).ok,true);
 });
 

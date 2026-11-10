@@ -4900,3 +4900,57 @@ fn crash_sites_survive_outcome_persistence() {
     }
     assert!(failures.is_empty(), "lost recorded sites: {failures:?}");
 }
+
+/// #2756: an executor whose future panics, standing in for any bug inside a node's task.
+struct PanickingExecutor;
+
+impl AsyncNodeExecutor for PanickingExecutor {
+    fn execute<'a>(
+        &'a self,
+        _work: &'a NodeWork,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<graphhelm_runtime::executor::WorkOutcome, ExecutorRefusal>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async { panic!("the node task panics (fixture)") })
+    }
+}
+
+/// #2756: a panicked node task used to be dropped: the node stayed `Running`, nothing was
+/// appended, and the drive ended with no record of why. Its effects are unknown, so the drive
+/// records `Interrupted`, and `(Running, Interrupted) -> Blocked` raises it for triage.
+#[test]
+fn a_node_task_that_panics_is_recorded_as_interrupted() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    std::fs::create_dir_all(&events).unwrap();
+    let execution_id = started_repository(&events);
+    let spec = spec_with(vec![("stage", agent_graph_node("do it"))], vec![], 1);
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(None::<ImmediateCancelRequest>);
+    let projection = multi_thread_runtime()
+        .block_on(drive_to_quiescence_async(
+            opener(events),
+            Arc::new(EvidenceProtector::new(InMemoryKeyProvider::default())),
+            Arc::new(SequenceIds::default()),
+            driver_scope(),
+            OpaqueId::parse(DRIVER_STREAM).unwrap(),
+            execution_id,
+            spec,
+            Arc::new(PanickingExecutor),
+            driver_actor(),
+            std::collections::BTreeSet::new(),
+            driver_actor(),
+            cancel_rx,
+            None,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(
+        projection.last_outcome.get("stage"),
+        Some(&NodeOutcome::Interrupted)
+    );
+    assert_eq!(projection.node_states["stage"], NodeState::Blocked);
+}

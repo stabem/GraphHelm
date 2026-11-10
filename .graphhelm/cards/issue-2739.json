@@ -1,0 +1,10 @@
+{
+  "promise": "The older-head clock rule has one named function, clock_time, and each of its conditions (step unchanged, event head known, current head known, head differs) fails at least one test when dropped, `step_unchanged` is pinned at unit level only: no record the fold accepts changes the step while naming an older head (merged carries no head; review_assigned moves Implement/Plan only, and those steps have no head), so the condition is defensive and unreachable at fold level.",
+  "scopePaths": [
+    ".graphhelm/cards/issue-2739.json",
+    "core/execution/src/tasks.rs"
+  ],
+  "proof": "cargo +1.97.1 test --locked -p graphhelm-execution older_head_clock; break-once: drop step_unchanged -> the_clock_time_rule_names_each_condition fails; cargo +1.97.1 fmt --all -- --check; clippy -p graphhelm-execution --all-targets -D warnings; cargo +1.97.1 test --locked --workspace",
+  "exportedSymbols": [],
+  "journeys": []
+}

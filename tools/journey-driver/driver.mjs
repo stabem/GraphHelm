@@ -413,16 +413,37 @@ function skeleton(aria) {
 // #2721: route.fetch is an API request, so Chromium's Sec-Fetch-* never reach the server. A
 // document navigation gets back the three it would have carried, from what the page knows of it:
 // the destination is the frame's kind, the site is where the navigating frame (its parent for a
-// new subframe) stands now. Subresource requests are left as they were.
-function navigationMetadata(request,parsed) {
-  if (!request.isNavigationRequest()) return {};
-  const frame=request.frame(), parent=frame.parentFrame();
-  const from=(parent ?? frame).url();
-  let site='none';
-  if (from && from !== 'about:blank') {
-    try { site=new URL(from).origin === parsed.origin ? 'same-origin' : 'cross-site'; } catch { site='cross-site'; }
+// new subframe) stands now.
+// #2724: the same holds for every other request. An app authorizes its own fetch/XHR on
+// Sec-Fetch-Site (the Studio does), and route.fetch sends none. Site is the initiating frame's
+// origin against the request's origin: same-origin, or cross-site for any other origin (same-site
+// is not told apart). Mode and dest come from the resource type; a type not listed gets the site
+// only, never an invented mode or dest.
+const FETCH_KIND={
+  fetch:['cors','empty'],xhr:['cors','empty'],eventsource:['cors','empty'],
+  script:['no-cors','script'],stylesheet:['no-cors','style'],image:['no-cors','image'],
+  font:['cors','font'],manifest:['cors','manifest'],
+};
+// The origin a request is initiated from. A blank or srcdoc frame has its parent's origin.
+function initiatorOrigin(frame) {
+  for (let f=frame; f; f=f.parentFrame()) {
+    let origin; try { origin=new URL(f.url()).origin; } catch { continue; }
+    if (origin !== 'null') return origin;
   }
-  return {'sec-fetch-mode':'navigate','sec-fetch-dest':parent ? 'iframe' : 'document','sec-fetch-site':site};
+  return null;
+}
+function requestMetadata(request,parsed) {
+  const frame=request.frame();
+  if (request.isNavigationRequest()) {
+    const parent=frame.parentFrame();
+    const from=initiatorOrigin(parent ?? frame);
+    return {'sec-fetch-mode':'navigate','sec-fetch-dest':parent ? 'iframe' : 'document','sec-fetch-site':from === null ? 'none' : from === parsed.origin ? 'same-origin' : 'cross-site'};
+  }
+  const from=initiatorOrigin(frame);
+  const meta={'sec-fetch-site':from === null ? 'none' : from === parsed.origin ? 'same-origin' : 'cross-site'};
+  const kind=FETCH_KIND[request.resourceType()];
+  if (kind) { meta['sec-fetch-mode']=kind[0]; meta['sec-fetch-dest']=kind[1]; }
+  return meta;
 }
 async function run(r) {
   if (r.op === 'open') {
@@ -457,7 +478,7 @@ async function run(r) {
           // approved aliases too, preserving the virtual host header.
           const transport=new URL(request.url());
           if (transport.hostname.endsWith('.test') || transport.hostname.endsWith('.localhost')) transport.hostname='127.0.0.1';
-          const response=await route.fetch({url:transport.href,headers:{...request.headers(),host:parsed.host,...navigationMetadata(request,parsed)},maxRedirects:0,timeout:TIMEOUT});
+          const response=await route.fetch({url:transport.href,headers:{...request.headers(),host:parsed.host,...requestMetadata(request,parsed)},maxRedirects:0,timeout:TIMEOUT});
           const location=response.headers().location;
           if (response.status()>=300 && response.status()<400 && location) {
             // Playwright bypasses route handlers for the remainder of a redirect

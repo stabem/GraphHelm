@@ -14,7 +14,7 @@ viewports: [web, mobile]
 screens:
   - id: graph
     title: The demo team run remains available
-    url: /?view=graph&journey=runtime-health
+    url: /?journey=runtime-health
     ignoreQuery: [project, run]
     state: stable
     expect: [{role: region, name: Graph, text: RUN demo STATUS, because: the demo run opens after switching from the ticket-free proof deep link}]

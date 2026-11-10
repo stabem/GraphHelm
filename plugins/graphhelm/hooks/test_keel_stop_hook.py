@@ -302,7 +302,6 @@ class CardPathChangedCard(unittest.TestCase):
         self.commit_card(".graphhelm/cards/issue-2694-phases.json")
         target = self.repo / "app.py"
         real = keel_stop_hook._git
-        keel_stop_hook._CARD_MEMO.clear()
         with mock.patch.object(keel_stop_hook, "_git", side_effect=real) as spy:
             keel_pretool_hook.decide(self.repo, target, {"content": "x = 1\n"})
         lookups = [c for c in spy.call_args_list if ".graphhelm/cards/" in c.args]

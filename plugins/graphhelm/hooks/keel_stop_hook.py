@@ -120,9 +120,6 @@ def card_path(repo: Path, base: str | None = None, others: str | None = None) ->
     return _changed_card(repo, match.group(1) if match else None, base, others) or CARD
 
 
-_CARD_MEMO: dict[tuple, Path | None] = {}  # one lookup per hook process: Stop and review share it
-
-
 def _changed_card(repo: Path, issue: str | None, base: str | None, others: str | None) -> Path | None:
     """#2735: the one card this checkout adds or changes since the merge base. On an issue-<N>
     branch only issue-<N>.json or issue-<N>-*.json count (an unrelated card is not its card); on a
@@ -131,9 +128,6 @@ def _changed_card(repo: Path, issue: str | None, base: str | None, others: str |
     base = base or _merge_base(repo)
     if base is None:
         return None
-    key = (str(repo), base, issue)
-    if key in _CARD_MEMO:
-        return _CARD_MEMO[key]
     own = re.compile(rf"\.graphhelm/cards/issue-{issue}(?:-[^/]*)?\.json" if issue
                      else r"\.graphhelm/cards/[^/]+\.json")
     try:
@@ -142,8 +136,7 @@ def _changed_card(repo: Path, issue: str | None, base: str | None, others: str |
     except (subprocess.SubprocessError, OSError):
         return None
     cards = sorted(n for n in names if own.fullmatch(n) and (repo / n).is_file())
-    _CARD_MEMO[key] = Path(cards[0]) if len(cards) == 1 else None
-    return _CARD_MEMO[key]
+    return Path(cards[0]) if len(cards) == 1 else None
 
 
 def read_head(dirs: tuple[Path, Path, Path]) -> str | None:

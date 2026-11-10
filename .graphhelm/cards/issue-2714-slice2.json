@@ -1,0 +1,12 @@
+{
+  "promise": "Slice 2 of the wake webhook closes the risks Neji named on slice 1: deliver itself refuses any url that is not https on the pinned host (the unpinned path is private, only tests use it), a redirect is never followed and its target never contacted, a signing key longer than a block is hashed first (RFC 4231 vector), Config prints lane names only never a webhook url, the Secret is zeroized, the reason a step is ready is a fixed code never free text, and any 2xx counts as accepted (a plain 200 stays the duplicate answer). Still not wired into the Runtime.",
+  "scopePaths": [
+    "adapters/wake-webhook/Cargo.toml",
+    "adapters/wake-webhook/src/lib.rs",
+    "Cargo.lock",
+    ".graphhelm/cards/issue-2714-slice2.json"
+  ],
+  "proof": "cargo test -p graphhelm-wake-webhook (19 passed, incl. deliver_itself_refuses_a_url_off_the_pinned_host, a_redirect_is_not_followed with the target never contacted, a_key_longer_than_a_block_is_hashed_first, the_config_never_prints_a_webhook_url, any_2xx_is_accepted_except_200, the_reason_is_a_fixed_code_in_the_body); cargo clippy -p graphhelm-wake-webhook --all-targets -D warnings",
+  "exportedSymbols": ["Reason"],
+  "journeys": []
+}

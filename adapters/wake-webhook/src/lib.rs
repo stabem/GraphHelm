@@ -22,11 +22,11 @@ pub const DEADLINE: Duration = Duration::from_secs(10);
 pub const MAX_RETRIES: u32 = 3;
 
 /// A signing secret. Printing it prints nothing of its value.
-pub struct Secret(String);
+pub struct Secret(zeroize::Zeroizing<String>);
 
 impl Secret {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into().trim().to_owned())
+        Self(zeroize::Zeroizing::new(value.into().trim().to_owned()))
     }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -48,7 +48,17 @@ pub struct Step {
     pub issue: u64,
     pub pr: Option<u64>,
     pub head: String,
-    pub because: String,
+    pub because: Reason,
+}
+
+/// Why a step is ready: a fixed code, never free text, so nothing private can ride along.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Reason {
+    ReviewAssigned,
+    BlockVerdict,
+    Approved,
+    Merged,
 }
 
 /// What happened to one delivery.
@@ -102,29 +112,37 @@ pub fn body(step: &Step, occurred_at: &str) -> String {
 }
 
 /// The lane -> URL map, read from config. Only https URLs on the pinned host are accepted.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Config {
     urls: BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Lanes only: a webhook url is a capability and never prints.
+        f.debug_struct("Config")
+            .field("lanes", &self.urls.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+/// True when `url` is `<scheme>://<host>` followed by a path or a port, with no userinfo and no
+/// fragment: the same check for the config and for every delivery.
+fn on_pinned_host(url: &str, host: &str, scheme: &str) -> bool {
+    let rest = url.strip_prefix(&format!("{scheme}://{host}"));
+    rest.is_some_and(|rest| rest.starts_with('/') || rest.starts_with(':'))
+        && !url.contains('@')
+        && !url.contains('#')
 }
 
 impl Config {
     /// `{"openbot-neji": "https://signal.openbot.run/v1/webhooks/<id>", ...}`.
     pub fn parse(json: &str) -> Result<Self, String> {
-        Self::parse_pinned(json, PINNED_HOST, "https")
-    }
-
-    /// [`Self::parse`] for a loopback test receiver; production uses `parse`.
-    pub fn parse_pinned(json: &str, host: &str, scheme: &str) -> Result<Self, String> {
         let raw: BTreeMap<String, String> = serde_json::from_str(json)
             .map_err(|_| "wake webhook config is not a lane -> url map".to_owned())?;
-        let prefix = format!("{scheme}://{host}");
         for (lane, url) in &raw {
-            let rest = url.strip_prefix(&prefix);
-            let on_host = rest.is_some_and(|rest| rest.starts_with('/') || rest.starts_with(':'));
-            if !on_host || url.contains('@') || url.contains('#') {
-                return Err(format!(
-                    "webhook for {lane} is not a {scheme} url on {host}"
-                ));
+            if !on_pinned_host(url, PINNED_HOST, "https") {
+                return Err(format!("webhook for {lane} is not https on {PINNED_HOST}"));
             }
         }
         Ok(Self { urls: raw })
@@ -186,6 +204,21 @@ pub fn deliver(
     now: &dyn Fn() -> (u64, String),
     pause: &dyn Fn(u32),
 ) -> Outcome {
+    if !on_pinned_host(url, PINNED_HOST, "https") {
+        return Outcome::Failed("url is not https on the pinned host".to_owned());
+    }
+    deliver_to(transport, url, secret, step, now, pause)
+}
+
+/// [`deliver`] without the host pin. Private: only the tests, which post to a loopback receiver.
+fn deliver_to(
+    transport: &dyn Transport,
+    url: &str,
+    secret: &Secret,
+    step: &Step,
+    now: &dyn Fn() -> (u64, String),
+    pause: &dyn Fn(u32),
+) -> Outcome {
     if secret.is_empty() {
         return Outcome::Failed("no signing secret".to_owned());
     }
@@ -202,8 +235,8 @@ pub fn deliver(
             ),
         ];
         match transport.post(url, &headers, &payload) {
-            Ok(202) => return Outcome::Accepted,
             Ok(200) => return Outcome::Duplicate,
+            Ok(code) if (200..300).contains(&code) => return Outcome::Accepted,
             Ok(503) if attempt < MAX_RETRIES => pause(attempt),
             Ok(503) => return Outcome::Failed("503 after retries".to_owned()),
             Ok(code) => return Outcome::Rejected(code),
@@ -226,7 +259,7 @@ mod tests {
             issue: 2694,
             pr: Some(2715),
             head: "878fb578".into(),
-            because: "review assigned".into(),
+            because: Reason::ReviewAssigned,
         }
     }
 
@@ -304,7 +337,7 @@ mod tests {
             replies: RefCell::new(replies),
             seen: RefCell::new(vec![]),
         };
-        let outcome = deliver(
+        let outcome = deliver_to(
             &fake,
             "https://signal.openbot.run/x",
             &Secret::new("s3cret"),
@@ -340,7 +373,7 @@ mod tests {
             replies: RefCell::new(vec![Ok(503), Ok(202)]),
             seen: RefCell::new(vec![]),
         };
-        deliver(
+        deliver_to(
             &fake,
             "u",
             &Secret::new("k"),
@@ -372,7 +405,7 @@ mod tests {
             replies: RefCell::new(vec![]),
             seen: RefCell::new(vec![]),
         };
-        let outcome = deliver(
+        let outcome = deliver_to(
             &fake,
             "u",
             &Secret::new("  "),
@@ -455,7 +488,7 @@ mod tests {
     #[test]
     fn a_real_post_is_signed_retried_on_503_and_accepted() {
         let (url, handle) = receiver("s3cret", vec!["503 Service Unavailable", "202 Accepted"]);
-        let outcome = deliver(
+        let outcome = deliver_to(
             &Ureq::new(DEADLINE),
             &url,
             &Secret::new("s3cret"),
@@ -474,7 +507,7 @@ mod tests {
     fn break_once_a_wrong_secret_is_refused_by_the_receiver_and_not_retried() {
         // The receiver signs with its own secret; ours differs, so its check fails.
         let (url, handle) = receiver("right", vec!["401 Unauthorized"]);
-        let outcome = deliver(
+        let outcome = deliver_to(
             &Ureq::new(DEADLINE),
             &url,
             &Secret::new("wrong"),
@@ -486,6 +519,103 @@ mod tests {
         assert_eq!(
             handle.join().unwrap(),
             vec!["openbot-neji:review:878fb578 sig_ok=false type_ok=true"]
+        );
+    }
+
+    #[test]
+    fn a_redirect_is_not_followed() {
+        let target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let location = format!(
+            "location: http://{}/elsewhere",
+            target.local_addr().unwrap()
+        );
+        let reply: &'static str = Box::leak(format!("302 Found\r\n{location}").into_boxed_str());
+        let (url, handle) = receiver("s3cret", vec![reply]);
+        let outcome = deliver_to(
+            &Ureq::new(DEADLINE),
+            &url,
+            &Secret::new("s3cret"),
+            &step(),
+            &|| (1_700_000_000, "2026-11-10T00:00:00Z".to_owned()),
+            &|_| {},
+        );
+        assert_ne!(outcome, Outcome::Accepted, "a redirect is never a delivery");
+        assert_eq!(
+            handle.join().unwrap().len(),
+            1,
+            "one request, no second try"
+        );
+        assert!(
+            matches!(target.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "the redirect target was never contacted"
+        );
+    }
+
+    #[test]
+    fn deliver_itself_refuses_a_url_off_the_pinned_host() {
+        let fake = Fake {
+            replies: RefCell::new(vec![]),
+            seen: RefCell::new(vec![]),
+        };
+        for url in [
+            "http://signal.openbot.run/x",
+            "https://evil.example/x",
+            "https://signal.openbot.run@evil.example/x",
+            "https://signal.openbot.run.evil.example/x",
+        ] {
+            let outcome = deliver(
+                &fake,
+                url,
+                &Secret::new("k"),
+                &step(),
+                &|| (1, "t".into()),
+                &|_| {},
+            );
+            assert!(matches!(outcome, Outcome::Failed(_)), "{url}");
+        }
+        assert!(fake.seen.borrow().is_empty(), "nothing was sent");
+    }
+
+    #[test]
+    fn a_key_longer_than_a_block_is_hashed_first() {
+        // RFC 4231 test case 6: a 131-byte key.
+        let mac = hmac_sha256(
+            &[0xaa; 131],
+            b"Test Using Larger Than Block-Size Key - Hash Key First",
+        );
+        assert_eq!(
+            hex::encode(mac),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+        // Exactly one block (64 bytes) is used as is, not hashed.
+        assert_ne!(hmac_sha256(&[1; 64], b"m"), hmac_sha256(&[1; 65], b"m"));
+    }
+
+    #[test]
+    fn the_config_never_prints_a_webhook_url() {
+        let config = Config::parse(
+            r#"{"openbot-neji":"https://signal.openbot.run/v1/webhooks/capability-token"}"#,
+        )
+        .unwrap();
+        let printed = format!("{config:?}");
+        assert!(printed.contains("openbot-neji"));
+        assert!(!printed.contains("capability-token"));
+    }
+
+    #[test]
+    fn any_2xx_is_accepted_except_200_which_is_a_duplicate() {
+        assert_eq!(run(vec![Ok(201)]), (Outcome::Accepted, 1));
+        assert_eq!(run(vec![Ok(204)]), (Outcome::Accepted, 1));
+        assert_eq!(run(vec![Ok(200)]), (Outcome::Duplicate, 1));
+    }
+
+    #[test]
+    fn the_reason_is_a_fixed_code_in_the_body() {
+        let payload = body(&step(), "t");
+        assert!(
+            payload.contains(r#""because":"review_assigned""#),
+            "{payload}"
         );
     }
 

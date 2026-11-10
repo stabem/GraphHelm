@@ -1276,5 +1276,39 @@ mod tests {
             Some(&"system-test"),
             "the tail-armed lease carries its own arming actor"
         );
+
+        // #2694: the lease arm and the lease status read the tail too. (This fixture has no
+        // started execution, so `arm` stops after its load, which is the part counted here;
+        // its read-back uses the same `glance` read.)
+        crate::commands::execution::status::WHOLE_READS.with(|count| count.set(0));
+        let status =
+            crate::commands::execution::wake::status(events, Some("exec-fold"), "session-6")
+                .unwrap_or_else(|_| panic!("status reads the stream"));
+        assert_eq!(
+            status["head"], 8,
+            "status answers the stream's head from the tail read"
+        );
+        let arming = crate::commands::execution::wake::Arming {
+            session_id: "session-x",
+            rendezvous_id: "rdv-x",
+            cursor: None,
+            matures_in_seconds: None,
+        };
+        let refused = crate::commands::execution::wake::arm(
+            events,
+            Some("exec-fold"),
+            &arming,
+            PersistedActor::new(
+                PersistedActorType::System,
+                ActorId::parse("system-test").unwrap(),
+            ),
+            OpaqueId::parse("arm-key").unwrap(),
+        );
+        assert!(refused.is_err(), "no execution started on this fixture");
+        assert_eq!(
+            crate::commands::execution::status::WHOLE_READS.with(std::cell::Cell::get),
+            0,
+            "arm and status must not read the whole stream while the fold is kept"
+        );
     }
 }

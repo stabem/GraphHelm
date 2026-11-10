@@ -21,6 +21,9 @@ pub(crate) struct HistoryDigest {
     /// Sequence and hash of the last event folded; `None` while nothing was.
     pub(crate) head: Option<(u64, EventHash)>,
     pub(crate) len: usize,
+    /// Sequence of the last content event (wake bookkeeping skipped): the head the doorbell
+    /// compares against (#2694). 0 while no content was folded.
+    pub(crate) content_head: u64,
     first_content_at: Option<chrono::DateTime<chrono::Utc>>,
     last_content_at: Option<chrono::DateTime<chrono::Utc>>,
     node_last_event_at: BTreeMap<String, chrono::DateTime<chrono::Utc>>,
@@ -43,6 +46,7 @@ impl HistoryDigest {
             if super::wake::is_content(event) {
                 self.first_content_at.get_or_insert(at);
                 self.last_content_at = Some(at);
+                self.content_head = self.content_head.max(event.sequence);
             }
             super::note_node_event(&mut self.node_last_event_at, event);
             if let EventKind::WakeLease(lease) = &event.kind {

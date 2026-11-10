@@ -70,17 +70,18 @@ pub(crate) fn arm(
         matures_in_seconds,
     } = *arming;
     let store = event_store(events).map_err(|error| super::repository_failure(&error))?;
-    let (scope, stream, history) = resolve_stream(&store, execution)?;
-    // #1649: the serve's cached fold (exactly `replay` in a one-shot command). A full refold of
-    // the owner's 43k-event `gh-team` cost 3.5 s of CPU per call, and wake-waits poll this.
-    let projection = super::status::replay_cached(events, &scope, &stream, &history)
-        .map_err(|error| super::replay_failure(&error))?;
+    let (scope, stream, read) =
+        super::timing::phase("arm.load", || read_projection(&store, events, execution))?;
+    let ReadState {
+        projection,
+        head,
+        content_head,
+    } = read;
     let execution_id = projection
         .execution_id
         .clone()
         .ok_or_else(|| execution_state("no execution has started on this stream", "/execution"))?;
 
-    let head = history.last().map_or(0, |event| event.sequence);
     let armed_cursor = cursor.unwrap_or(head);
     // What this session was promised BEFORE this arming, so a shortening can be named. Read
     // as an instant rather than its wire string: the canonical rendering varies its fractional
@@ -110,36 +111,39 @@ pub(crate) fn arm(
     // re-reads the head and appends again, bounded like the presence commit, and the last loss
     // is reported, never swallowed.
     let mut attempts = 0;
-    loop {
-        attempts += 1;
-        // A lease guards no state transition: a record, appended at the head (#1670).
-        let appended = super::append_record_at_head(
-            &store,
-            &scope,
-            &stream_opaque,
-            NewEvent::new(
-                key.clone(),
-                actor.clone(),
-                Sensitivity::Internal,
-                EventKind::WakeLease(WakeLease {
-                    execution_id: execution_opaque.clone(),
-                    session_id: session.clone(),
-                    cursor: armed_cursor,
-                    rendezvous_id: rendezvous.clone(),
-                    matures_in_seconds,
-                }),
-                vec![],
-                vec![],
-            ),
-        );
-        match appended {
-            Ok(()) => break,
-            Err(failure)
-                if failure.code == "GHE001_SEQUENCE_CONFLICT" && attempts < ARM_APPEND_ATTEMPTS => {
+    super::timing::phase("arm.append", || -> Result<(), Failure> {
+        loop {
+            attempts += 1;
+            // A lease guards no state transition: a record, appended at the head (#1670).
+            let appended = super::append_record_at_head(
+                &store,
+                &scope,
+                &stream_opaque,
+                NewEvent::new(
+                    key.clone(),
+                    actor.clone(),
+                    Sensitivity::Internal,
+                    EventKind::WakeLease(WakeLease {
+                        execution_id: execution_opaque.clone(),
+                        session_id: session.clone(),
+                        cursor: armed_cursor,
+                        rendezvous_id: rendezvous.clone(),
+                        matures_in_seconds,
+                    }),
+                    vec![],
+                    vec![],
+                ),
+            );
+            match appended {
+                Ok(()) => break,
+                Err(failure)
+                    if failure.code == "GHE001_SEQUENCE_CONFLICT"
+                        && attempts < ARM_APPEND_ATTEMPTS => {}
+                Err(failure) => return Err(failure),
             }
-            Err(failure) => return Err(failure),
         }
-    }
+        Ok(())
+    })?;
 
     // The number the DOORBELL decides on, returned by the call that arms (M08, from the
     // judge's finding and A's measurement). `wake_arm` used to answer with `headSequence`
@@ -147,7 +151,6 @@ pub(crate) fn arm(
     // reply whether it would be woken. Measured before shipping: re-arming with this value
     // is a fixed point (no free ring, and the next content event still wakes), so a client
     // may echo it straight back.
-    let content_head = content_head(&history);
     // The horizon the FOLD derived, read back rather than recomputed here. A write that
     // answers with its own arithmetic can disagree with what the next reader sees, which is
     // the previous milestone's F2 wearing a clock: the button worked in the reply and its
@@ -156,7 +159,9 @@ pub(crate) fn arm(
     // The price is one extra read, at ARMING — outside any loop and outside the wait, so the
     // store's exclusive lock is held for milliseconds by someone who is awake. The price of
     // the other design was measured: F2 cost nine paid judge runs and a day to find.
-    let (matures_at, horizon) = replayed_horizon(&store, &scope, &stream, history, session_id)?;
+    let (matures_at, horizon) = super::timing::phase("arm.readback", || {
+        replayed_horizon(&store, events, &scope, &stream, session_id)
+    })?;
     // Shortening is ACCEPTED and SAID; it is not a mistake and refusing it would be the "always
     // refuse" rule wearing the clothes of "never invent". What it cannot do is reach a waiter
     // that already read this lease and blocked, so the caller is told, in a field rather than a
@@ -184,6 +189,64 @@ pub(crate) fn arm(
     }))
 }
 
+/// What an arming or a status read needs of the stream: the fold, the stream's head and the head
+/// the doorbell compares against.
+struct ReadState {
+    projection: graphhelm_events::ExecutionProjection,
+    head: u64,
+    content_head: u64,
+}
+
+/// #2694: one stream's [`ReadState`] from `status::glance`, the kept fold plus the tail read with
+/// `read_stream_after` (a whole-history read only when nothing is kept, as `glance` defines).
+fn glance_state(
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    scope: &graphhelm_protocols::RepositoryScope,
+    stream: &str,
+) -> Result<ReadState, Failure> {
+    let glance = super::status::glance(
+        store,
+        events,
+        scope,
+        stream,
+        &graphhelm_events::ReadBudget::unbounded(),
+    )
+    .map_err(|error| super::repository_failure(&error))?;
+    let projection = glance
+        .projection
+        .map_err(|error| super::replay_failure(&error))?;
+    Ok(ReadState {
+        projection,
+        head: glance.digest.at_sequence().unwrap_or(0),
+        content_head: glance.digest.content_head,
+    })
+}
+
+/// The stream an `--execution` names and its [`ReadState`]. A named execution reads through
+/// [`glance_state`]; without a name (the one-shot CLI, which picks the only stream) the whole
+/// history is read once, as before.
+fn read_projection(
+    store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
+    execution: Option<&str>,
+) -> Result<(graphhelm_protocols::RepositoryScope, String, ReadState), Failure> {
+    if let Some(execution) = execution {
+        let (scope, stream) = super::stream_of(execution)?;
+        let state = glance_state(store, events, &scope, &stream)?;
+        return Ok((scope, stream, state));
+    }
+    let (scope, stream, history) = resolve_stream(store, None)?;
+    let projection = super::status::replay_cached(events, &scope, &stream, &history)
+        .map_err(|error| super::replay_failure(&error))?;
+    let state = ReadState {
+        projection,
+        head: history.last().map_or(0, |event| event.sequence),
+        content_head: content_head(&history),
+    };
+    Ok((scope, stream, state))
+}
+
 /// The horizon on the caller's live lease, as the projection holds it after the append.
 type Horizon = (
     Option<String>,
@@ -192,31 +255,14 @@ type Horizon = (
 
 fn replayed_horizon(
     store: &graphhelm_events::LocalEventRepository,
+    events: &Path,
     scope: &graphhelm_protocols::RepositoryScope,
     stream: &str,
-    mut history: Vec<graphhelm_protocols::EventEnvelope>,
     session_id: &str,
 ) -> Result<Horizon, Failure> {
-    // #1679: only what landed after the history this arming already read (its own append and
-    // any racing writer's) is read back; a second clone of the whole stream cost 100-400 ms per
-    // arming on the owner's 44k-event `gh-team`. A tail that does not continue that history (a
-    // replaced store) falls back to the whole stream, so the fold still sees the journal.
-    let head = history.last().map_or(0, |event| event.sequence);
-    let (tail, _) = store
-        .read_stream_after(scope, stream, head)
-        .map_err(|error| super::repository_failure(&error))?;
-    if head > 0 && tail.first().is_some_and(|event| event.sequence == head + 1) {
-        history.extend(tail);
-    } else {
-        history = store
-            .read_replay_stream(scope, stream)
-            .map_err(|error| super::repository_failure(&error))?;
-    }
-    // #1679: the cached fold, like the read before the append. This uncached refold was the
-    // other 3.4 s of every arming on the owner's 44k-event `gh-team` (the live
-    // `execution.wake_lease` p50 3.6 s after #1669 moved only the first read to the cache).
-    let projection = super::status::replay_cached(store.root(), scope, stream, &history)
-        .map_err(|error| super::replay_failure(&error))?;
+    // #2694: the kept fold plus only what landed since (this arming's own append and any racing
+    // writer's), read with `read_stream_after`; not a second whole-history clone and refold.
+    let ReadState { projection, .. } = glance_state(store, events, scope, stream)?;
     let horizon = projection
         .wake_leases
         .get(session_id)
@@ -240,12 +286,13 @@ pub(crate) fn status(
     // One read serves both answers: the head comes from the same history the projection
     // folds, so the cursor is readable ("armed at #N, the stream is at #M") without a
     // second pass over the store.
-    let (scope, stream, history) = resolve_stream(&store, execution)?;
-    // #1649: the serve's cached fold (exactly `replay` in a one-shot command). A full refold of
-    // the owner's 43k-event `gh-team` cost 3.5 s of CPU per call, and wake-waits poll this.
-    let projection = super::status::replay_cached(events, &scope, &stream, &history)
-        .map_err(|error| super::replay_failure(&error))?;
-    let head = history.last().map_or(0, |event| event.sequence);
+    let (_, _, read) =
+        super::timing::phase("status.load", || read_projection(&store, events, execution))?;
+    let ReadState {
+        projection,
+        head,
+        content_head,
+    } = read;
     // The head the DOORBELL compares against, which is not the stream's head: the sweep
     // rings on content only and skips wake bookkeeping (`serve/wake.rs`), so a lease armed
     // at #13 does not fire because its own `wake_lease` landed at #14. The M07 judge read
@@ -253,7 +300,6 @@ pub(crate) fn status(
     // reading of a surface that published one notion of head while the doorbell used
     // another. Both are reported now, because the operator's question is "will I be woken",
     // and only this number answers it.
-    let content_head = content_head(&history);
 
     // F4: the alarm answers its OWN question. `live:false` alone is indistinguishable
     // between "never armed" and "already rang", which is exactly what the judge could not

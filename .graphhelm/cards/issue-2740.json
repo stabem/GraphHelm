@@ -1,0 +1,10 @@
+{
+  "promise": "The no-waiter opt-out is pinned from both sides: an actor that merely contains openbot- (gh-openbot-x) and GRAPHHELM_NO_WAITER=0 still start the session waiter, so a substring match or a truthy-string match on the flag would fail a test; the test also builds its environment from scratch so the runner's own lane and flag cannot change the outcome.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    ".graphhelm/cards/issue-2740.json"
+  ],
+  "proof": "python -m pytest plugins/graphhelm/hooks/test_session_hook.py -k openbot_lane (1 passed, 4 cases: gh-lane-1, gh-openbot-x, gh-lane-1 with NO_WAITER=0 start a waiter; openbot-sasuke starts none; NO_WAITER=1 starts none); break-once by a substring or truthy-flag match is not run here",
+  "exportedSymbols": [],
+  "journeys": []
+}

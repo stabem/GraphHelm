@@ -685,14 +685,23 @@ class SessionHookTests(unittest.TestCase):
             return child
 
         payload = {"session_id": "session-no-waiter"}
-        for actor, expected in (("gh-lane-1", 1), ("openbot-sasuke", 0)):
+        # (actor, GRAPHHELM_NO_WAITER, waiters started). The opt-out is a PREFIX match on the actor
+        # and exactly "1" on the flag: an actor that merely contains `openbot-`, and a flag of "0",
+        # must not turn the waiter off.
+        for actor, flag, expected in (("gh-lane-1", None, 1), ("gh-openbot-x", None, 1),
+                                      ("gh-lane-1", "0", 1), ("openbot-sasuke", None, 0)):
             spawned.clear()
-            env = {**self.env, "GRAPHHELM_ACTOR": actor}
-            with patch.dict(os.environ, env), patch.object(hook.subprocess, "Popen", side_effect=record):
+            env = {key: value for key, value in {**os.environ, **self.env}.items()
+                   if key != "GRAPHHELM_NO_WAITER"}
+            env["GRAPHHELM_ACTOR"] = actor
+            if flag is not None:
+                env["GRAPHHELM_NO_WAITER"] = flag
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(hook.subprocess, "Popen", side_effect=record):
                 hook.start_lane_waiter(payload, bound, "codex")
             marker = hook._waiter_path(payload, bound, "codex")
             marker.unlink(missing_ok=True)
-            self.assertEqual(len(spawned), expected, f"{actor}: {spawned}")
+            self.assertEqual(len(spawned), expected, f"{actor} flag={flag}: {spawned}")
         spawned.clear()
         env = {**self.env, "GRAPHHELM_ACTOR": "gh-lane-1", "GRAPHHELM_NO_WAITER": "1"}
         with patch.dict(os.environ, env), patch.object(hook.subprocess, "Popen", side_effect=record):

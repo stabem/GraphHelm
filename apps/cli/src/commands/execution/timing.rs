@@ -88,14 +88,21 @@ pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     // off (the early return above) no clock is read there at all.
     graphhelm_events::start_lock_timing();
     let _stale = graphhelm_events::take_lock_timing();
+    let _stale_phases = graphhelm_events::take_store_phases();
     let started = Instant::now();
     let result = work();
     let total = started.elapsed();
     graphhelm_events::stop_lock_timing();
     let locks = graphhelm_events::take_lock_timing();
+    let store_phases = graphhelm_events::take_store_phases();
     PHASES.with(|cell| {
         if let Some(phases) = cell.borrow_mut().as_mut() {
             add_lock_phases(phases, locks);
+            for (name, (count, spent)) in store_phases {
+                let entry = phases.entry(name).or_default();
+                entry.0 += count;
+                entry.1 += spent;
+            }
         }
     });
     let phases = PHASES.with(|cell| cell.replace(outer)).unwrap_or_default();

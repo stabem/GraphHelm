@@ -45,7 +45,7 @@ pub use local::{
     LocalEventRepository, LocalFailpoint, LocalRepositoryInspection, LockTiming,
     MAX_SEALED_EVIDENCE_BATCH, PrefixCache, ReadLockHeld, RecoveredTail, concatenated_journal,
     journal_line_roundtrips, start_lock_timing, stop_lock_timing, take_lock_timing,
-    with_repository_read_lock,
+    take_store_phases, with_repository_read_lock,
 };
 pub use memory::{
     MemoryAdmissionRefusalAppend, MemoryPublicationTransitionAppend, MemoryRecordSupersededAppend,

@@ -572,6 +572,45 @@ mod tests {
         store.append_atomic(&request).unwrap();
     }
 
+    /// #2694: the store's append reports its phases only while this thread times, and every
+    /// step of the append is named: with timing off nothing is recorded (no clock is read).
+    #[test]
+    fn the_append_reports_its_phases_only_while_timing_is_on() {
+        let directory = tempfile::tempdir().unwrap();
+        let events = directory.path();
+        let scope = crate::commands::execution::addressable_scope("exec-phases")
+            .unwrap_or_else(|_| panic!("exec-phases is a valid execution id"));
+        graphhelm_events::stop_lock_timing();
+        let _stale = graphhelm_events::take_store_phases();
+        append_content(events, &scope, "exec-phases", "phase-1", 1);
+        append_content(events, &scope, "exec-phases", "phase-2", 2);
+        assert!(
+            graphhelm_events::take_store_phases().is_empty(),
+            "with timing off no phase is recorded"
+        );
+        graphhelm_events::start_lock_timing();
+        append_content(events, &scope, "exec-phases", "phase-3", 3);
+        graphhelm_events::stop_lock_timing();
+        let phases = graphhelm_events::take_store_phases();
+        for name in [
+            "append.load_state",
+            "append.sync_loaded",
+            "append.validate",
+            "append.build",
+            "append.evidence",
+            "append.write",
+            "append.fsync",
+            "append.dirsync",
+            "append.marker",
+        ] {
+            assert_eq!(
+                phases.get(name).map(|(count, _)| *count),
+                Some(1),
+                "{name} is reported once per append"
+            );
+        }
+    }
+
     /// The #55 interleaving, DETERMINISTIC: a sweep captured its due list, then a rival
     /// consumed the lease first (simulated by a direct consume append), then our sweep
     /// reaches the recorder. Unguarded, the second consumption lands and the fold refuses

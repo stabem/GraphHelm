@@ -1665,6 +1665,7 @@ fn remembered_or(
         .ok()
         .and_then(|map| map.get(&key).cloned())
     {
+        super::timing::phase("envelope.hit", || ());
         return Some(hit);
     }
     let opened = std::sync::Arc::new(super::timing::phase("envelope.open", open)?);
@@ -1711,14 +1712,17 @@ pub(crate) fn opened_envelope(
         envelope_sha256,
     );
     remembered_or(key, || {
-        let EvidenceRead::Available(sealed) = store.sealed_evidence(scope, evidence_id).ok()?
+        let EvidenceRead::Available(sealed) = super::timing::phase("envelope.read", || {
+            store.sealed_evidence(scope, evidence_id)
+        })
+        .ok()?
         else {
             return None;
         };
         if sealed.reference().content_sha256().as_str() != envelope_sha256 {
             return None;
         }
-        open(&sealed)
+        super::timing::phase("envelope.decrypt", || open(&sealed))
     })
 }
 

@@ -37,6 +37,93 @@ fn studio_sources(dir: &Path, out: &mut BTreeMap<String, String>) {
     }
 }
 
+/// #2782: a screen reached by an `http` act expects a response (status, json, text) that no Studio
+/// source renders; a literal like "403" in a source comparison is not that screen's control. The
+/// observer matches the status exactly (journey_backend.rs:765), so the name is never renamed to
+/// dodge the guard. Only those screens are skipped, never a whole flow.
+fn http_screens(flow: &Value) -> Vec<&str> {
+    let mut ids = Vec::new();
+    for edge in flow["edges"].as_array().into_iter().flatten() {
+        let http = edge["acts"]
+            .as_array()
+            .is_some_and(|acts| acts.iter().any(|act| act["kind"] == "http"));
+        if http {
+            ids.extend(["from", "to"].iter().filter_map(|end| edge[end].as_str()));
+        }
+    }
+    ids
+}
+
+fn too_narrow(flow: &Value, sources: &BTreeMap<String, String>) -> Vec<String> {
+    let mut misses = Vec::new();
+    let http = http_screens(flow);
+    for screen in flow["screens"].as_array().unwrap() {
+        if http.contains(&screen["id"].as_str().unwrap()) {
+            continue;
+        }
+        let Some(scope) = screen["scope"].as_array() else {
+            continue; // `scope: unknown` claims nothing
+        };
+        let scope: Vec<&str> = scope.iter().filter_map(Value::as_str).collect();
+        for expected in screen["expect"].as_array().unwrap() {
+            let control = expected["name"].as_str().unwrap();
+            let owners: Vec<&String> = sources
+                .iter()
+                .filter(|(_, text)| text.contains(control))
+                .map(|(file, _)| file)
+                .collect();
+            if !owners.is_empty() && !owners.iter().any(|file| scope.contains(&file.as_str())) {
+                misses.push(format!(
+                    "{}/{}: {} {control:?} is rendered in {owners:?}, none of which is in its scope",
+                    flow["id"].as_str().unwrap(),
+                    screen["id"].as_str().unwrap(),
+                    expected["role"].as_str().unwrap(),
+                ));
+            }
+        }
+    }
+    misses
+}
+
+fn counter_example(http: bool) -> Value {
+    let act = if http {
+        serde_json::json!({"kind": "http", "role": "GET", "name": "/health"})
+    } else {
+        serde_json::json!({"kind": "activate", "role": "tab", "name": "Graph"})
+    };
+    serde_json::json!({
+        "id": "counter",
+        "screens": [
+            {"id": "a", "scope": ["apps/studio/dev-session.ts"],
+             "expect": [{"role": "status", "name": "403"}]},
+            {"id": "b", "scope": ["apps/studio/dev-session.ts"],
+             "expect": [{"role": "status", "name": "403"}]}
+        ],
+        "edges": [{"id": "a.b", "from": "a", "to": "b", "acts": [act]}]
+    })
+}
+
+#[test]
+fn the_guard_skips_only_screens_reached_by_http_acts() {
+    let sources = BTreeMap::from([(
+        "apps/studio/src/runtime/client.ts".to_string(),
+        "status === 403".to_string(),
+    )]);
+    // A UI screen whose expected text only an unscoped file renders still fails.
+    assert_eq!(too_narrow(&counter_example(false), &sources).len(), 2);
+    // The same screens reached by an http act are responses, not rendered controls.
+    assert!(too_narrow(&counter_example(true), &sources).is_empty());
+    // A flow with one http edge keeps judging its UI screens.
+    let mut mixed = counter_example(true);
+    mixed["screens"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(
+        {"id": "ui", "scope": ["apps/studio/dev-session.ts"],
+         "expect": [{"role": "status", "name": "403"}]}));
+    assert_eq!(too_narrow(&mixed, &sources).len(), 1);
+}
+
 #[test]
 fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
     let mut sources = BTreeMap::new();
@@ -55,28 +142,7 @@ fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
         flows += 1;
         let flow: Value =
             serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        for screen in flow["screens"].as_array().unwrap() {
-            let Some(scope) = screen["scope"].as_array() else {
-                continue; // `scope: unknown` claims nothing
-            };
-            let scope: Vec<&str> = scope.iter().filter_map(Value::as_str).collect();
-            for expected in screen["expect"].as_array().unwrap() {
-                let control = expected["name"].as_str().unwrap();
-                let owners: Vec<&String> = sources
-                    .iter()
-                    .filter(|(_, text)| text.contains(control))
-                    .map(|(file, _)| file)
-                    .collect();
-                if !owners.is_empty() && !owners.iter().any(|file| scope.contains(&file.as_str())) {
-                    misses.push(format!(
-                        "{}/{}: {} {control:?} is rendered in {owners:?}, none of which is in its scope",
-                        flow["id"].as_str().unwrap(),
-                        screen["id"].as_str().unwrap(),
-                        expected["role"].as_str().unwrap(),
-                    ));
-                }
-            }
-        }
+        misses.extend(too_narrow(&flow, &sources));
     }
     assert!(flows > 0, "expected at least one studio2-* flow");
     assert!(

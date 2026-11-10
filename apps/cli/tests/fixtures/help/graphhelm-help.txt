@@ -2532,25 +2532,26 @@ Record journey proof into a run (#315): `capture` one screen of a contract step 
 Usage: graphhelm help journey [COMMAND]
 
 Commands:
-  capture      Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
-  walked       Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps
-  validate     Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
-  compile      Generate frozen journey contracts from flow sources, or check/format their projection
-  approve      Approve a canonical flow at the project's HEAD and write its generated contracts
-  reject       Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
-  sign-legacy  Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
-  mark-safe    Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
-  label        Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
-  flows        List every flow source for review: status, drift, validate findings, whether Approve would be accepted, and its screens, edges and paths
-  replay       Replay every approved path with the explicitly installed browser observer, without a model
-  open         Open an approved flow live at one step (#398): replays the cached acts of the earlier edges in a visible browser, without a model, reports the step's state, and keeps the browser open for `journey act` / `journey close` until the replay run budget ends
-  watch        Play a flow, draft or approved, from its entry to its last screen in a visible browser, paced for a person to follow (about 1.5 s per act), without a model. A look at what the flow does before approving it: never proof, never a capture, never an approval. A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer, send) is not performed, and the play stops there naming it, unless watch itself started the project's declared fixture (#515)
-  act          Send one act to an open live session and report the screen it lands on
-  close        Close an open live session and its browser
-  sessions     List the project's open live sessions and their current state
-  preview      Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
-  explore      Observe a local app through a selected model route and publish an unapproved draft flow
-  report       Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
+  capture        Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
+  walked         Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps
+  validate       Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
+  compile        Generate frozen journey contracts from flow sources, or check/format their projection
+  approve        Approve a canonical flow at the project's HEAD and write its generated contracts
+  approve-grant  Approve a flow with a scoped, revocable grant instead of the owner token (#2625)
+  reject         Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
+  sign-legacy    Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
+  mark-safe      Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
+  label          Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
+  flows          List every flow source for review: status, drift, validate findings, whether Approve would be accepted, and its screens, edges and paths
+  replay         Replay every approved path with the explicitly installed browser observer, without a model
+  open           Open an approved flow live at one step (#398): replays the cached acts of the earlier edges in a visible browser, without a model, reports the step's state, and keeps the browser open for `journey act` / `journey close` until the replay run budget ends
+  watch          Play a flow, draft or approved, from its entry to its last screen in a visible browser, paced for a person to follow (about 1.5 s per act), without a model. A look at what the flow does before approving it: never proof, never a capture, never an approval. A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer, send) is not performed, and the play stops there naming it, unless watch itself started the project's declared fixture (#515)
+  act            Send one act to an open live session and report the screen it lands on
+  close          Close an open live session and its browser
+  sessions       List the project's open live sessions and their current state
+  preview        Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
+  explore        Observe a local app through a selected model route and publish an unapproved draft flow
+  report         Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
 
 ===== graphhelm help journey act --help
 Send one act to an open live session and report the screen it lands on
@@ -2561,6 +2562,11 @@ Usage: graphhelm help journey act
 Approve a canonical flow at the project's HEAD and write its generated contracts
 
 Usage: graphhelm help journey approve
+
+===== graphhelm help journey approve-grant --help
+Approve a flow with a scoped, revocable grant instead of the owner token (#2625)
+
+Usage: graphhelm help journey approve-grant
 
 ===== graphhelm help journey capture --help
 Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
@@ -2975,26 +2981,27 @@ Record journey proof into a run (#315): `capture` one screen of a contract step 
 Usage: graphhelm journey [OPTIONS] <COMMAND>
 
 Commands:
-  capture      Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
-  walked       Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps
-  validate     Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
-  compile      Generate frozen journey contracts from flow sources, or check/format their projection
-  approve      Approve a canonical flow at the project's HEAD and write its generated contracts
-  reject       Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
-  sign-legacy  Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
-  mark-safe    Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
-  label        Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
-  flows        List every flow source for review: status, drift, validate findings, whether Approve would be accepted, and its screens, edges and paths
-  replay       Replay every approved path with the explicitly installed browser observer, without a model
-  open         Open an approved flow live at one step (#398): replays the cached acts of the earlier edges in a visible browser, without a model, reports the step's state, and keeps the browser open for `journey act` / `journey close` until the replay run budget ends
-  watch        Play a flow, draft or approved, from its entry to its last screen in a visible browser, paced for a person to follow (about 1.5 s per act), without a model. A look at what the flow does before approving it: never proof, never a capture, never an approval. A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer, send) is not performed, and the play stops there naming it, unless watch itself started the project's declared fixture (#515)
-  act          Send one act to an open live session and report the screen it lands on
-  close        Close an open live session and its browser
-  sessions     List the project's open live sessions and their current state
-  preview      Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
-  explore      Observe a local app through a selected model route and publish an unapproved draft flow
-  report       Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
-  help         Print this message or the help of the given subcommand(s)
+  capture        Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
+  walked         Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps
+  validate       Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
+  compile        Generate frozen journey contracts from flow sources, or check/format their projection
+  approve        Approve a canonical flow at the project's HEAD and write its generated contracts
+  approve-grant  Approve a flow with a scoped, revocable grant instead of the owner token (#2625)
+  reject         Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
+  sign-legacy    Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
+  mark-safe      Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
+  label          Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
+  flows          List every flow source for review: status, drift, validate findings, whether Approve would be accepted, and its screens, edges and paths
+  replay         Replay every approved path with the explicitly installed browser observer, without a model
+  open           Open an approved flow live at one step (#398): replays the cached acts of the earlier edges in a visible browser, without a model, reports the step's state, and keeps the browser open for `journey act` / `journey close` until the replay run budget ends
+  watch          Play a flow, draft or approved, from its entry to its last screen in a visible browser, paced for a person to follow (about 1.5 s per act), without a model. A look at what the flow does before approving it: never proof, never a capture, never an approval. A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer, send) is not performed, and the play stops there naming it, unless watch itself started the project's declared fixture (#515)
+  act            Send one act to an open live session and report the screen it lands on
+  close          Close an open live session and its browser
+  sessions       List the project's open live sessions and their current state
+  preview        Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
+  explore        Observe a local app through a selected model route and publish an unapproved draft flow
+  report         Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
+  help           Print this message or the help of the given subcommand(s)
 
 Options:
       --pretty
@@ -3064,6 +3071,34 @@ Options:
 
       --token-file <TOKEN_FILE>
           The project's owner token (`.graphhelm/events.token`): the owner's approval (#534)
+
+  -h, --help
+          Print help
+
+===== graphhelm journey approve-grant --help
+Approve a flow with a scoped, revocable grant instead of the owner token (#2625)
+
+Usage: graphhelm journey approve-grant [OPTIONS] --grant <GRANT> --actor <ACTOR> <ID>
+
+Arguments:
+  <ID>
+          
+
+Options:
+      --grant <GRANT>
+          
+
+      --pretty
+          
+
+      --actor <ACTOR>
+          
+
+      --json
+          Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
+
+      --project <PROJECT>
+          
 
   -h, --help
           Print help
@@ -3268,26 +3303,27 @@ Print this message or the help of the given subcommand(s)
 Usage: graphhelm journey help [COMMAND]
 
 Commands:
-  capture      Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
-  walked       Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps
-  validate     Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
-  compile      Generate frozen journey contracts from flow sources, or check/format their projection
-  approve      Approve a canonical flow at the project's HEAD and write its generated contracts
-  reject       Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
-  sign-legacy  Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
-  mark-safe    Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
-  label        Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
-  flows        List every flow source for review: status, drift, validate findings, whether Approve would be accepted, and its screens, edges and paths
-  replay       Replay every approved path with the explicitly installed browser observer, without a model
-  open         Open an approved flow live at one step (#398): replays the cached acts of the earlier edges in a visible browser, without a model, reports the step's state, and keeps the browser open for `journey act` / `journey close` until the replay run budget ends
-  watch        Play a flow, draft or approved, from its entry to its last screen in a visible browser, paced for a person to follow (about 1.5 s per act), without a model. A look at what the flow does before approving it: never proof, never a capture, never an approval. A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer, send) is not performed, and the play stops there naming it, unless watch itself started the project's declared fixture (#515)
-  act          Send one act to an open live session and report the screen it lands on
-  close        Close an open live session and its browser
-  sessions     List the project's open live sessions and their current state
-  preview      Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
-  explore      Observe a local app through a selected model route and publish an unapproved draft flow
-  report       Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
-  help         Print this message or the help of the given subcommand(s)
+  capture        Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty
+  walked         Record a `jpd.transition_walked` signal citing the newest capture of two consecutive steps
+  validate       Check journey contracts before anything records against them (#328): the contract schema, the journey id rule, step, actor, promise and screen consistency, and that every screen `scopePaths` entry exists in the project. Exit 0 clean, 2 findings, 3 input error
+  compile        Generate frozen journey contracts from flow sources, or check/format their projection
+  approve        Approve a canonical flow at the project's HEAD and write its generated contracts
+  approve-grant  Approve a flow with a scoped, revocable grant instead of the owner token (#2625)
+  reject         Reject a flow with the owner's reason (#1588). Owner only. The record binds the flow's current content: editing the flow clears it
+  sign-legacy    Record the owner's signature for approvals made before #534 (lists them with the commit that introduced each; writes only for each `--id`)
+  mark-safe      Mark one edge of a DRAFT flow safe to watch although an act on it looks destructive (#518). Owner only. The mark binds the edge's acts: editing them voids it
+  label          Set a flow's display labels (#1296): its short `--name` and the `--feature` the Studio groups it under. Labels sit outside the approved digest, so an approved flow stays approved
+  flows          List every flow source for review: status, drift, validate findings, whether Approve would be accepted, and its screens, edges and paths
+  replay         Replay every approved path with the explicitly installed browser observer, without a model
+  open           Open an approved flow live at one step (#398): replays the cached acts of the earlier edges in a visible browser, without a model, reports the step's state, and keeps the browser open for `journey act` / `journey close` until the replay run budget ends
+  watch          Play a flow, draft or approved, from its entry to its last screen in a visible browser, paced for a person to follow (about 1.5 s per act), without a model. A look at what the flow does before approving it: never proof, never a capture, never an approval. A draft's act that looks destructive (delete, remove, drop, pay, purchase, transfer, send) is not performed, and the play stops there naming it, unless watch itself started the project's declared fixture (#515)
+  act            Send one act to an open live session and report the screen it lands on
+  close          Close an open live session and its browser
+  sessions       List the project's open live sessions and their current state
+  preview        Run a flow, draft or approved, headless along every path and keep, per screen, whether it passed and a masked frame of it (#519). Answers the kept result when it is for this flow and commit; otherwise starts a run in the background and answers `running`. Never proof
+  explore        Observe a local app through a selected model route and publish an unapproved draft flow
+  report         Write one self-contained HTML page of a journey's kept preview (#1448): each step's real frame, the action into it, what the screen must show with what the run saw, and the overall result. Reads the kept preview; starts no run
+  help           Print this message or the help of the given subcommand(s)
 
 ===== graphhelm journey help act --help
 Send one act to an open live session and report the screen it lands on
@@ -3298,6 +3334,11 @@ Usage: graphhelm journey help act
 Approve a canonical flow at the project's HEAD and write its generated contracts
 
 Usage: graphhelm journey help approve
+
+===== graphhelm journey help approve-grant --help
+Approve a flow with a scoped, revocable grant instead of the owner token (#2625)
+
+Usage: graphhelm journey help approve-grant
 
 ===== graphhelm journey help capture --help
 Record a `jpd.screen_captured` signal: one image of one contract step, stamped with the project's HEAD and whether the working tree is dirty

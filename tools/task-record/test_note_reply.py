@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("note_reply.py")
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class NoteReplyTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class NoteReplyTests(unittest.TestCase):
             return subprocess.run(
                 [sys.executable, "-I", str(SCRIPT), "--lane", "lane-a", "--execution", "exec-1",
                  "--token-file", str(token), "--reply-to", "note-1", "--to", "owner", "--text", "done", *extra],
-                capture_output=True, text=True, timeout=60)
+                capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
 
     def test_dry_run_builds_the_reply_and_never_prints_the_token(self):
         result = self.run_tool("--dry-run")
@@ -89,7 +90,8 @@ class NoteReplyReadBackTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-I", str(SCRIPT), "--lane", "lane-a", "--execution", "exec-1",
              "--url", f"http://127.0.0.1:{self.server.server_port}", "--token-file", str(self.token),
-             "--reply-to", "note-1", "--text", "done"], capture_output=True, text=True, timeout=60)
+             "--reply-to", "note-1", "--text", "done"], capture_output=True, text=True, timeout=60,
+            creationflags=NO_WINDOW)
 
     def test_the_reply_is_sent_and_read_back_with_its_sequence(self):
         result = self.run_tool()

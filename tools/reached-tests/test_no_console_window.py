@@ -82,8 +82,11 @@ def offenders(root: Path) -> list[str]:
             if target in FORBIDDEN or name.startswith(SPAWN_PREFIXES.get(module, ("\0",))):
                 found.append(f"{where} {module}.{name} cannot hide its window")
             elif module == "subprocess" and name in SPAWN:
-                if not any(keyword.arg == "creationflags" for keyword in node.keywords):
+                flags = [keyword.value for keyword in node.keywords if keyword.arg == "creationflags"]
+                if not flags:
                     found.append(f"{where} subprocess.{name} without creationflags=NO_WINDOW")
+                elif any(isinstance(flag, ast.Constant) and flag.value == 0 for flag in flags):
+                    found.append(f"{where} subprocess.{name} with creationflags=0 hides nothing")
     return found
 
 
@@ -139,7 +142,9 @@ class NoConsoleWindow(unittest.TestCase):
                 "alias.py:6 subprocess.check_output without creationflags=NO_WINDOW",
                 "alias.py:7 os.spawnl cannot hide its window",
                 "alias.py:8 subprocess.getoutput cannot hide its window",
+                "alias.py:9 subprocess.run with creationflags=0 hides nothing",
                 "bad.py:2 subprocess.run without creationflags=NO_WINDOW",
+                "bad.py:3 subprocess.run with creationflags=0 hides nothing",
                 "bom.py:1 UTF-8 BOM is not allowed",
                 "bom.py:2 subprocess.run without creationflags=NO_WINDOW",
             ])

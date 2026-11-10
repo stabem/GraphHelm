@@ -52,9 +52,6 @@ def _tests(suites: list, path: list[str], out: list[str]) -> None:
 
 def observe(project: Path, command: str, timeout: int) -> dict:
     argv = _split(command)
-    if shutil.which(argv[0]) is None:
-        return {"verdict": "observer_missing", "exitCode": None,
-                "evidence": [f"OBSERVER_MISSING: `{argv[0]}` is not on PATH"]}
     report_path = project / REPORT
     # A report left by an earlier run must never stand in for this one.
     report_path.unlink(missing_ok=True)
@@ -66,12 +63,21 @@ def observe(project: Path, command: str, timeout: int) -> dict:
     if modules.is_dir():
         env["PATH"] = os.pathsep.join([str(modules / ".bin"), env.get("PATH", "")])
         env["NODE_PATH"] = os.pathsep.join(filter(None, [str(modules), env.get("NODE_PATH", "")]))
+    # Look the command up on the PATH the child gets, and start the path found: on Windows a bare
+    # `npx` resolves to `npx.cmd` only through `which`, not through CreateProcess.
+    resolved = shutil.which(argv[0], path=env.get("PATH"))
+    if resolved is None:
+        return {"verdict": "observer_missing", "exitCode": None,
+                "evidence": [f"OBSERVER_MISSING: `{argv[0]}` is not on PATH"]}
     try:
-        result = subprocess.run(argv, cwd=project, capture_output=True, text=True,
+        result = subprocess.run([resolved, *argv[1:]], cwd=project, capture_output=True, text=True,
                                 timeout=timeout, env=env, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{command}` did not finish in {timeout}s"]}
+    except OSError:
+        return {"verdict": "observer_missing", "exitCode": None,
+                "evidence": [f"OBSERVER_MISSING: `{argv[0]}` could not be started"]}
     verdict = OBSERVED.get(result.returncode, "observer_missing")
     evidence = [f"`{command}` in {project} exited {result.returncode}"]
     if report_path.is_file():

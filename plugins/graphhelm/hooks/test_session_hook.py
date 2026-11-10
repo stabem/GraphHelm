@@ -701,6 +701,28 @@ class SessionHookTests(unittest.TestCase):
             hook.start_lane_waiter(payload, bound, "codex")
         self.assertEqual(spawned, [], "GRAPHHELM_NO_WAITER=1 turns the waiter off for any lane")
 
+    def test_a_session_that_is_no_lane_starts_no_waiter(self):
+        """With no lane actor there is no lease to wait on. The waiter used to be started with
+        `--cursor None`, died in its own argument parser, and its pid was still recorded."""
+        spec = importlib.util.spec_from_file_location("session_hook_no_lane", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        events = Path(self.temp.name) / "events-no-lane"
+        events.mkdir()
+        self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        spawned = []
+        payload = {"session_id": "session-no-lane"}
+        with patch.dict(os.environ, self.env), \
+             patch.object(hook.subprocess, "Popen", side_effect=lambda argv, **_kw: spawned.append(argv)):
+            os.environ.pop("GRAPHHELM_ACTOR", None)
+            hook.start_lane_waiter(payload, bound, "codex")
+            marker = hook._waiter_path(payload, bound, "codex")
+        self.assertEqual(spawned, [])
+        self.assertFalse(marker.exists())
+
     @unittest.skipUnless(os.name == "nt", "job objects are a Windows host contract")
     def test_start_lane_waiter_leaves_the_hook_job_and_falls_back_when_refused(self):
         """#919: a waiter started inside the hook's job died with it, so no lane held a lease."""

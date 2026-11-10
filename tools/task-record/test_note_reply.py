@@ -115,5 +115,67 @@ class NoteReplyReadBackTests(unittest.TestCase):
         self.assertIn("refused or lost earlier, not missed by the read", result.stderr)
 
 
+class Sink(BaseHTTPRequestHandler):
+    """Where a redirect points: it records every Authorization header that reaches it."""
+    seen = []
+
+    def do_GET(self):
+        self.seen.append(self.headers.get("Authorization"))
+        raw = json.dumps({"ok": True, "data": {"head": 0, "events": []}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+class Redirecting(BaseHTTPRequestHandler):
+    target = ""
+
+    def do_GET(self):
+        self.send_response(302)
+        self.send_header("Location", self.target + self.path)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+class NoteReplyRedirectTests(unittest.TestCase):
+    def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(self):
+        """The loopback check reads only the URL the caller gave. A redirect used to be followed
+        with the bearer token still attached, so the token went wherever the answer pointed."""
+        Sink.seen = []
+        sink = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+        front = ThreadingHTTPServer(("127.0.0.1", 0), Redirecting)
+        Redirecting.target = f"http://127.0.0.1:{sink.server_port}"
+        for server in (sink, front):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                token = Path(temp) / "t.token"
+                token.write_text("secret-token-value", encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, "-I", str(SCRIPT), "--lane", "lane-a", "--execution", "exec-1",
+                     "--url", f"http://127.0.0.1:{front.server_port}", "--token-file", str(token),
+                     "--reply-to", "note-1", "--text", "done"], capture_output=True, text=True, timeout=60,
+                    creationflags=NO_WINDOW)
+        finally:
+            for server in (sink, front):
+                server.shutdown()
+                server.server_close()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("redirect", result.stderr)
+        self.assertEqual(Sink.seen, [])
+        self.assertNotIn("secret-token-value", result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

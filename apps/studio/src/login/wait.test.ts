@@ -37,3 +37,12 @@ it("stops waiting when the page goes away", async () => {
   expect(await loginWaiting("", () => { live = false; }, () => live, [1, 1, 1])).toBeNull();
   expect(sessionCalls(fetcher)).toBe(1);
 });
+
+it("sends a malformed session body for the wanted project straight to the gate, with no wait", async () => {
+  const fetcher = sessionFetch([new Response("<html>not json", { status: 200 })]);
+  vi.stubGlobal("fetch", fetcher);
+  const waiting = vi.fn();
+  expect(await loginWaiting(`?project=${"a".repeat(64)}`, waiting, () => true, [1, 1, 1])).toBeNull();
+  expect(waiting).not.toHaveBeenCalled();
+  expect(sessionCalls(fetcher)).toBe(1);
+});

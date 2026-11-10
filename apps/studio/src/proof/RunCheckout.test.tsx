@@ -60,7 +60,10 @@ describe("run checkout (#2469)", () => {
     const host = await show({ ...ran, head: "0123456789abcdef0123456789abcdef01234567", behindOrigin: 2, warning: WARNING });
     const warn = host.querySelector(".run-behind");
     expect(warn?.getAttribute("role")).toBe("status");
-    expect(warn?.textContent).toContain("2 commits behind origin/main");
+    expect(warn?.textContent).toContain("2 commits behind");
+    // #2710: the Runtime's sentence already says "behind origin/main"; the header must not repeat it.
+    expect(warn?.textContent?.match(/behind origin\/main/g)).toHaveLength(1);
+    expect(warn?.textContent?.match(/as of the last fetch/g)).toHaveLength(1);
     expect(warn?.textContent).toContain("git pull");
   });
   it("says nothing about the checkout when the Runtime did not record it", async () => {

@@ -36,7 +36,9 @@ async function loginOnce(search: string): Promise<Session[] | null | "retry"> {
     try {
       const response = await fetch(`/__studio/session${id === "first" ? "" : `?project=${id}`}`, {headers:{Accept:"application/json"},signal:AbortSignal.timeout(SESSION_TIMEOUT_MS)});
       if (!response.ok) { if (response.status === 503) notReady = true; else if (id === wanted) return null; continue; }
-      const body = await response.json() as {ok?:unknown;projectId?:unknown;project?:unknown;base?:unknown;folder?:unknown;teamRun?:unknown};
+      // A body that is not JSON is an answer, not a missing one: final for the wanted project, never retried.
+      let body: {ok?:unknown;projectId?:unknown;project?:unknown;base?:unknown;folder?:unknown;teamRun?:unknown};
+      try { body = await response.json() as typeof body; } catch { if (id === wanted) return null; continue; }
       if (body.ok !== true) { if(id === wanted) return null; continue; }
       sessions.push({key:typeof body.projectId === "string" && PROJECT_KEY.test(body.projectId) ? body.projectId : "first",
         project:typeof body.project === "string" ? body.project : null,

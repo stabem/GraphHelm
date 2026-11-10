@@ -682,7 +682,10 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
         )}
         {typeof shown?.behindOrigin === "number" && shown.behindOrigin > 0 && (
           <p role="status" className="run-behind">
-            {shown.behindOrigin} {shown.behindOrigin === 1 ? "commit" : "commits"} behind origin/main (as of the last fetch). {shown.warning ?? "Update the project (git pull), then run again."}
+            {/* #2710: the Runtime's sentence already says "behind origin/main (as of the last fetch)"; say it once. */}
+            {shown.warning !== undefined
+              ? `${shown.warning} (${shown.behindOrigin} ${shown.behindOrigin === 1 ? "commit" : "commits"} behind)`
+              : `${shown.behindOrigin} ${shown.behindOrigin === 1 ? "commit" : "commits"} behind origin/main (as of the last fetch). Update the project (git pull), then run again.`}
           </p>
         )}
         {flow.purpose && <p><span className="section-label">PROVES</span> {flow.purpose}</p>}

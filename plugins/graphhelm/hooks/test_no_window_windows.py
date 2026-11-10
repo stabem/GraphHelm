@@ -61,6 +61,9 @@ class ShippedSpawnFlagsTest(unittest.TestCase):
             events = Path(tmp) / "events"
             events.mkdir()
             os.environ["GRAPHHELM_EVENTS_DIR"] = str(events)
+            ambient_actor = os.environ.get("GRAPHHELM_ACTOR")
+            # #2714: an openbot- lane starts no waiter; these tests are about the waiter that does start.
+            os.environ["GRAPHHELM_ACTOR"] = "gh-lane-test"
             try:
                 payload = {"session_id": "s-2573", "cwd": tmp}
                 bound = ("exec-2573", str(events / "events.json"), "lane-2573", "node", None)
@@ -68,6 +71,10 @@ class ShippedSpawnFlagsTest(unittest.TestCase):
                     module, lambda: module.start_lane_waiter(payload, bound, "codex"))
             finally:
                 os.environ.pop("GRAPHHELM_EVENTS_DIR", None)
+                if ambient_actor is None:
+                    os.environ.pop("GRAPHHELM_ACTOR", None)
+                else:
+                    os.environ["GRAPHHELM_ACTOR"] = ambient_actor
         self.assertTrue(recorded, "start_lane_waiter did not reach subprocess.Popen")
         flags = recorded[-1].get("creationflags", 0)
         self.assertFalse(flags & DETACHED_PROCESS, f"waiter detached: flags=0x{flags:08x}")
@@ -141,11 +148,18 @@ def _recorded_waiter_flags(module):
             events = Path(tmp) / "events"
             events.mkdir()
             os.environ["GRAPHHELM_EVENTS_DIR"] = str(events)
+            ambient_actor = os.environ.get("GRAPHHELM_ACTOR")
+            # #2714: an openbot- lane starts no waiter; these tests are about the waiter that does start.
+            os.environ["GRAPHHELM_ACTOR"] = "gh-lane-test"
             try:
                 bound = ("exec-2579", str(events / "events.json"), "lane-2579", "node", None)
                 module.start_lane_waiter({"session_id": "s-2579", "cwd": tmp}, bound, "codex")
             finally:
                 os.environ.pop("GRAPHHELM_EVENTS_DIR", None)
+                if ambient_actor is None:
+                    os.environ.pop("GRAPHHELM_ACTOR", None)
+                else:
+                    os.environ["GRAPHHELM_ACTOR"] = ambient_actor
     finally:
         module.subprocess.Popen = real
     return recorded[-1].get("creationflags", 0) if recorded else None

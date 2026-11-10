@@ -664,6 +664,41 @@ class SessionHookTests(unittest.TestCase):
                 marker.unlink(missing_ok=True)
         self.assertEqual([request[0] for request in RuntimeHandler.requests], ["GET", "POST"])
 
+    def test_an_openbot_lane_starts_no_waiter_and_another_lane_still_does(self):
+        """#2714: an OpenBot lane is woken by the Runtime's webhook, so a session waiter (which
+        cannot start an OpenBot turn) would only leak a process. The same call for another lane
+        still starts one, so the absence below is the rule, not a setup that never gets there."""
+        spec = importlib.util.spec_from_file_location("session_hook_no_waiter", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        events = Path(self.temp.name) / "events"
+        events.mkdir()
+        self.env["GRAPHHELM_EVENTS_DIR"] = str(events)
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        child = type("Child", (), {"pid": 424242})()
+        spawned = []
+
+        def record(argv, **_kw):
+            spawned.append(argv)
+            return child
+
+        payload = {"session_id": "session-no-waiter"}
+        for actor, expected in (("gh-lane-1", 1), ("openbot-sasuke", 0)):
+            spawned.clear()
+            env = {**self.env, "GRAPHHELM_ACTOR": actor}
+            with patch.dict(os.environ, env), patch.object(hook.subprocess, "Popen", side_effect=record):
+                hook.start_lane_waiter(payload, bound, "codex")
+            marker = hook._waiter_path(payload, bound, "codex")
+            marker.unlink(missing_ok=True)
+            self.assertEqual(len(spawned), expected, f"{actor}: {spawned}")
+        spawned.clear()
+        env = {**self.env, "GRAPHHELM_ACTOR": "gh-lane-1", "GRAPHHELM_NO_WAITER": "1"}
+        with patch.dict(os.environ, env), patch.object(hook.subprocess, "Popen", side_effect=record):
+            hook.start_lane_waiter(payload, bound, "codex")
+        self.assertEqual(spawned, [], "GRAPHHELM_NO_WAITER=1 turns the waiter off for any lane")
+
     @unittest.skipUnless(os.name == "nt", "job objects are a Windows host contract")
     def test_start_lane_waiter_leaves_the_hook_job_and_falls_back_when_refused(self):
         """#919: a waiter started inside the hook's job died with it, so no lane held a lease."""

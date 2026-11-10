@@ -554,6 +554,14 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def webhook_woken(lane) -> bool:
+    """#2714: an OpenBot lane (`openbot-*`) is woken by the Runtime's webhook, and a waiter running
+    outside OpenBot cannot start its turn, so it must not start at all: it would only leak. Lanes
+    outside OpenBot keep the waiter; `GRAPHHELM_NO_WAITER=1` (from settings.local.json `env`) turns
+    it off for any other lane the same way."""
+    return os.environ.get("GRAPHHELM_NO_WAITER") == "1" or str(lane or "").startswith("openbot-")
+
+
 def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
     """Start one local waiter for a bound session, without replacing a live owner."""
     configured = os.environ.get("GRAPHHELM_EVENTS_DIR")
@@ -562,6 +570,8 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
         return
     touch_lane_heartbeat(payload, bound, host)
     sweep_dead_waiters()
+    if webhook_woken(os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)):
+        return  # #2714: the webhook wakes this lane; no waiter to leak
     pid_path = _waiter_path(payload, bound, host)
     try:
         pid = int(pid_path.read_text(encoding="ascii"))

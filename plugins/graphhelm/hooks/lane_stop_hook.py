@@ -559,6 +559,14 @@ def _lookup_ready_for_rewake(payload: dict) -> list[dict]:
     return _lookup_ready(payload, REWAKE_SCAN_BUDGET_SECONDS)
 
 
+def webhook_woken(lane) -> bool:
+    """#2714: an OpenBot lane (`openbot-*`) is woken by the Runtime's webhook, and a waiter running
+    outside OpenBot cannot start its turn, so it must not start at all: it would only leak. Lanes
+    outside OpenBot keep the waiter; `GRAPHHELM_NO_WAITER=1` (from settings.local.json `env`) turns
+    it off for any other lane the same way."""
+    return os.environ.get("GRAPHHELM_NO_WAITER") == "1" or str(lane or "").startswith("openbot-")
+
+
 def rewake(payload: dict, host: str = "claude") -> int:
     """#1058: the host runs this in the background after every Stop (`asyncRewake`); exit 2 wakes
     the idle host. It waits for the lane waiter's ring (or the fallback interval), then scans the
@@ -572,6 +580,8 @@ def rewake(payload: dict, host: str = "claude") -> int:
     session = payload.get("session_id")
     if (bound is None or not lane or not ID.fullmatch(lane)
             or not isinstance(session, str) or not ID.fullmatch(session)):
+        return 0
+    if webhook_woken(lane):  # #2714: the webhook wakes this lane; no background process to leak
         return 0
     base = state_path(bound[0], session, host, bound[3])
     owner, rang = base.with_suffix(".rewake.pid"), base.with_suffix(".waiter.rang")

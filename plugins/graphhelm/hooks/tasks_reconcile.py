@@ -29,6 +29,18 @@ import urllib.parse
 import urllib.request
 import os
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is never followed: it would carry the bearer token to wherever the answer points."""
+
+    def redirect_request(self, *_):
+        return None
+
+
+def _urlopen(request, timeout):
+    return urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout)
+
+
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 MAX_PRS_PER_STOP = 20
@@ -89,7 +101,7 @@ def get(url, token, lane=None):
     if lane is not None:
         headers["X-GraphHelm-Actor"] = lane
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=runtime_timeout(2)) as reply:
+    with _urlopen(request, timeout=runtime_timeout(2)) as reply:
         return json.load(reply)["data"]
 
 
@@ -257,7 +269,7 @@ def post(base, token, execution, pr, task_id, repo, sha, closes):
                "Idempotency-Key": signal_id, "X-GraphHelm-Actor": "graphhelm",
                "X-GraphHelm-Actor-Type": "agent"}
     request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(), headers=headers, method="POST")
-    with urllib.request.urlopen(request, timeout=runtime_timeout(3)) as reply:
+    with _urlopen(request, timeout=runtime_timeout(3)) as reply:
         answer = json.load(reply)
     if answer.get("ok") is not True:
         raise ValueError("Runtime refused task.merged")
@@ -353,10 +365,10 @@ def post_end(base, token, execution, kind, task_id, repo, lane, fields, revision
     request = urllib.request.Request(url, data=json.dumps({"signal": signal}).encode(),
                                      headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(request, timeout=runtime_timeout(3)) as reply:
+        with _urlopen(request, timeout=runtime_timeout(3)) as reply:
             answer = json.load(reply)
     except urllib.error.HTTPError as error:
-        if kind != "heartbeat":
+        if kind != "heartbeat" or 300 <= error.code < 400:
             raise
         answer = json.loads(error.read() or b"{}")
     if kind == "heartbeat":

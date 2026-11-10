@@ -912,7 +912,7 @@ class TimeoutAndFullHead(unittest.TestCase):
             return io.BytesIO(json.dumps(reply).encode())
 
         with patch.object(task_record, "read_credential", return_value="x"), \
-                patch.object(task_record.urllib.request, "urlopen", side_effect=fake):
+                patch.object(task_record, "_urlopen", side_effect=fake):
             return task_record.send(args, {"taskId": "issue-1"}, "now"), calls
 
     def test_timeout_then_conflict_is_already_recorded(self):
@@ -944,7 +944,7 @@ class DifferentPayloadIsNotAlreadyRecorded(unittest.TestCase):
         stored = {"description": json.dumps({**doc, "mergeSha": stored_sha, "at": "earlier"})}
         with patch.object(task_record, "read_credential", return_value="x"), \
                 patch.object(task_record, "read_execution_history", return_value=[({}, "task.merged", stored)]), \
-                patch.object(task_record.urllib.request, "urlopen",
+                patch.object(task_record, "_urlopen",
                              side_effect=lambda request, timeout: io.BytesIO(json.dumps(self.CONFLICT).encode())):
             return task_record.send(args, doc, "now")
 
@@ -972,7 +972,7 @@ class DifferentPayloadIsNotAlreadyRecorded(unittest.TestCase):
             return io.BytesIO(json.dumps(self.CONFLICT).encode())
 
         with patch.object(task_record, "read_credential", return_value="x"), \
-                patch.object(task_record.urllib.request, "urlopen", side_effect=answer):
+                patch.object(task_record, "_urlopen", side_effect=answer):
             with self.assertRaises(SystemExit) as stop:
                 task_record.send(args, doc, "now")
         message = str(stop.exception)
@@ -1406,7 +1406,7 @@ class MergedRequiresGithub(unittest.TestCase):
         # The real send formats the preview, but network I/O must remain unused.
         self.calls.unlink(missing_ok=True)
         with patch.object(task_record, "send", wraps=self.real_send), \
-                patch.object(task_record.urllib.request, "urlopen") as post:
+                patch.object(task_record, "_urlopen") as post:
             code, out = self.run_merge([], "abcdef12", "--no-github", "--dry-run")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["body"]["signal"]["type"], "task.merged")
@@ -1517,7 +1517,7 @@ class LaneDocsGuardTest(unittest.TestCase):
 class ReviewActivityCaller(unittest.TestCase):
     def request(self, *extra):
         output = io.StringIO()
-        with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(task_record.urllib.request, "urlopen", side_effect=AssertionError("dry-run must not contact Runtime")):
+        with redirect_stdout(output), redirect_stderr(io.StringIO()), patch.object(task_record, "_urlopen", side_effect=AssertionError("dry-run must not contact Runtime")):
             code = task_record.main(["--lane", "reviewer", "--execution", "gh-team", "review_activity", "--issue", "1745",
                 "--repo", "fixture/project", "--pr", "17", "--head", HEAD_A,
                 "--review-context-sequence", "41", "--revision", "1", "--activity", "waiting",
@@ -1564,7 +1564,7 @@ class ReviewActivityCaller(unittest.TestCase):
         for error, maximum in [("GHE001_SEQUENCE_CONFLICT", 2), ("GHE003_IDEMPOTENCY_CONFLICT", 2),
                                ("GHCLI003_SIGNAL_INVALID", 1)]:
             with self.subTest(error=error), patch.object(task_record, "read_credential", return_value="fixture-only"), \
-                    patch.object(task_record.urllib.request, "urlopen", side_effect=lambda *a, **k:
+                    patch.object(task_record, "_urlopen", side_effect=lambda *a, **k:
                         io.BytesIO(json.dumps({"ok":False,"diagnostics":[{"code":error,"severity":"error"}]}).encode())) as request:
                 code, _, _ = task_record.send(args, {"taskId":"issue-1745"}, "now")
                 self.assertEqual(code, 1)
@@ -1576,12 +1576,68 @@ class ReviewActivityCaller(unittest.TestCase):
             replies = [io.BytesIO(json.dumps({"ok":False,"diagnostics":[{"code":"GHE003_IDEMPOTENCY_CONFLICT","severity":"error"}]}).encode()),
                        io.BytesIO(json.dumps({"ok":final,"diagnostics":[] if final else [{"code":"GHE003_IDEMPOTENCY_CONFLICT","severity":"error"}]}).encode())]
             with self.subTest(final=final), patch.object(task_record, "read_credential", return_value="fixture-only"), \
-                    patch.object(task_record.urllib.request, "urlopen", side_effect=replies) as request:
+                    patch.object(task_record, "_urlopen", side_effect=replies) as request:
                 code, _, _ = task_record.send(args, {"taskId":"issue-1745"}, "now")
                 self.assertEqual(code, expected)
                 self.assertEqual(request.call_count, 2)
                 self.assertIs(request.call_args_list[0].args[0], request.call_args_list[1].args[0])
 
+
+
+class RedirectSink(http.server.BaseHTTPRequestHandler):
+    seen = []
+
+    def do_GET(self):
+        self.seen.append(self.headers.get("Authorization"))
+        raw = json.dumps({"ok": True}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+class RedirectFront(http.server.BaseHTTPRequestHandler):
+    target = ""
+
+    def do_GET(self):
+        self.send_response(302)
+        self.send_header("Location", self.target + self.path)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    do_POST = do_GET
+
+    def log_message(self, *_):
+        pass
+
+
+class RedirectTests(unittest.TestCase):
+    def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(self):
+        """A redirect used to be followed with the bearer token still attached."""
+        RedirectSink.seen = []
+        sink = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RedirectSink)
+        front = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RedirectFront)
+        RedirectFront.target = f"http://127.0.0.1:{sink.server_port}"
+        for server in (sink, front):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+        args = SimpleNamespace(lane="lane-a", kind="heartbeat", repo="fixture/project", pr=None, issue=1,
+                               comment_url=None, url=f"http://127.0.0.1:{front.server_port}",
+                               execution="e", dry_run=False, token_file="t", proof_digest="")
+        try:
+            with patch.object(task_record, "read_credential", return_value="fixture-only"), \
+                    self.assertRaises(SystemExit) as refused:
+                task_record.send(args, {"taskId": "issue-1"}, "now")
+        finally:
+            for server in (sink, front):
+                server.shutdown()
+                server.server_close()
+        self.assertIn("redirect", str(refused.exception))
+        self.assertEqual(RedirectSink.seen, [])
 
 
 class BenchmarkProofEncodingTests(unittest.TestCase):

@@ -112,7 +112,25 @@ def card_path(repo: Path) -> Path:
         per_issue = Path(".graphhelm") / "cards" / f"issue-{match.group(1)}.json"
         if (repo / per_issue).is_file():
             return per_issue
-    return CARD
+    if (repo / CARD).is_file() or not dirs or (branch and not match):
+        return CARD  # a plain feature branch keeps the legacy card, with no extra git call
+    return _changed_card(repo) or CARD
+
+
+def _changed_card(repo: Path) -> Path | None:
+    """#2735: the one card this checkout adds or changes since the merge base, for a detached
+    review checkout or a card named `issue-<N>-<what>.json`, which the branch name does not
+    find. None when there are none or several: the caller keeps the legacy path."""
+    base = _merge_base(repo)
+    if base is None:
+        return None
+    try:
+        names = set(_git(repo, "diff", "--name-only", base, "--", ".graphhelm/cards/").split())
+        names |= {n for n in untracked(repo).split() if n.startswith(".graphhelm/cards/")}
+    except (subprocess.SubprocessError, OSError):
+        return None
+    cards = sorted(n for n in names if n.endswith(".json") and (repo / n).is_file())
+    return Path(cards[0]) if len(cards) == 1 else None
 
 
 def read_head(dirs: tuple[Path, Path, Path]) -> str | None:

@@ -551,3 +551,27 @@ test('coverage keeps inline source hashes, refuses source-map attribution gaps, 
   assert.equal(spaArtifact.negativeEvidenceEligible,true);
   assert.equal((await spa.send('close')).ok,true);
 });
+
+// #2721: the driver answers each request through route.fetch, an API request that carries none
+// of the Sec-Fetch-* headers Chromium adds. A document navigation must still reach the server as
+// the navigation it is (an app may set its session cookie only for one), while the redirect
+// refusal and the host allow-list stay as they were.
+test('a document navigation reaches the server with the browser\'s Sec-Fetch metadata and keeps its cookie',async t=>{
+  const seen=[];
+  const server=createServer((req,res)=>{
+    seen.push({path:req.url,mode:req.headers['sec-fetch-mode']??'-',dest:req.headers['sec-fetch-dest']??'-',site:req.headers['sec-fetch-site']??'-',cookie:Boolean(req.headers.cookie)});
+    res.setHeader('Content-Type','text/html; charset=utf-8');
+    if (req.url === '/') res.setHeader('Set-Cookie','session=1; HttpOnly; Path=/');
+    res.end(req.url === '/' ? '<h1>Start</h1><a href="/next">Next page</a>' : '<h1>Next</h1>');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t);
+  await open(c,`http://127.0.0.1:${server.address().port}/`);
+  assert.deepEqual(seen[0],{path:'/',mode:'navigate',dest:'document',site:'none',cookie:false});
+  assert.equal((await act(c,'activate','link','Next page')).ok,true);
+  const next=seen.find(entry=>entry.path === '/next');
+  assert.ok(next,JSON.stringify(seen));
+  assert.deepEqual(next,{path:'/next',mode:'navigate',dest:'document',site:'same-origin',cookie:true});
+  assert.equal((await c.send('close')).ok,true);
+});

@@ -5,9 +5,13 @@
     "core/events/src/lib.rs",
     "apps/cli/src/commands/execution/timing.rs",
     "apps/cli/src/commands/execution/tasks.rs",
+    "apps/cli/src/commands/serve/wake.rs",
     ".graphhelm/cards/issue-2694-phases.json"
   ],
   "proof": "cargo test -p graphhelm-cli --bin graphhelm timing::tests and the events append tests; cargo clippy -p graphhelm-events -p graphhelm-cli --all-targets -D warnings; the phase table measured on a Runtime started with GRAPHHELM_SERVE_TIMING=1 (own copy: #2694 comment 6769071835)",
-  "exportedSymbols": ["StorePhases", "take_store_phases"],
+  "exportedSymbols": [
+    "StorePhases",
+    "take_store_phases"
+  ],
   "journeys": []
 }

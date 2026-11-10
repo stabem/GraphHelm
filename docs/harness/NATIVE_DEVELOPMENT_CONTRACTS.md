@@ -166,7 +166,7 @@ anything references the definition or carries the value. *"The coverage vocabula
 true; *"coverage is enforced"* is what it will be taken to mean.
 
 **Oracle drift, recorded as drift.** `core/governor/src/memory.rs:313` screens with
-`content.contains("ghp_")`; `core/graph/src/persistence.rs:736` requires a prefix **and** a tail of
+`content.contains("ghp_")`; `core/graph/src/persistence.rs:737` requires a prefix **and** a tail of
 16 or 20. A bare `ghp_` is refused by the first and not the second. The direction is fail-safe —
 memory refuses more — so this is logged as divergence between two oracles, **not** as a
 vulnerability. Its real cost is false positives on prose that mentions the prefix.
@@ -605,7 +605,7 @@ than a silent reinterpretation.
 | | site | trigger |
 |---|---|---|
 | memory admission | `core/governor/src/memory.rs:313` | `content.contains("ghp_")` — one prefix, no tail requirement |
-| durable content | `core/graph/src/persistence.rs:736` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, authorization, environment-URI and reference-name forms |
+| durable content | `core/graph/src/persistence.rs:737` | 25 prefixes each with a tail minimum (16 or 20), plus JWT, compact PEM, authorization, environment-URI and reference-name forms |
 
 `memory.rs` documents its own boundary, and that doc comment was **verified against
 `persistence.rs` rather than trusted**: the claim of *"roughly two dozen prefixes plus JWT, PEM and

@@ -1933,6 +1933,8 @@ enum MutationDecisionKind {
     /// recognized as the retry it is rather than re-run to a second refusal.
     CompletionClaim,
     CompletionCleared,
+    /// The event `assign` appends.
+    NodeAssigned,
     Unrecognized,
 }
 
@@ -1950,6 +1952,7 @@ impl MutationDecisionKind {
             "execution.wake_lease" => Self::WakeLease,
             "execution.claim" => Self::CompletionClaim,
             "execution.clear" => Self::CompletionCleared,
+            "execution.assign" => Self::NodeAssigned,
             _ => Self::Unrecognized,
         }
     }
@@ -2109,6 +2112,15 @@ impl MutationDecisionKind {
                         .get("claimSeq")
                         .and_then(serde_json::Value::as_u64)
                         == Some(payload.claim_seq)
+            }
+            (Self::NodeAssigned, EventKind::NodeAssigned(payload)) => {
+                payload.execution_id.as_str() == execution
+                    && request_body.get("node").and_then(serde_json::Value::as_str)
+                        == Some(payload.node_id.as_str())
+                    && request_body
+                        .get("actorId")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(payload.assigned_actor.id().as_str())
             }
             _ => false,
         }
@@ -4392,6 +4404,40 @@ mod tests {
             ),
             "cancel must recognize only the cancelled decision, never an unrelated completion"
         );
+    }
+
+    #[test]
+    fn a_retried_assign_is_recognized_by_its_node_assigned_event() {
+        assert_eq!(
+            MutationDecisionKind::for_command("execution.assign"),
+            MutationDecisionKind::NodeAssigned
+        );
+        let event = EventKind::NodeAssigned(graphhelm_protocols::NodeAssigned {
+            execution_id: OpaqueId::parse("exec-assign-proof").unwrap(),
+            node_id: OpaqueId::parse("implementation").unwrap(),
+            assigned_actor: PersistedActor::new(
+                PersistedActorType::Agent,
+                ActorId::parse("agent-1").unwrap(),
+            ),
+            proposal_sha256: graphhelm_graph::raw_content_sha256(b"proposal").unwrap(),
+        });
+        let decision = MutationDecisionKind::NodeAssigned;
+        let body = serde_json::json!({"node": "implementation", "actorId": "agent-1"});
+
+        assert!(decision.matches(&event, "exec-assign-proof", &body, "key"));
+        assert!(!decision.matches(
+            &event,
+            "exec-assign-proof",
+            &serde_json::json!({"node": "review", "actorId": "agent-1"}),
+            "key",
+        ));
+        assert!(!decision.matches(
+            &event,
+            "exec-assign-proof",
+            &serde_json::json!({"node": "implementation", "actorId": "agent-2"}),
+            "key",
+        ));
+        assert!(!decision.matches(&event, "exec-other", &body, "key"));
     }
 
     #[test]

@@ -13,7 +13,7 @@ Start with the [repository README](../README.md) for the current product boundar
 | Understand the current Studio | [Studio app README](../apps/studio/README.md) (Graph, Lanes, Proof) · [Studio MVP](ux/STUDIO_MVP.md) (first slice, historical) |
 | Write or validate a graph | [Graph Engineer guide](graph-engineer/GRAPH_ENGINEER_GUIDE.md) · [Graph DSL](graph-engineer/GRAPH_DSL_SPEC.md) · [examples](../examples/) |
 | Use GraphHelm's development method | [JPD guide](jpd/README.md) · [JPD design](harness/JOURNEY_PROVEN_DEVELOPMENT.md) · [Keel](../KEEL.md) · [Keel rationale](keel/KEEL_SPEC.md) · [Keel check](keel/KEEL_CHECK.md) · [Append effect contract](keel/EFFECT_CONTRACT.md) · [skills guide](skills/README.md) |
-| Change this repository | [Contributing](../CONTRIBUTING.md) · [delivery process](process/DELIVERY.md) · [optimization plan, Oct 2026](process/OPTIMIZATION_PLAN_2026-10.md) |
+| Change this repository | [Contributing](../CONTRIBUTING.md) · [delivery process](process/DELIVERY.md) · [optimization plan, Oct 2026](process/OPTIMIZATION_PLAN_2026-10.md) (dated snapshot) |
 | Report a security issue privately | [Security policy](../SECURITY.md) |
 
 ## Current implementation and operations

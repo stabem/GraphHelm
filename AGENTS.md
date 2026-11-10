@@ -40,7 +40,7 @@ Do not silently resolve a contradiction between higher-precedence sources. Recor
 
 ## Repository boundaries
 
-Use a Rust workspace with small responsibility-focused crates:
+Use a Rust workspace with small responsibility-focused crates. `Cargo.toml` `[workspace] members` is the complete list (further `core/*` crates, `adapters/*` and `tools/*`); the crates below are the ones whose boundary is stated here:
 
 - `core/protocols`: shared wire/domain types, stable diagnostics, events, drafts, policies, actors, and states; no adapters.
 - `core/schema`: YAML/JSON loading and validation against the checked-in JSON Schemas; no network retrieval.
@@ -51,7 +51,7 @@ Use a Rust workspace with small responsibility-focused crates:
 - `core/simulation`: deterministic graph simulation without tools, models, shell, deploy, or network effects.
 - `apps/cli`: cross-platform `graphhelm` CLI; business rules remain in core crates. It presents two faces and exactly one per run (D-056): the JSON envelope is the contract, and it is what every reader that is not a terminal gets — pipes, test harnesses, the MCP tool, CI — byte for byte; a terminal gets the rendered summary instead, unless `--json` or `--pretty` asks for the envelope there. A renderer reads only fields the envelope already carries, so the two faces cannot disagree.
 
-Provider SDKs, database clients, sandbox backends, Studio dependencies, and external integrations belong in later adapter plans. Do not scaffold empty modules, public stubs, fake success handlers, or future directories.
+Provider SDKs, database clients, sandbox backends, and external integrations belong in adapter crates under `adapters/`, never in a core crate; Studio dependencies stay in `apps/studio`. Do not scaffold empty modules, public stubs, fake success handlers, or future directories.
 
 Use the checked-in schemas as canonical wire contracts. Preserve schema-permitted unknown fields for forward compatibility. Schema validation precedes typed deserialization. The validator registry is entirely in-memory from `schemas/`; it must never fetch a `$ref` from the network.
 

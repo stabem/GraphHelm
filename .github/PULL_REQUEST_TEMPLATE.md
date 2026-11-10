@@ -1,4 +1,5 @@
 Summary: <!-- One sentence, at most 100 characters: who gets what. The title is `type(area): what changes for the user`, at most 60 characters (docs/process/DELIVERY.md, "Naming"). -->
+Session: <!-- The identity line: `<session name [ref]> · Head: <sha8>` (docs/process/DELIVERY.md §4). -->
 
 ## Change and user-visible promise
 
@@ -19,6 +20,8 @@ Name the command and the behavior it observes. A missing observer is not a pass.
 ## Security and compatibility
 
 What boundaries does this touch? State "none" when it changes only documentation or presentation.
+
+Dependency notes: name every dependency added, removed or upgraded, or state "no dependency changes".
 
 ## Rollback
 

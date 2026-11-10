@@ -1,5 +1,10 @@
 # Optimization plan, October 2026
 
+> **Dated snapshot.** Written on 2026-10-13 against head `c90cd4de`. Check a ticket against the
+> tree before acting on it. Who writes and who reviews a change is
+> [DELIVERY.md](DELIVERY.md) §4, not the split named below, and the rule cited as "Retire displaced
+> code" now lives in DELIVERY.md §3 ("Retire the path you replace") and `keel/KEEL_EXEC.md`.
+
 Windows update build measurements: [October report](../operations/update-build-windows-2026-10.md).
 
 Summary: one ordered list of tickets that removes dead code, fixes the measured O(n²) paths,

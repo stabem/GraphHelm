@@ -96,7 +96,8 @@ days the repository merged 116 pull requests. The capacity is real and it was po
 factory. So: **new gate, runner or CI work is taken only when a gate is actually broken** — a
 red that blocks work, a runner that has stopped, a false green. Everything else queues behind
 the promises above. Gate work that improves throughput without unblocking anything is exactly
-the work this rule defers.
+the work this rule defers. (Historical: the gate runner this rule names was later removed (#1218);
+delivery has no gate, see [DELIVERY.md](../process/DELIVERY.md).)
 
 **Debt gets a date, not a permanent exception.** A quality bar that can only be met or blocked
 turns every honest gap into a stalled pull request, and the fleet has paid for that repeatedly.

@@ -1,0 +1,17 @@
+{
+  "promise": "With GRAPHHELM_SERVE_TIMING=1 the store's append reports where its time goes (append.load_state, sync_loaded, validate, build, evidence, write, fsync, dirsync, marker) and task admission reports envelope.hit, envelope.read and envelope.decrypt, so a slow append or admission on a live Runtime can be split. Measurement only: no behaviour, order, lock or format change; with timing off no clock is read.",
+  "scopePaths": [
+    "core/events/src/local.rs",
+    "core/events/src/lib.rs",
+    "apps/cli/src/commands/execution/timing.rs",
+    "apps/cli/src/commands/execution/tasks.rs",
+    "apps/cli/src/commands/serve/wake.rs",
+    ".graphhelm/cards/issue-2694-phases.json"
+  ],
+  "proof": "cargo test -p graphhelm-cli --bin graphhelm timing::tests and the events append tests; cargo clippy -p graphhelm-events -p graphhelm-cli --all-targets -D warnings; the phase table measured on a Runtime started with GRAPHHELM_SERVE_TIMING=1 (own copy: #2694 comment 6769071835)",
+  "exportedSymbols": [
+    "StorePhases",
+    "take_store_phases"
+  ],
+  "journeys": []
+}

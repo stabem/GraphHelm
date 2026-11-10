@@ -357,6 +357,31 @@ fn lock_clock() -> Option<std::time::Instant> {
         .then(std::time::Instant::now)
 }
 
+/// Per-phase time inside the store's append, accumulated on this thread while timing is on (#2694).
+pub type StorePhases = std::collections::BTreeMap<&'static str, (u64, std::time::Duration)>;
+
+thread_local! {
+    static STORE_PHASES: std::cell::RefCell<StorePhases> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+fn phase_end(name: &'static str, started: Option<std::time::Instant>) {
+    if let Some(started) = started {
+        STORE_PHASES.with(|cell| {
+            let mut phases = cell.borrow_mut();
+            let entry = phases.entry(name).or_default();
+            entry.0 += 1;
+            entry.1 += started.elapsed();
+        });
+    }
+}
+
+/// The append phases this thread accumulated since the last call, and a fresh start.
+#[must_use]
+pub fn take_store_phases() -> StorePhases {
+    STORE_PHASES.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
 /// The lock timing this thread accumulated since the last call, and a fresh start.
 #[must_use]
 pub fn take_lock_timing() -> LockTiming {
@@ -1616,8 +1641,13 @@ impl LocalEventRepository {
         &self,
         request: &PreparedAppend,
     ) -> Result<Vec<EventEnvelope>, EventRepositoryError> {
+        let clock = lock_clock();
         let mut state = self.load_state("append")?;
+        phase_end("append.load_state", clock);
+        let clock = lock_clock();
         self.sync_loaded_journal(&state)?;
+        phase_end("append.sync_loaded", clock);
+        let clock = lock_clock();
         // #1721: a full active segment is sealed BEFORE this append, so what an open walks stays
         // bounded by one segment however long the history grows.
         if self.should_rotate(&state)? {
@@ -1672,6 +1702,8 @@ impl LocalEventRepository {
             return Err(EventRepositoryError::SequenceConflict);
         }
 
+        phase_end("append.validate", clock);
+        let clock = lock_clock();
         let envelopes = self.build_envelopes(request, &state)?;
         let mut evidence_ids = request
             .evidence()
@@ -1755,6 +1787,8 @@ impl LocalEventRepository {
             });
         }
 
+        phase_end("append.build", clock);
+        let clock = lock_clock();
         let mut staged = self.stage_evidence(request.evidence())?;
         if self.failpoint == Some(LocalFailpoint::EvidenceStaging) {
             return Err(EventRepositoryError::StorageAt {
@@ -1777,6 +1811,7 @@ impl LocalEventRepository {
             });
         }
 
+        phase_end("append.evidence", clock);
         let mut journal = self
             .journal
             .lock()
@@ -1794,15 +1829,19 @@ impl LocalEventRepository {
                 os: None,
             });
         }
+        let clock = lock_clock();
         journal.write_all(&line)?;
         journal.flush()?;
+        phase_end("append.write", clock);
         if self.failpoint == Some(LocalFailpoint::JournalSync) {
             return Err(EventRepositoryError::StorageAt {
                 site: "failpoint:journal-sync@append-locked",
                 os: None,
             });
         }
+        let clock = lock_clock();
         journal.sync_data()?;
+        phase_end("append.fsync", clock);
         // The sync covered every byte the file holds, this line included: a read on the same
         // cache need not sync them again (`sync_journal_beyond_watermark`).
         let extent = DurableWatermark {
@@ -1811,14 +1850,18 @@ impl LocalEventRepository {
         };
         drop(journal);
         self.raise_watermark(extent);
+        let clock = lock_clock();
         sync_directory_handle(&self.root_handle)?;
+        phase_end("append.dirsync", clock);
         if self.failpoint == Some(LocalFailpoint::ActiveMarker) {
             return Err(EventRepositoryError::StorageAt {
                 site: "failpoint:active-marker@append-locked",
                 os: None,
             });
         }
+        let clock = lock_clock();
         self.publish_active_marker(&envelopes)?;
+        phase_end("append.marker", clock);
         Ok(envelopes)
     }
 

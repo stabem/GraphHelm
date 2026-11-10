@@ -31,6 +31,14 @@ REPORT = Path(".e2e") / "report.json"
 OBSERVED = {0: "passed", 1: "failed"}
 
 
+def _split(command: str) -> list[str]:
+    """Split a command line; on Windows keep backslashes in paths (posix shlex would eat them)."""
+    if os.name != "nt":
+        return shlex.split(command)
+    return [part[1:-1] if len(part) > 1 and part[0] == part[-1] and part[0] in "\"'" else part
+            for part in shlex.split(command, posix=False)]
+
+
 def _tests(report: dict) -> list[str]:
     """One line per result in `run.results` (report-1 schema): status and title path."""
     lines = []
@@ -41,17 +49,23 @@ def _tests(report: dict) -> list[str]:
 
 
 def observe(project: Path, command: str, timeout: int) -> dict:
-    argv = shlex.split(command)
-    if shutil.which(argv[0]) is None:
+    argv = _split(command)
+    # Start the path `which` found: on Windows a bare `npx` resolves to `npx.cmd` only that way.
+    resolved = shutil.which(argv[0], path=os.environ.get("PATH"))
+    if resolved is None:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{argv[0]}` is not on PATH"]}
     # A report left by an earlier run must never stand in for this one.
     (project / REPORT).unlink(missing_ok=True)
     try:
-        result = subprocess.run(argv, cwd=project, capture_output=True, text=True, timeout=timeout, creationflags=NO_WINDOW)
+        result = subprocess.run([resolved, *argv[1:]], cwd=project, capture_output=True, text=True,
+                                timeout=timeout, creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         return {"verdict": "observer_missing", "exitCode": None,
                 "evidence": [f"OBSERVER_MISSING: `{command}` did not finish in {timeout}s"]}
+    except OSError:
+        return {"verdict": "observer_missing", "exitCode": None,
+                "evidence": [f"OBSERVER_MISSING: `{argv[0]}` could not be started"]}
     verdict = OBSERVED.get(result.returncode, "observer_missing")
     evidence = [f"`{command}` in {project} exited {result.returncode}"]
     report_path = project / REPORT

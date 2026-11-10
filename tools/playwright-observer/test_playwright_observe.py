@@ -95,6 +95,37 @@ class PlaywrightObserve(unittest.TestCase):
         self.assertTrue(path.startswith(str(modules / ".bin") + os.pathsep), path)
         self.assertTrue(node_path.startswith(str(modules)), node_path)
 
+    def test_a_cmd_file_on_path_is_run_and_a_missing_command_is_observer_missing(self):
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("playwright_observe_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        bin_dir = self.project / "bin"
+        bin_dir.mkdir()
+        if os.name == "nt":
+            (bin_dir / "fakeobs.cmd").write_text("@exit /b 1\r\n")
+        else:
+            tool = bin_dir / "fakeobs"
+            tool.write_text("#!/bin/sh\nexit 1\n")
+            tool.chmod(0o755)
+        path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+        with mock.patch.dict(os.environ, {"PATH": path}):
+            ran = module.observe(self.project, "fakeobs", 60)
+        # Exit 1 with no report is downgraded: no test was observed.
+        self.assertEqual(ran["exitCode"], 1)
+        self.assertEqual(ran["verdict"], "observer_missing")
+        self.assertIn("no .graphhelm/playwright-report.json was written, so no test was observed",
+                      ran["evidence"])
+        absent = module.observe(self.project, "definitely-not-a-command-xyz", 60)
+        self.assertEqual(absent["verdict"], "observer_missing")
+        self.assertIsNone(absent["exitCode"])
+        ghost = str(self.project / "ghost" / "fakeobs.exe")
+        with mock.patch.object(module.shutil, "which", return_value=ghost):
+            unstartable = module.observe(self.project, "fakeobs", 60)
+        self.assertEqual(unstartable["verdict"], "observer_missing")
+        self.assertIsNone(unstartable["exitCode"])
+
     def test_missing_runner_is_observer_missing(self):
         result = subprocess.run([sys.executable, str(SCRIPT), "--project", str(self.project),
                                  "--command", "definitely-not-a-runner-xyz test"],

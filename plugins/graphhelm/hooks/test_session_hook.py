@@ -685,14 +685,16 @@ class SessionHookTests(unittest.TestCase):
             return child
 
         payload = {"session_id": "session-no-waiter"}
-        for actor, expected in (("gh-lane-1", 1), ("openbot-sasuke", 0)):
+        # #2740: the opt-outs are a prefix match and `== "1"`: a substring actor and NO_WAITER=0 keep the waiter.
+        for actor, extra, expected in (("gh-lane-1", {}, 1), ("openbot-sasuke", {}, 0),
+                                       ("gh-openbot-x", {}, 1), ("gh-lane-1", {"GRAPHHELM_NO_WAITER": "0"}, 1)):
             spawned.clear()
-            env = {**self.env, "GRAPHHELM_ACTOR": actor}
+            env = {**self.env, "GRAPHHELM_ACTOR": actor, **extra}
             with patch.dict(os.environ, env), patch.object(hook.subprocess, "Popen", side_effect=record):
                 hook.start_lane_waiter(payload, bound, "codex")
             marker = hook._waiter_path(payload, bound, "codex")
             marker.unlink(missing_ok=True)
-            self.assertEqual(len(spawned), expected, f"{actor}: {spawned}")
+            self.assertEqual(len(spawned), expected, f"{actor} {extra}: {spawned}")
         spawned.clear()
         env = {**self.env, "GRAPHHELM_ACTOR": "gh-lane-1", "GRAPHHELM_NO_WAITER": "1"}
         with patch.dict(os.environ, env), patch.object(hook.subprocess, "Popen", side_effect=record):

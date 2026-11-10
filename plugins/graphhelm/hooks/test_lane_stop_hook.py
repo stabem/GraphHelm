@@ -389,6 +389,8 @@ class LaneStopTests(unittest.TestCase):
                     "GRAPHHELM_EXECUTION_ID": "lane-test", "GRAPHHELM_ACTOR": "codex-4",
                     "LOCALAPPDATA": str(root / "local"),
                     "XDG_STATE_HOME": str(root / "xdg-state")}
+        # #2740: a lane's own opt-out (settings.local.json env) must not leak into the hooks under test.
+        self.env.pop("GRAPHHELM_NO_WAITER", None)
         self.cli = os.environ.get("GRAPHHELM_CLI") or shutil.which("graphhelm")
         self.assertIsNotNone(self.cli, "installed graphhelm is required")
         keyring = root / "keyring"
@@ -1358,12 +1360,45 @@ class LaneStopTests(unittest.TestCase):
         self.assertEqual(child.returncode, 0, err)
         self.assertEqual(pid_files(), [], "no rewake owner was recorded for an openbot- lane")
 
+    def rewake_leaves_a_pid_file(self, **env):
+        """Starts a rewake with `env` added; True when it records an owner (it waits), False when it exits."""
+        pid_files = lambda: list(self.hook_state_dir.glob("*.rewake.pid"))  # noqa: E731
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        self.env.update(env)
+        child = self.rewake()
+        end = time.monotonic() + 25 * time_scale()
+        while child.poll() is None and not pid_files() and time.monotonic() < end:
+            time.sleep(0.2)
+        waiting = child.poll() is None and bool(pid_files())
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+        for stale in pid_files():
+            stale.unlink()
+        return waiting
+
+    def test_an_actor_that_only_contains_openbot_dash_still_has_its_rewake(self):
+        # #2740: the opt-out is a PREFIX match. A substring match would turn this lane's rewake off.
+        self.assertTrue(self.rewake_leaves_a_pid_file(GRAPHHELM_ACTOR="gh-openbot-x"),
+                        "an actor that merely contains openbot- keeps its rewake")
+
+    def test_no_waiter_set_to_zero_does_not_opt_out(self):
+        # #2740: only GRAPHHELM_NO_WAITER=1 opts out; 0 must not.
+        self.assertTrue(self.rewake_leaves_a_pid_file(GRAPHHELM_NO_WAITER="0"),
+                        "GRAPHHELM_NO_WAITER=0 keeps the rewake")
+
     def test_an_idle_lane_is_woken_by_a_note_addressed_to_it(self):
         # #1058: the journey. The lane's turn ends (Stop starts its waiter and the background
         # rewake), it sits idle, the owner asks it; the rewake exits 2, which wakes the host,
         # in seconds (the waiter's ring), not at the fallback scan.
         self.assertEqual(self.stop(MANIFESTS[0]), [])
         child = self.rewake()
+        # #2740: since #2699 the rewake's first scan runs at once. Post the note only after that
+        # scan has logged, so the wake below comes from the waiter's ring and not from that scan.
+        end = time.monotonic() + 25 * time_scale()
+        while not list(self.hook_state_dir.glob("*.rewake.log")) and time.monotonic() < end:
+            time.sleep(0.1)
+        self.assertTrue(list(self.hook_state_dir.glob("*.rewake.log")), "the rewake never took its first scan")
         self.note("status-1", to="codex-4")
         asked = time.monotonic()
         try:

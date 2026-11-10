@@ -1,0 +1,11 @@
+﻿{
+  "promise": "The tests pin the no-waiter opt-out: an actor that only contains openbot- keeps its waiter and rewake, GRAPHHELM_NO_WAITER=0 does not opt out; and the idle-wake test no longer depends on the parent environment or on the rewake's first-scan timing.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/test_lane_stop_hook.py",
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    ".graphhelm/cards/issue-2740.json"
+  ],
+  "proof": "pytest the new/changed tests green; red when lane_stop_hook.py/session_hook.py webhook_woken uses a substring actor match, and red when it opts out on any NO_WAITER value; then the full plugins/graphhelm/hooks suite",
+  "exportedSymbols": [],
+  "journeys": []
+}

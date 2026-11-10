@@ -1,0 +1,13 @@
+{
+  "promise": "Slice 1 of the wake webhook: a new adapter crate that signs and posts one graphhelm.step.ready delivery to a lane's OpenBot webhook (HMAC-SHA256 over timestamp.delivery-id.body, delivery id lane:step:head), with a deadline, a bounded 503 retry, no retry on 401/404, https-and-pinned-host config and a secret that never prints. Not wired into the Runtime yet; core/* gains no HTTP client.",
+  "scopePaths": [
+    "adapters/wake-webhook/Cargo.toml",
+    "adapters/wake-webhook/src/lib.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    ".graphhelm/cards/issue-2714.json"
+  ],
+  "proof": "cargo test -p graphhelm-wake-webhook (13 tests: RFC 4231 vector, signature, retry bounds, host pinning, redaction, loopback real-socket receiver with 503 then 202; break-once: a wrong secret fails the receiver's check and gets 401, no retry); cargo clippy -p graphhelm-wake-webhook --all-targets -D warnings",
+  "exportedSymbols": ["deliver", "Config", "Secret", "Step", "Outcome", "Transport", "Ureq", "signature", "hmac_sha256", "delivery_id", "body"],
+  "journeys": []
+}

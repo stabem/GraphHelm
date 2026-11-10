@@ -410,6 +410,20 @@ function skeleton(aria) {
   const fingerprint='sha256:'+createHash('sha256').update(JSON.stringify({controls,lists})).digest('hex');
   return {controls,fingerprint};
 }
+// #2721: route.fetch is an API request, so Chromium's Sec-Fetch-* never reach the server. A
+// document navigation gets back the three it would have carried, from what the page knows of it:
+// the destination is the frame's kind, the site is where the navigating frame (its parent for a
+// new subframe) stands now. Subresource requests are left as they were.
+function navigationMetadata(request,parsed) {
+  if (!request.isNavigationRequest()) return {};
+  const frame=request.frame(), parent=frame.parentFrame();
+  const from=(parent ?? frame).url();
+  let site='none';
+  if (from && from !== 'about:blank') {
+    try { site=new URL(from).origin === parsed.origin ? 'same-origin' : 'cross-site'; } catch { site='cross-site'; }
+  }
+  return {'sec-fetch-mode':'navigate','sec-fetch-dest':parent ? 'iframe' : 'document','sec-fetch-site':site};
+}
 async function run(r) {
   if (r.op === 'open') {
     if (opened) fail('driver.protocol_invalid');
@@ -443,7 +457,7 @@ async function run(r) {
           // approved aliases too, preserving the virtual host header.
           const transport=new URL(request.url());
           if (transport.hostname.endsWith('.test') || transport.hostname.endsWith('.localhost')) transport.hostname='127.0.0.1';
-          const response=await route.fetch({url:transport.href,headers:{...request.headers(),host:parsed.host},maxRedirects:0,timeout:TIMEOUT});
+          const response=await route.fetch({url:transport.href,headers:{...request.headers(),host:parsed.host,...navigationMetadata(request,parsed)},maxRedirects:0,timeout:TIMEOUT});
           const location=response.headers().location;
           if (response.status()>=300 && response.status()<400 && location) {
             // Playwright bypasses route handlers for the remainder of a redirect

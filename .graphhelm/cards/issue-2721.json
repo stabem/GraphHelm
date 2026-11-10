@@ -1,0 +1,11 @@
+{
+  "promise": "A document navigation the journey driver releases reaches the server with the Sec-Fetch-Mode/Dest/Site a browser sends for it (navigate, document or iframe, none or same-origin or cross-site), so an app that sets its session cookie only on a real navigation sets it under the driver. The redirect refusal, the host allow-list and subresource requests are unchanged.",
+  "scopePaths": [
+    "tools/journey-driver/driver.mjs",
+    "tools/journey-driver/driver.browser.test.mjs",
+    ".graphhelm/cards/issue-2721.json"
+  ],
+  "proof": "node --test tools/journey-driver/driver.browser.test.mjs tools/journey-driver/driver.test.mjs with GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT naming a toolchain with @playwright/test (28 passed; the new test was red before the change: mode/dest/site all '-'); the existing 'context network guard blocks popup, frame, fetch, redirect, websocket and service worker' test still passes",
+  "exportedSymbols": [],
+  "journeys": []
+}

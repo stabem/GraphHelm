@@ -12,6 +12,5 @@ serde.workspace = true
 
 [dev-dependencies]
 graphhelm-test-shims = { path = "../../tools/test-shims" }
-graphhelm-process = { path = "../process" }
 # Test-only: the thymus certifies these evaluators; core never depends on tools at runtime.
 pathogens = { path = "../../tools/pathogens" }

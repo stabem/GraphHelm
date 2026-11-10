@@ -3638,7 +3638,12 @@ mod older_head_clock_tests {
         // 11:30), review is booked from its entry (10:01) to head B's last record (10:02): one
         // minute, not the nineteen an extended clock would give.
         let mut records = vec![
-            event("task.claimed", 1, "2026-10-24T10:00:00Z", serde_json::json!({})),
+            event(
+                "task.claimed",
+                1,
+                "2026-10-24T10:00:00Z",
+                serde_json::json!({}),
+            ),
             event(
                 "task.pr_opened",
                 2,

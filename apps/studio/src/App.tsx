@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { addFolder, login, servedProjects, type Session } from "./login/session";
+import { addFolder, loginWaiting, servedProjects, type Session } from "./login/session";
 import { parseRoute, routeSearch, type Route, type View } from "./routing/route";
 import { rereadOnReturn } from "./runtime/reread-on-return";
 import { refusedToken, Runtime, type JourneyFlow, type RunSummary } from "./runtime/client";
@@ -20,6 +20,9 @@ import { ViewBoundary } from "./views/ViewBoundary";
 import { bounded, firstRead, Loading, ReadFailure } from "./states/ViewState";
 
 /** A failed bootstrap reports project availability without requesting a login ticket. */
+export function WaitingForRuntime() {
+  return <main className="gate" role="status"><h1>Waiting for the Runtime</h1><p>The Runtime is not ready yet. The Studio tries again by itself.</p></main>;
+}
 export function LoginGate() {
   return <main className="gate" role="alert"><h1>Project unavailable</h1><p>The Studio could not load this project. Check that its Runtime is running, then reload this page.</p><button type="button" onClick={() => location.reload()}>Try again</button></main>;
 }
@@ -29,7 +32,7 @@ const POLL_MS = 5_000;
 
 const NO_SESSIONS: Session[] = [];
 
-type Login = { state: "pending" } | { state: "refused" } | { state: "in"; sessions: Session[]; closed: string[] };
+type Login = { state: "pending"; waiting?: boolean } | { state: "refused" } | { state: "in"; sessions: Session[]; closed: string[] };
 
 /** The joined projects this tab holds no key for: listed, not openable here. */
 function closedProjects(sessions: Session[], served: { first: string | null; all: string[] } | null): string[] {
@@ -44,7 +47,7 @@ export function App() {
 
   useEffect(() => {
     let live = true;
-    void login(location.search).then(async (sessions) => {
+    void loginWaiting(location.search, () => setAuth((now) => (now.state === "pending" ? { state: "pending", waiting: true } : now)), () => live).then(async (sessions) => {
       const served = sessions === null ? null : await servedProjects();
       if (!live) return;
       setAuth(sessions === null ? { state: "refused" } : { state: "in", sessions, closed: closedProjects(sessions, served) });
@@ -99,7 +102,7 @@ export function App() {
   const sessions = auth.state === "in" ? auth.sessions : NO_SESSIONS;
   const summaries = useSummaries(sessions);
 
-  if (auth.state === "pending") return <main className="gate"><p>Logging in…</p></main>;
+  if (auth.state === "pending") return auth.waiting === true ? <WaitingForRuntime /> : <main className="gate"><p>Logging in…</p></main>;
   if (auth.state === "refused") return <LoginGate />;
   const session = auth.sessions.find((known) => known.key === route.project) ?? auth.sessions[0]!;
   const projects: ProjectEntry[] = auth.sessions.map((known) => ({

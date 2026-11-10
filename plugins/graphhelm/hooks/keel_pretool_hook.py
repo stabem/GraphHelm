@@ -40,12 +40,12 @@ def _changed(repo: Path, base: str) -> list[str]:
     return tracked + untracked(repo).splitlines()
 
 
-def test_first(repo: Path, relative: str) -> str | None:
+def test_first(repo: Path, relative: str, card_rel: Path | None = None) -> str | None:
     """Deny a source edit in the card's scope while no test in that scope has changed."""
     if is_test(relative):
         return None
     try:
-        card = json.loads((repo / card_path(repo)).read_text(encoding="utf-8"))
+        card = json.loads((repo / (card_rel or card_path(repo))).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(card, dict):
@@ -64,7 +64,7 @@ def test_first(repo: Path, relative: str) -> str | None:
     return (f"Keel test first: no test under the card's scopePaths has changed yet. Write the failing "
             f"test first, run it from the repository root and see it fail, then edit {relative}. "
             f"If this change has no testable behavior, set \"testFirst\": false and a "
-            f"\"testFirstReason\" in {card_path(repo).as_posix()}.")
+            f"\"testFirstReason\" in {(card_rel or card_path(repo)).as_posix()}.")
 
 
 def _denial_marker(repo: Path) -> Path:
@@ -102,7 +102,7 @@ def decide(repo: Path, target: Path, tool_input: dict) -> str | None:
         return None
     card = card_path(repo)
     if (repo / card).is_file():
-        return test_first(repo, relative)
+        return test_first(repo, relative, card)
     base = _merge_base(repo)
     if base is None:
         return None

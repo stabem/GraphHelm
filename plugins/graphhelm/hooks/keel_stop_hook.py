@@ -102,9 +102,12 @@ def read_branch(dirs: tuple[Path, Path, Path]) -> str | None:
     return value[len("ref: refs/heads/"):] if value.startswith("ref: refs/heads/") else None
 
 
-def card_path(repo: Path) -> Path:
+def card_path(repo: Path, base: str | None = None, others: str | None = None) -> Path:
     """The card the Keel hooks read, relative to `repo` (#1548). On a branch issue-<N>-... with
-    .graphhelm/cards/issue-<N>.json present, that card; otherwise the legacy keel-card.json."""
+    .graphhelm/cards/issue-<N>.json present, that card; otherwise the legacy keel-card.json.
+    #2735: with no legacy card, a detached checkout, or an issue branch whose own card is named
+    issue-<N>-<what>.json, uses the one card the checkout adds since the merge base. `base` and
+    `others` (the untracked list) are passed by a caller that already has them."""
     dirs = git_dirs(repo)
     branch = read_branch(dirs) if dirs else None
     match = ISSUE_BRANCH.match(branch or "")
@@ -114,23 +117,33 @@ def card_path(repo: Path) -> Path:
             return per_issue
     if (repo / CARD).is_file() or not dirs or (branch and not match):
         return CARD  # a plain feature branch keeps the legacy card, with no extra git call
-    return _changed_card(repo) or CARD
+    return _changed_card(repo, match.group(1) if match else None, base, others) or CARD
 
 
-def _changed_card(repo: Path) -> Path | None:
-    """#2735: the one card this checkout adds or changes since the merge base, for a detached
-    review checkout or a card named `issue-<N>-<what>.json`, which the branch name does not
-    find. None when there are none or several: the caller keeps the legacy path."""
-    base = _merge_base(repo)
+_CARD_MEMO: dict[tuple, Path | None] = {}  # one lookup per hook process: Stop and review share it
+
+
+def _changed_card(repo: Path, issue: str | None, base: str | None, others: str | None) -> Path | None:
+    """#2735: the one card this checkout adds or changes since the merge base. On an issue-<N>
+    branch only issue-<N>.json or issue-<N>-*.json count (an unrelated card is not its card); on a
+    detached checkout any card does. None when there are none or several: the caller keeps the
+    legacy path."""
+    base = base or _merge_base(repo)
     if base is None:
         return None
+    key = (str(repo), base, issue)
+    if key in _CARD_MEMO:
+        return _CARD_MEMO[key]
+    own = re.compile(rf"\.graphhelm/cards/issue-{issue}(?:-[^/]*)?\.json" if issue
+                     else r"\.graphhelm/cards/[^/]+\.json")
     try:
         names = set(_git(repo, "diff", "--name-only", base, "--", ".graphhelm/cards/").split())
-        names |= {n for n in untracked(repo).split() if n.startswith(".graphhelm/cards/")}
+        names |= set((untracked(repo) if others is None else others).split())
     except (subprocess.SubprocessError, OSError):
         return None
-    cards = sorted(n for n in names if n.endswith(".json") and (repo / n).is_file())
-    return Path(cards[0]) if len(cards) == 1 else None
+    cards = sorted(n for n in names if own.fullmatch(n) and (repo / n).is_file())
+    _CARD_MEMO[key] = Path(cards[0]) if len(cards) == 1 else None
+    return _CARD_MEMO[key]
 
 
 def read_head(dirs: tuple[Path, Path, Path]) -> str | None:
@@ -324,7 +337,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     others = untracked(repo)
     if code_lines_changed(repo, base, others) <= TRIVIAL_LINES:
         return None
-    rel = card_path(repo)
+    rel = card_path(repo, base, others)
     card = repo / rel
     if not card.is_file():
         return (f"Keel: this branch changes code past the summary-only row, and there is no card at "

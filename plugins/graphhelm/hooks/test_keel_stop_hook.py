@@ -283,3 +283,27 @@ class CardPathChangedCard(unittest.TestCase):
         self.commit_card(".graphhelm/cards/issue-2001.json")
         self.card(".graphhelm/keel-card.json")
         self.assertEqual(self.path(), ".graphhelm/keel-card.json")
+
+    def test_an_unrelated_card_is_not_the_issue_branchs_card(self):
+        """#2735 review: on issue-9-z with no card of its own, a changed issue-3 card does not count."""
+        git(self.repo, "checkout", "-qb", "issue-9-z")
+        self.commit_card(".graphhelm/cards/issue-3-other.json")
+        self.assertEqual(self.path(), ".graphhelm/keel-card.json")
+
+    def test_an_untracked_card_on_a_detached_checkout_is_found(self):
+        git(self.repo, "checkout", "-q", "--detach")
+        self.card(".graphhelm/cards/issue-2694-phases.json")  # written, never added
+        self.assertEqual(self.path(), ".graphhelm/cards/issue-2694-phases.json")
+
+    def test_a_pretool_run_looks_for_the_card_once(self):
+        """#2735 review: the lookup is one `git diff` per run, not one per card_path call."""
+        import keel_pretool_hook
+        git(self.repo, "checkout", "-qb", "issue-2694-append-phases-main")
+        self.commit_card(".graphhelm/cards/issue-2694-phases.json")
+        target = self.repo / "app.py"
+        real = keel_stop_hook._git
+        keel_stop_hook._CARD_MEMO.clear()
+        with mock.patch.object(keel_stop_hook, "_git", side_effect=real) as spy:
+            keel_pretool_hook.decide(self.repo, target, {"content": "x = 1\n"})
+        lookups = [c for c in spy.call_args_list if ".graphhelm/cards/" in c.args]
+        self.assertEqual(len(lookups), 1, spy.call_args_list)

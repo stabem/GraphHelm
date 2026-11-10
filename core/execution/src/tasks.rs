@@ -3114,11 +3114,21 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             (matches!(event.kind, TaskEventKind::Claimed | TaskEventKind::Planned)
                 || (event.kind == TaskEventKind::PrOpened && !same_head_repeat && before == after))
                 && event.lane == state.lane;
+        // #2703: a record for an older head that leaves the step as it was does not move the
+        // clock, so it cannot restart the wait of the current head's reviewer.
+        let older_head = event.head_sha.is_some()
+            && state.head_sha.is_some()
+            && !same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref());
+        let at = if before == after && older_head {
+            None
+        } else {
+            event.occurred_at.clone()
+        };
         clock_step(
             &mut state.clock,
             timed(before),
             timed(after),
-            event.occurred_at.clone(),
+            at,
             resumes_after_gap,
         );
         if event.kind == TaskEventKind::Closed {
@@ -3544,5 +3554,28 @@ pub fn task_durations(
                 .count(),
             ..population
         },
+    }
+}
+
+#[cfg(test)]
+mod older_head_clock_tests {
+    use super::*;
+
+    fn at(value: &str) -> PersistedTimestamp {
+        PersistedTimestamp::parse(value).unwrap()
+    }
+
+    #[test]
+    fn a_same_step_record_without_a_time_keeps_the_last_record_time() {
+        // #2703: the fold passes no time for a record for an older head that leaves the step as
+        // it was, so the current head's idle clock is not moved by it.
+        let mut clock = StepClock {
+            since: Some(at("2026-10-24T10:00:00Z")),
+            last_at: Some(at("2026-10-24T11:59:00Z")),
+            spent: BTreeMap::new(),
+        };
+        clock_step(&mut clock, "review", "review", None, false);
+        assert_eq!(clock.last_at, Some(at("2026-10-24T11:59:00Z")));
+        assert_eq!(clock.since, Some(at("2026-10-24T10:00:00Z")));
     }
 }

@@ -3630,4 +3630,46 @@ mod older_head_clock_tests {
         assert_eq!(state.head_sha.as_deref(), Some("bbbbbbb"));
         assert_eq!(state.clock.last_at, Some(at("2026-10-24T10:02:00Z")));
     }
+
+    #[test]
+    fn an_older_head_record_does_not_extend_the_review_span_booked_after_a_gap() {
+        // #2754: `spent.review` follows `last_at`. A review assignment for the older head A at
+        // 10:20 is not activity of head B, so when the lane resumes after a gap (a new head at
+        // 11:30), review is booked from its entry (10:01) to head B's last record (10:02): one
+        // minute, not the nineteen an extended clock would give.
+        let mut records = vec![
+            event(
+                "task.claimed",
+                1,
+                "2026-10-24T10:00:00Z",
+                serde_json::json!({}),
+            ),
+            event(
+                "task.pr_opened",
+                2,
+                "2026-10-24T10:01:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "journeys": []}),
+            ),
+            event(
+                "task.pr_opened",
+                3,
+                "2026-10-24T10:02:00Z",
+                serde_json::json!({"pr": 70, "headSha": "bbbbbbb", "journeys": []}),
+            ),
+            event(
+                "task.review_assigned",
+                4,
+                "2026-10-24T10:20:00Z",
+                serde_json::json!({"pr": 70, "headSha": "aaaaaaa", "reviewer": "lane-b"}),
+            ),
+        ];
+        records.push(event(
+            "task.pr_opened",
+            5,
+            "2026-10-24T11:30:00Z",
+            serde_json::json!({"pr": 70, "headSha": "ccccccc", "journeys": []}),
+        ));
+        let state = fold_task_events(&records).remove(0);
+        assert_eq!(state.clock.spent.get("review"), Some(&60_000));
+    }
 }

@@ -1,0 +1,13 @@
+{
+  "promise": "With GRAPHHELM_SERVE_TIMING=1 the events GET (the Studio and lane hooks' busiest read) reports its own timing line with store.open and stream.page phases, and every timed route reports the store's lock wait and anchor validation as lock.wait and lock.anchors phases, so the seconds a request spends can be split into lock wait, anchor checks and the work itself. Instrumentation only: no lock, order or result changes.",
+  "scopePaths": [
+    "core/events/src/local.rs",
+    "core/events/src/lib.rs",
+    "apps/cli/src/commands/execution/timing.rs",
+    "apps/cli/src/commands/serve/routes.rs",
+    ".graphhelm/cards/issue-2694-timing.json"
+  ],
+  "proof": "cargo test -p graphhelm-cli --bin graphhelm lock_timing (a store lock on this thread is reported once as lock timing, then starts over); cargo clippy -p graphhelm-events -p graphhelm-cli --all-targets -D warnings; the effect is read from a Runtime started with GRAPHHELM_SERVE_TIMING=1 (executions.events and lock.* lines), not in this PR",
+  "exportedSymbols": ["LockTiming", "take_lock_timing"],
+  "journeys": []
+}

@@ -319,6 +319,50 @@ enum Exclusivity {
 /// Runtime's collection read admits exactly this many, so the route and the store cannot disagree.
 pub const MAX_SEALED_EVIDENCE_BATCH: usize = 64;
 
+/// Time one thread spent in the store's lock path (#2694): `wait` is the gate, the turnstile and
+/// both locks until they were held; `anchors` is the two anchor validations made while holding
+/// them. Read-only instrumentation: it changes no lock, no order and no result.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LockTiming {
+    pub wait: std::time::Duration,
+    pub anchors: std::time::Duration,
+}
+
+thread_local! {
+    static LOCK_TIMING: std::cell::RefCell<LockTiming> = const {
+        std::cell::RefCell::new(LockTiming {
+            wait: std::time::Duration::ZERO,
+            anchors: std::time::Duration::ZERO,
+        })
+    };
+    // Off unless a caller turns it on for this thread: with it off the lock path reads no clock.
+    static LOCK_TRACKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Turns the lock timing on for this thread. A caller that times a request (serve, with
+/// `GRAPHHELM_SERVE_TIMING=1`) starts it around the request and stops it after; with it off (the
+/// default) the store's lock path reads no clock and [`take_lock_timing`] stays at its default.
+pub fn start_lock_timing() {
+    LOCK_TRACKING.with(|cell| cell.set(true));
+}
+
+/// Turns the lock timing off for this thread (see [`start_lock_timing`]).
+pub fn stop_lock_timing() {
+    LOCK_TRACKING.with(|cell| cell.set(false));
+}
+
+fn lock_clock() -> Option<std::time::Instant> {
+    LOCK_TRACKING
+        .with(std::cell::Cell::get)
+        .then(std::time::Instant::now)
+}
+
+/// The lock timing this thread accumulated since the last call, and a fresh start.
+#[must_use]
+pub fn take_lock_timing() -> LockTiming {
+    LOCK_TIMING.with(|cell| std::mem::take(&mut *cell.borrow_mut()))
+}
+
 /// Crash-consistent repository-v1 directory for offline/local execution.
 #[derive(Clone)]
 pub struct LocalEventRepository {
@@ -1327,6 +1371,7 @@ impl LocalEventRepository {
         // DOES still serialise two threads sharing ONE handle is the journal mutex inside
         // `validate_anchors`, and no surface shares a handle today. Left as a seed rather than
         // changed without a guard that can fail.
+        let waiting = lock_clock();
         let _gate = self
             .operation_gate
             .lock()
@@ -1370,8 +1415,21 @@ impl LocalEventRepository {
             });
         }
         drop(turnstile);
-        let result = self.validate_anchors().and_then(|()| operation());
-        let result = match (result, self.validate_anchors()) {
+        if let Some(started) = waiting {
+            LOCK_TIMING.with(|cell| cell.borrow_mut().wait += started.elapsed());
+        }
+        let anchors = lock_clock();
+        let before = self.validate_anchors();
+        if let Some(started) = anchors {
+            LOCK_TIMING.with(|cell| cell.borrow_mut().anchors += started.elapsed());
+        }
+        let result = before.and_then(|()| operation());
+        let anchors = lock_clock();
+        let after = self.validate_anchors();
+        if let Some(started) = anchors {
+            LOCK_TIMING.with(|cell| cell.borrow_mut().anchors += started.elapsed());
+        }
+        let result = match (result, after) {
             (Ok(value), Ok(())) => Ok(value),
             (_, Err(error)) => Err(error),
             (Err(error), Ok(())) => Err(error),

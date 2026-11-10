@@ -3642,8 +3642,14 @@ pub(super) async fn events(
     };
 
     let events = state.events.clone();
-    let Some(result) =
-        off_reactor(move || execute_events_tail(&events, &execution_id, after, limit)).await
+    let Some(result) = off_reactor(move || {
+        // #2694: this route was untimed; its phases are the store open and the page read
+        // (which holds the lock wait, reported again as `lock.wait` / `lock.anchors`).
+        execution::timing::request("executions.events", || {
+            execute_events_tail(&events, &execution_id, after, limit)
+        })
+    })
+    .await
     else {
         return respond(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3665,18 +3671,20 @@ fn execute_events_tail(
     after: u64,
     limit: usize,
 ) -> Result<serde_json::Value, execution::Failure> {
-    let store = event_store(events_dir).map_err(|error| execution::repository_failure(&error))?;
+    let store = execution::timing::phase("store.open", || event_store(events_dir))
+        .map_err(|error| execution::repository_failure(&error))?;
     let (scope, stream_id) = execution::stream_of(execution_id)?;
     // #1560 / segmented stores: read only the page. `read_stream_page` seeks to the stream's
     // lines past `after` and stops at `limit`, so a page no longer costs the stream's whole
     // history (the Studio pages this route about 160 times per load).
-    store
-        .read_stream_page(&scope, &stream_id, after, limit)
-        .map(|(page, head)| {
-            let head = head.map_or(0, |head| head.next_sequence.saturating_sub(1));
-            serde_json::json!({ "events": page, "head": head })
-        })
-        .map_err(|error| execution::repository_failure(&error))
+    execution::timing::phase("stream.page", || {
+        store.read_stream_page(&scope, &stream_id, after, limit)
+    })
+    .map(|(page, head)| {
+        let head = head.map_or(0, |head| head.next_sequence.saturating_sub(1));
+        serde_json::json!({ "events": page, "head": head })
+    })
+    .map_err(|error| execution::repository_failure(&error))
 }
 
 /// Hand-parsed rather than axum's `Query` extractor: a malformed value must still reply the

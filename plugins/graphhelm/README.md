@@ -20,7 +20,7 @@ GraphHelm's Governor owns operational graph publication. Agents send typed signa
 
 ## Install from the repository
 
-The `graphhelm` plugin contains this guide, `graphhelm-setup`, `graphhelm-resume`, `graphhelm-kickoff`, and `graphhelm-team`. The same marketplace also lists the existing `graphhelm-jpd` and `graphhelm-development-contracts` plugins. Install those companions only when their skill families are needed; both can connect to the same local Runtime and require a separately configured trusted CLI, token file, and per-session actor. Installing any plugin alone does not install the GraphHelm executable.
+The `graphhelm` plugin contains this guide, `graphhelm-setup`, `graphhelm-resume`, `graphhelm-kickoff`, `graphhelm-team`, and `graphhelm-work`. The same marketplace also lists the existing `graphhelm-jpd` and `graphhelm-development-contracts` plugins. Install those companions only when their skill families are needed; both can connect to the same local Runtime and require a separately configured trusted CLI, token file, and per-session actor. Installing any plugin alone does not install the GraphHelm executable.
 
 In **Claude Code**:
 
@@ -64,10 +64,11 @@ operation and does not consume a second object. EOF before a complete object, in
 UTF-8 or JSON, a non-object value, and an oversized frame remain invalid input.
 
 SessionStart allows one request up to five seconds of socket inactivity, within
-Claude's ten-second hook declaration, including startup and durable cache
+the thirty-second hook declaration, including startup and durable cache
 publication. Runtime's five-second operator read budget is a progress check and
 does not guarantee a response within five seconds. SessionEnd also allows five
-seconds of socket inactivity; both plugins declare ten seconds for that event.
+seconds of socket inactivity; the Claude plugin declares ten seconds for that event
+and the Codex companion three.
 Older Codex versions may clamp larger declarations to three seconds. Inspect the
 installed host's effective budget rather than assuming it honors a declaration.
 

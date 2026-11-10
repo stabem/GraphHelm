@@ -39,7 +39,6 @@ windows-sys = { workspace = true, features = [
     # identity-checks the final handle (GetFinalPathNameByHandleW).
     "Win32_Storage_FileSystem",
     "Win32_System_Pipes",
-    "Win32_Storage_FileSystem",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Threading",

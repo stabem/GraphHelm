@@ -17,4 +17,3 @@ thiserror.workspace = true
 graphhelm-test-shims = { path = "../../tools/test-shims" }
 graphhelm-schema = { path = "../schema" }
 proptest.workspace = true
-serde_yaml_ng.workspace = true

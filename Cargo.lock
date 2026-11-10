@@ -1037,7 +1037,6 @@ dependencies = [
  "static_assertions",
  "tempfile",
  "thiserror",
- "uuid",
  "windows-sys 0.61.2",
  "zeroize",
 ]
@@ -1117,7 +1116,6 @@ dependencies = [
  "hex",
  "proptest",
  "serde_json",
- "serde_yaml_ng",
  "sha2 0.11.0",
  "thiserror",
 ]
@@ -1238,7 +1236,6 @@ dependencies = [
 name = "graphhelm-quality"
 version = "1.0.0"
 dependencies = [
- "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-test-shims",
  "pathogens",
@@ -1283,7 +1280,6 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2 0.11.0",
- "thiserror",
  "unsafe-libyaml",
  "windows-sys 0.61.2",
 ]
@@ -1295,12 +1291,10 @@ dependencies = [
  "graphhelm-process",
  "graphhelm-protocols",
  "graphhelm-schema",
- "hex",
  "proptest",
  "semver",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
  "thiserror",
 ]
@@ -1322,7 +1316,6 @@ dependencies = [
  "sha2 0.11.0",
  "static_assertions",
  "tempfile",
- "thiserror",
  "windows-sys 0.61.2",
  "zeroize",
 ]

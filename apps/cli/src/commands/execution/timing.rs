@@ -69,7 +69,7 @@ pub(crate) fn request<T>(route: &'static str, work: impl FnOnce() -> T) -> T {
     let outer = PHASES.with(|cell| cell.replace(Some(BTreeMap::new())));
     // #2694: the store's lock wait and anchor validation this request spent, reported as phases
     // of their own (they are also inside the phases that contain them).
-    drop(graphhelm_events::take_lock_timing());
+    let _stale = graphhelm_events::take_lock_timing();
     let started = Instant::now();
     let result = work();
     let total = started.elapsed();
@@ -149,7 +149,7 @@ mod tests {
     fn a_store_lock_is_reported_once_as_lock_timing() {
         let directory = tempfile::tempdir().unwrap();
         let store = crate::commands::event_store(directory.path()).unwrap();
-        drop(graphhelm_events::take_lock_timing());
+        let _stale = graphhelm_events::take_lock_timing();
         store.with_shared_lock(|| Ok(())).unwrap();
         let first = graphhelm_events::take_lock_timing();
         assert!(

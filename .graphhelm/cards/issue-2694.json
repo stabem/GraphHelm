@@ -1,0 +1,11 @@
+{
+  "promise": "The wake sweep reads the kept fold plus the events appended since (read_stream_after and the stream head), not the whole stream: due_leases and record_consumptions no longer copy and refold the journal on every sweep. Nothing is kept in memory beyond the existing fold cache, and no write path changes.",
+  "scopePaths": [
+    "apps/cli/src/commands/serve/wake.rs",
+    "apps/cli/src/commands/execution/status.rs",
+    ".graphhelm/cards/issue-2694.json"
+  ],
+  "proof": "cargo test -p graphhelm-cli --bin graphhelm serve::wake (post_write_readers_resume_the_shared_fold_at_the_fresh_head asserts zero whole-stream reads after a warm sweep; break-once: disabling the tail resume in glance_kept makes it fail with 2 reads); cargo clippy -p graphhelm-cli --all-targets -D warnings",
+  "exportedSymbols": [],
+  "journeys": []
+}

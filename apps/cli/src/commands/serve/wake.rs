@@ -126,17 +126,17 @@ fn due_leases(
     let stream = streams
         .into_iter()
         .find(|stream| stream.stream_id == execution)?;
-    let history = store
-        .read_replay_stream(&stream.scope, &stream.stream_id)
-        .ok()?;
-    // #1560: the cached fold, not a full refold of the stream after every write.
-    let projection = crate::commands::execution::status::replay_cached(
+    // #2694: the kept fold plus the events appended since (`status::glance`), not a copy and a
+    // refold of the whole stream under the store's lock on every sweep.
+    let glance = crate::commands::execution::status::glance(
+        &store,
         events,
         &stream.scope,
         &stream.stream_id,
-        &history,
+        &graphhelm_events::ReadBudget::unbounded(),
     )
     .ok()?;
+    let projection = glance.projection.ok()?;
     // Only NON-wake appends ring: bookkeeping past the cursor is not content. A presence
     // declaration is bookkeeping too (#1054): it is appended right after the mutation that
     // armed the lease, by the same session, and counting it as content consumed the lease
@@ -147,18 +147,19 @@ fn due_leases(
         .values()
         .map(|lease| lease.cursor)
         .min()?;
-    let actors: std::collections::BTreeMap<_, _> = history
-        .iter()
-        .filter_map(|event| {
-            let EventKind::WakeLease(arming) = &event.kind else {
-                return None;
-            };
+    let (history, _) = store
+        .read_stream_after(&stream.scope, &stream.stream_id, cursor)
+        .ok()?;
+    let actors: std::collections::BTreeMap<u64, &str> = glance
+        .digest
+        .wake_leases()
+        .filter(|(sequence, session, _)| {
             projection
                 .wake_leases
-                .get(arming.session_id.as_str())
-                .filter(|live| live.armed_at_sequence == event.sequence)
-                .map(|_| (event.sequence, event.actor.id().as_str()))
+                .get(*session)
+                .is_some_and(|live| live.armed_at_sequence == *sequence)
         })
+        .map(|(sequence, _, actor)| (sequence, actor))
         .collect();
     let mut content_head = 0;
     let mut notes: std::collections::BTreeMap<&str, u64> =
@@ -166,7 +167,7 @@ fn due_leases(
     // Open only pending notes, with the Runtime's existing keyring. Missing/unreadable
     // evidence cannot be treated as an unaddressed note and broadcast to unrelated actors.
     let mut opener = None;
-    for event in history.iter().filter(|event| event.sequence > cursor) {
+    for event in history.iter() {
         match &event.kind {
             EventKind::WakeLease(_)
             | EventKind::WakeLeaseConsumed(_)
@@ -397,28 +398,25 @@ fn record_consumptions_inner(
     // genuinely current — so nothing downstream had anything to object to, and a second
     // consumption landed on a lease that no longer existed. The fold then refused every
     // later replay of the stream.
-    let Ok(history) = store.read_replay_stream(&stream.scope, &stream.stream_id) else {
-        return 0;
-    };
-    // Pinned here, from the history this decision is made against.
-    //
-    // `max`, not `last`: the ordering of a replay read is journal order, and this must not
-    // quietly depend on that being sequence order. Equal to what `next_sequence` would
-    // answer, because sequences are contiguous per stream — local.rs assigns the next as
-    // expected + batch length and refuses on load any batch whose first event does not carry
-    // exactly the expected sequence. If that ever changes, this line is where it breaks.
-    let next = history
-        .iter()
-        .map(|event| event.sequence)
-        .max()
-        .map_or(1, |sequence| sequence + 1);
-    // #1560: the cached fold over this same fresh history, so the decision is never stale.
-    let Ok(projection) = crate::commands::execution::status::replay_cached(
+    // #2694: the kept fold and the events appended since, read once (`status::glance`); the
+    // digest's head is the stream's last event of that same read.
+    let Ok(glance) = crate::commands::execution::status::glance(
+        &store,
         events,
         &stream.scope,
         &stream.stream_id,
-        &history,
+        &graphhelm_events::ReadBudget::unbounded(),
     ) else {
+        return 0;
+    };
+    // Pinned here, from the read this decision is made against. Equal to what `next_sequence`
+    // would answer, because sequences are contiguous per stream.
+    let next = glance
+        .digest
+        .head
+        .as_ref()
+        .map_or(1, |(sequence, _)| sequence + 1);
+    let Ok(projection) = glance.projection else {
         return 0;
     };
     let still_live: Vec<&(DueLease, WakeConsumeReason)> = consumptions
@@ -1232,5 +1230,20 @@ mod tests {
             "the sweep after the next write saw that write"
         );
         assert_eq!(cached(), full());
+
+        // #2694: with the fold kept, a sweep after one more append reads the TAIL, never the
+        // whole stream again: not for phase 1, not for the recorder.
+        lease(6);
+        crate::commands::execution::status::WHOLE_READS.with(|count| count.set(0));
+        let due = due_leases(events, "exec-fold", None).expect("the sweep reads the stream");
+        let first = due.into_iter().next().expect("a lease is due");
+        let recorded =
+            record_consumptions(events, "exec-fold", &[(first, WakeConsumeReason::Rung)]);
+        assert_eq!(recorded, 1, "the consumption still records");
+        assert_eq!(
+            crate::commands::execution::status::WHOLE_READS.with(std::cell::Cell::get),
+            0,
+            "neither sweep phase may read the whole stream while the fold is kept"
+        );
     }
 }

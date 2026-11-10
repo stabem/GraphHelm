@@ -225,3 +225,85 @@ class CardPath(unittest.TestCase):
         self.on_branch("issue-15480-x")
         self.card(".graphhelm/cards/issue-1548.json")
         self.assertEqual(keel_stop_hook.card_path(self.repo).as_posix(), ".graphhelm/keel-card.json")
+
+
+class CardPathChangedCard(unittest.TestCase):
+    """#2735: a detached review checkout, or a card named issue-<N>-<what>.json, has a card the
+    branch name does not find. The hooks use the one card the checkout adds since the merge base;
+    cards already on main (every merged card is tracked) never count."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.repo = Path(self.tmp)
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "config", "user.email", "t@t")
+        git(self.repo, "config", "user.name", "t")
+        self.card(".graphhelm/cards/issue-1000.json")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+
+    def card(self, relative):
+        path = self.repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}")
+
+    def commit_card(self, relative):
+        self.card(relative)
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", relative)
+
+    def path(self):
+        return keel_stop_hook.card_path(self.repo).as_posix()
+
+    def test_detached_checkout_uses_the_card_it_adds(self):
+        git(self.repo, "checkout", "-qb", "work")
+        self.commit_card(".graphhelm/cards/issue-2694-phases.json")
+        git(self.repo, "checkout", "-q", "--detach")
+        self.assertEqual(self.path(), ".graphhelm/cards/issue-2694-phases.json")
+
+    def test_suffixed_card_on_its_issue_branch_is_found(self):
+        git(self.repo, "checkout", "-qb", "issue-2694-append-phases-main")
+        self.commit_card(".graphhelm/cards/issue-2694-phases.json")
+        self.assertEqual(self.path(), ".graphhelm/cards/issue-2694-phases.json")
+
+    def test_cards_already_on_main_are_not_the_checkouts_card(self):
+        git(self.repo, "checkout", "-q", "--detach")
+        self.assertEqual(self.path(), ".graphhelm/keel-card.json")
+
+    def test_two_added_cards_stay_ambiguous(self):
+        git(self.repo, "checkout", "-qb", "work")
+        self.commit_card(".graphhelm/cards/issue-2001.json")
+        self.commit_card(".graphhelm/cards/issue-2002.json")
+        git(self.repo, "checkout", "-q", "--detach")
+        self.assertEqual(self.path(), ".graphhelm/keel-card.json")
+
+    def test_an_existing_legacy_card_still_wins(self):
+        git(self.repo, "checkout", "-qb", "work")
+        self.commit_card(".graphhelm/cards/issue-2001.json")
+        self.card(".graphhelm/keel-card.json")
+        self.assertEqual(self.path(), ".graphhelm/keel-card.json")
+
+    def test_an_unrelated_card_is_not_the_issue_branchs_card(self):
+        """#2735 review: on issue-9-z with no card of its own, a changed issue-3 card does not count."""
+        git(self.repo, "checkout", "-qb", "issue-9-z")
+        self.commit_card(".graphhelm/cards/issue-3-other.json")
+        self.assertEqual(self.path(), ".graphhelm/keel-card.json")
+
+    def test_an_untracked_card_on_a_detached_checkout_is_found(self):
+        git(self.repo, "checkout", "-q", "--detach")
+        self.card(".graphhelm/cards/issue-2694-phases.json")  # written, never added
+        self.assertEqual(self.path(), ".graphhelm/cards/issue-2694-phases.json")
+
+    def test_a_pretool_run_looks_for_the_card_once(self):
+        """#2735 review: the lookup is one `git diff` per run, not one per card_path call."""
+        import keel_pretool_hook
+        git(self.repo, "checkout", "-qb", "issue-2694-append-phases-main")
+        self.commit_card(".graphhelm/cards/issue-2694-phases.json")
+        target = self.repo / "app.py"
+        real = keel_stop_hook._git
+        keel_stop_hook._CARD_MEMO.clear()
+        with mock.patch.object(keel_stop_hook, "_git", side_effect=real) as spy:
+            keel_pretool_hook.decide(self.repo, target, {"content": "x = 1\n"})
+        lookups = [c for c in spy.call_args_list if ".graphhelm/cards/" in c.args]
+        self.assertEqual(len(lookups), 1, spy.call_args_list)

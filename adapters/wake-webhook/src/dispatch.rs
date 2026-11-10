@@ -15,6 +15,9 @@ use super::{Config, DEADLINE, Outcome, Secret, Step, Ureq, deliver, delivery_id}
 const CONFIG_FILE: &str = "wake-webhooks.json";
 const SECRETS_DIR: &str = "wake-secrets";
 const LOG_FILE: &str = "wake-webhook.log";
+/// `OpenOptions` flags, named: the log is created when missing and only ever appended to.
+const CREATE: bool = true;
+const APPEND: bool = true;
 
 /// Sends ready steps to their lane's webhook, once each.
 pub struct Dispatcher {
@@ -92,12 +95,16 @@ impl Dispatcher {
 
     fn log(&self, id: &str, code: &str) {
         let line = format!("{} {} {}\n", clock().1, id, code);
-        // Local state only: a log that cannot be written never fails the sweep.
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
+        // Local state only: a log that cannot be written never fails the sweep, but it is said
+        // (the error kind only: no path, no content).
+        let written = std::fs::OpenOptions::new()
+            .create(CREATE)
+            .append(APPEND)
             .open(self.dir.join(LOG_FILE))
             .and_then(|mut file| file.write_all(line.as_bytes()));
+        if let Err(error) = written {
+            eprintln!("wake webhook: delivery log not written ({})", error.kind());
+        }
     }
 
     /// Delivers `step` to its lane once. `None` when the lane is off (no url or no secret: logged

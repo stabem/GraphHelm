@@ -300,10 +300,7 @@ fn webhook_steps(
     let Some(cursor) = cursor else {
         // First run: start at the head, hand nothing to any lane.
         if let Some(head) = head {
-            let _ = std::fs::write(
-                &cursor_path,
-                head.next_sequence.saturating_sub(1).to_string(),
-            );
+            write_cursor(&cursor_path, head.next_sequence.saturating_sub(1));
         }
         return Vec::new();
     };
@@ -372,8 +369,17 @@ fn webhook_steps(
     }
     // Handled up to `last` (a step whose delivery fails is retried by nothing here: the delivery
     // log records it, and the lane still has its message and the tasks projection).
-    let _ = std::fs::write(&cursor_path, last.to_string());
+    write_cursor(&cursor_path, last);
     steps
+}
+
+/// The webhook cursor, written best-effort: a cursor that cannot be written is said (the error
+/// kind only) and the next pass handles the same records again, which the delivery log's
+/// once-per-id rule absorbs.
+fn write_cursor(path: &Path, sequence: u64) {
+    if let Err(error) = std::fs::write(path, sequence.to_string()) {
+        eprintln!("wake webhook: cursor not written ({})", error.kind());
+    }
 }
 
 /// One process-wide pass at a time: two sweeps must not both take the same cursor.
@@ -396,7 +402,8 @@ fn webhook_pass(
         return;
     };
     for step in webhook_steps(events, execution, sealing) {
-        let _ = dispatcher.notify(&step);
+        // Every outcome is already in the delivery log; none of them fails the sweep.
+        drop(dispatcher.notify(&step));
     }
 }
 

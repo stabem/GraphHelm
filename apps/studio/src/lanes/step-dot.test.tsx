@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { BoardTask } from "../runtime/client";
 import { StepDots } from "./StepDots";
-import { dotText, graphDots, lanesDots, prLink } from "./step-dot";
+import { dotText, graphDots, graphStage, lanesDots, prLink } from "./step-dot";
 
 // #2532: each dot's line comes from the records the board holds; a dot with no record says
 // "not started" and carries no invented text.
@@ -48,6 +48,30 @@ describe("the step dots of a Graph issue card", () => {
   it("a card in the Ready column shows its stage as stalled with the silent time", () => {
     const dots = graphDots(task(), 2, true, "2026-11-05T11:40:00Z", now);
     expect(dots[2]!.text).toContain("stalled · no reason given · silent since");
+  });
+});
+
+describe("the step a Kanban card's dots stand on", () => {
+  const states = (t: BoardTask, proven = false) => graphDots(t, graphStage(t, proven), false, null, now).map((dot) => dot.state);
+
+  it("a card in review has three steps done, review in progress, merge not started", () => {
+    expect(states(task({ step: "review" }))).toEqual(["done", "done", "done", "in progress", "not started"]);
+  });
+
+  it("a card implementing with a PR open stands on implement", () => {
+    expect(states(task({ step: "implement", pr: 12 }))).toEqual(["done", "done", "in progress", "not started", "not started"]);
+  });
+
+  it("a card in plan stands on plan", () => {
+    expect(states(task({ step: "plan" }))).toEqual(["in progress", "not started", "not started", "not started", "not started"]);
+  });
+
+  it("a merged card has every step done", () => {
+    expect(states(task({ step: "merged" }))).toEqual(["done", "done", "done", "done", "done"]);
+  });
+
+  it("a proven card has every step done whatever its step", () => {
+    expect(states(task({ step: "plan" }), true)).toEqual(["done", "done", "done", "done", "done"]);
   });
 });
 

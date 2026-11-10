@@ -439,13 +439,9 @@ mod tests {
     fn the_key_file_is_opened_once_and_never_reread_by_path() {
         let source = include_str!("secret_file.rs");
         let start = source.find("pub(crate) fn read_owner_only").unwrap();
-        let end = start
-            + source[start..]
-                .find(
-                    "
-fn is_link",
-                )
-                .unwrap();
+        // The function's own closing brace, so the slice holds no later definition (#2752: it
+        // used to run on to `fn is_link` and matched `fn final_path_matches(` itself).
+        let end = start + source[start..].find("\n}\n").unwrap();
         let body = &source[start..end];
         let open = body.find("open_without_following(").unwrap();
         assert_eq!(body.matches("open_without_following(").count(), 1, "{body}");

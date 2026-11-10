@@ -19,7 +19,8 @@ SOURCE = Path(__file__).with_name("reference-transaction")
 
 def shared_git_dir(cwd):
     out = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=cwd,
-                         capture_output=True, text=True, timeout=30, check=True).stdout.strip()
+                         capture_output=True, text=True, timeout=30, check=True,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout.strip()
     return Path(out)
 
 

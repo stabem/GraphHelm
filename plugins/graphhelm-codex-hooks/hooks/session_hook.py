@@ -409,8 +409,8 @@ WAKE_LEASE_SECONDS = 600
 
 
 def arm_lane_wake(payload: dict, bound: tuple[str, str, str, str, str | None], matures_in: int = WAKE_LEASE_SECONDS,
-                  cursor: int | None = None) -> int:
-    """Renew the lane's finite lease from the last observed event head."""
+                  cursor: int | None = None) -> int | None:
+    """Renew the lane's finite lease from the last observed event head. `None`: no lane, nothing armed."""
     execution, token_file, url, _origin, _node = bound
     actor = os.environ.get("GRAPHHELM_ACTOR") or _lane_actor(payload)
     session = _session(payload)
@@ -580,6 +580,8 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     except (FileNotFoundError, ValueError, OSError):
         pass
     cursor = arm_lane_wake(payload, bound)
+    if cursor is None:
+        return  # no lane actor, so no lease was armed and there is nothing to wait on
     pid_path.parent.mkdir(parents=True, exist_ok=True)
     argv = [sys.executable, str(Path(__file__).resolve()), "wait", "--host", host,
             "--session-id", _session(payload), "--events", str(events),

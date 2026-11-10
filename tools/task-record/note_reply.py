@@ -24,6 +24,11 @@ ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_):
+        return None
+
+
 def _call(url, token, lane, method="GET", body=None, key=None):
     if urllib.parse.urlsplit(url).hostname not in LOOPBACK:
         raise SystemExit("note_reply: the Runtime URL must be loopback")
@@ -33,8 +38,15 @@ def _call(url, token, lane, method="GET", body=None, key=None):
         headers["Idempotency-Key"] = key
     request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
                                      method=method, headers=headers)
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)
+    # The loopback check above reads only the URL the caller gave, so a redirect is never followed:
+    # it would carry the bearer token to wherever the answer pointed.
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        if 300 <= error.code < 400:
+            raise SystemExit(f"note_reply: the Runtime answered with a redirect (HTTP {error.code}), which is refused")
+        raise
 
 
 def build_signal(args, now=None):

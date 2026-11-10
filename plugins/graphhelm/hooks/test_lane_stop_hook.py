@@ -1332,6 +1332,32 @@ class LaneStopTests(unittest.TestCase):
         child.stdin.close()
         return child
 
+    def test_an_openbot_lane_starts_no_background_rewake(self):
+        # #2714: an OpenBot lane is woken by the Runtime's webhook; a rewake waiting outside
+        # OpenBot cannot start its turn, so it would only leak a process. The control first: the
+        # same setup for a lane outside OpenBot has its rewake waiting (a pid file, still alive),
+        # so the openbot- lane's immediate exit below is the rule, not an unbound lane.
+        self.assertEqual(self.stop(MANIFESTS[0]), [])
+        pid_files = lambda: list(self.hook_state_dir.glob("*.rewake.pid"))  # noqa: E731
+        control = self.rewake()
+        end = time.monotonic() + 25 * time_scale()
+        while not pid_files() and time.monotonic() < end:
+            time.sleep(0.2)
+        self.assertTrue(pid_files(), "a lane outside OpenBot has its rewake waiting")
+        self.assertIsNone(control.poll())
+        control.kill()
+        control.wait(timeout=10)
+        for stale in pid_files():
+            stale.unlink()
+        self.env["GRAPHHELM_ACTOR"] = "openbot-sasuke"
+        child = self.rewake()
+        try:
+            _out, err = child.communicate(timeout=25 * time_scale())
+        except subprocess.TimeoutExpired:
+            self.fail("an openbot- lane's rewake kept waiting instead of exiting")
+        self.assertEqual(child.returncode, 0, err)
+        self.assertEqual(pid_files(), [], "no rewake owner was recorded for an openbot- lane")
+
     def test_an_idle_lane_is_woken_by_a_note_addressed_to_it(self):
         # #1058: the journey. The lane's turn ends (Stop starts its waiter and the background
         # rewake), it sits idle, the owner asks it; the rewake exits 2, which wakes the host,

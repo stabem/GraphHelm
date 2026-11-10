@@ -1,0 +1,19 @@
+{
+  "promise": "A lane run by OpenBot (GRAPHHELM_ACTOR starting with openbot-, or GRAPHHELM_NO_WAITER=1 from settings.local.json env) starts no hook waiter: the Stop hook's background rewake exits at once and the session hook starts no wake-wait waiter, so no process leaks while the lane is idle; the Runtime's webhook is its wake. Every other lane keeps both. Heartbeat touch and the dead-waiter sweep are unchanged.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/lane_stop_hook.py",
+    "plugins/graphhelm/hooks/session_hook.py",
+    "plugins/graphhelm-codex-hooks/hooks/lane_stop_hook.py",
+    "plugins/graphhelm-codex-hooks/hooks/session_hook.py",
+    "plugins/graphhelm/hooks/test_lane_stop_hook.py",
+    "plugins/graphhelm/hooks/test_session_hook.py",
+    "plugins/graphhelm/hooks/test_no_window_windows.py",
+    "plugins/graphhelm-codex-hooks/hooks/test_no_window_windows.py",
+    ".graphhelm/cards/issue-2714-nowaiter.json"
+  ],
+  "proof": "python -m pytest plugins/graphhelm/hooks/test_session_hook.py -k openbot_lane and plugins/graphhelm/hooks/test_lane_stop_hook.py -k openbot_lane (each with a control that another lane still starts its waiter / rewake); the full plugins/graphhelm/hooks and plugins/graphhelm-codex-hooks suites; not observed: a process count on a real OpenBot lane across many turns",
+  "exportedSymbols": [
+    "webhook_woken"
+  ],
+  "journeys": []
+}

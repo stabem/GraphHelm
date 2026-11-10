@@ -181,7 +181,14 @@ fn top_level_command(argument: &str) -> Option<&'static str> {
         "wake-wait" => Some("wake-wait"),
         "quality" => Some("quality"),
         "init" => Some("init"),
+        "setup" => Some("setup"),
+        "backup" => Some("backup"),
+        "restore" => Some("restore"),
         "keel" => Some("keel"),
+        "journeys" => Some("journeys"),
+        "journey" => Some("journey"),
+        "workspace" => Some("workspace"),
+        "skills" => Some("skills"),
         "studio" => Some("studio"),
         "update" => Some("update"),
         _ => None,
@@ -196,4 +203,31 @@ fn pretty_requested(arguments: &[OsString]) -> bool {
 /// itself refused to parse them.
 fn flag_requested(arguments: &[OsString], flag: &str) -> bool {
     arguments.iter().skip(1).any(|argument| argument == flag)
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    /// #2745: seven command families were missing from `top_level_command`, so a malformed
+    /// `--json` invocation of them printed clap's text instead of the `GHCLI001` envelope.
+    #[test]
+    fn every_top_level_command_has_a_structured_argument_error() {
+        for subcommand in crate::args::Cli::command().get_subcommands() {
+            let name = subcommand.get_name();
+            assert_eq!(super::top_level_command(name), Some(name), "{name}");
+        }
+    }
+
+    /// #2745: `--sweep-interval 0` was accepted and swept every second.
+    #[test]
+    fn a_zero_sweep_interval_is_refused_at_parse_time() {
+        let parse = |seconds: &str| {
+            crate::args::Cli::try_parse_from(["graphhelm", "serve", "--sweep-interval", seconds])
+                .map(|_| ())
+                .map_err(|error| error.kind())
+        };
+        assert_eq!(parse("0"), Err(clap::error::ErrorKind::ValueValidation));
+        assert_ne!(parse("1"), Err(clap::error::ErrorKind::ValueValidation));
+    }
 }

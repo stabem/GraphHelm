@@ -6,8 +6,8 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use graphhelm_quality::{
-    ContentManifest, Delivered, DiffShape, LayoutBudget, RequiredElement, check_content,
-    check_layout, strip_authored_text,
+    ContentManifest, Delivered, DeliveredClaim, DiffShape, LayoutBudget, RequiredElement,
+    check_content, check_layout, strip_authored_text,
 };
 
 fn real_monitor_page() -> String {
@@ -103,6 +103,46 @@ fn the_layout_grammar_passes_the_real_render_and_fails_a_broken_one() {
         findings.iter().any(|f| f.claim.contains("renders empty")),
         "an empty section is caught: {findings:?}"
     );
+}
+
+#[test]
+fn background_color_is_the_ground_and_never_a_foreground() {
+    // #2745: `color:` also matched inside `background-color:`, and `background:` never matched
+    // `background-color:`, so a dark ground was scored as a foreground against white.
+    let page = "<style>body{background-color:#111;color:#eee}</style><body></body>";
+    let findings = check_layout(page, &LayoutBudget::default());
+    assert!(
+        findings.iter().all(|f| !f.claim.contains("contrast")),
+        "light text on a dark declared ground clears the floor: {findings:?}"
+    );
+
+    let washed = "<style>body{background-color:#111;color:#222}</style><body></body>";
+    let findings = check_layout(washed, &LayoutBudget::default());
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.claim.contains("contrast"))
+            .count(),
+        1,
+        "exactly the one declared foreground is scored: {findings:?}"
+    );
+}
+
+#[test]
+fn a_multibyte_character_at_the_region_edge_does_not_panic() {
+    // #2745: the label region was cut at a fixed byte offset, which can fall inside a character.
+    let claim = |feature: &str, id: &str| DeliveredClaim {
+        feature: feature.to_owned(),
+        element_id: Some(id.to_owned()),
+        artifact: None,
+    };
+    // The region starts at `id="a"` (byte 5) and was cut 400 bytes later, at byte 405; the
+    // 2-byte character below occupies bytes 404 and 405.
+    let html = format!("<div id=\"a\">{}é</div>", "x".repeat(392));
+    let mut delivered = monitor_delivered(html);
+    delivered.claims = vec![claim("alpha", "a"), claim("beta", "b")];
+    delivered.reachable_ids = ["a".to_owned()].into_iter().collect();
+    let _ = check_content(&delivered, &ContentManifest::from_claims(&[]));
 }
 
 #[test]

@@ -398,14 +398,36 @@ fn sections(stripped: &str) -> Vec<(String, String)> {
 
 fn element_region<'a>(html: &'a str, id: &str) -> Option<&'a str> {
     let start = html.find(&format!("id=\"{id}\""))?;
-    Some(&html[start..html.len().min(start + 400)])
+    let mut end = html.len().min(start + 400);
+    while !html.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(&html[start..end])
 }
 
-/// Every `property: #hex` declaration in the style block, as linear-ish RGB.
+/// Every `property: #hex` declaration in the style block, as linear-ish RGB. The property name
+/// is matched whole: `color` is not the tail of `background-color`, and `background` also reads
+/// its `background-color` longhand.
 fn declared_colors(stripped: &str, property: &str) -> Vec<(f64, f64, f64)> {
     let mut colors = Vec::new();
-    for chunk in stripped.split(&format!("{property}:")).skip(1) {
-        let value = chunk.trim_start();
+    for (at, _) in stripped.match_indices(property) {
+        if stripped[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|before| before == '-' || before.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        let rest = &stripped[at + property.len()..];
+        let rest = if property == "background" {
+            rest.strip_prefix("-color").unwrap_or(rest)
+        } else {
+            rest
+        };
+        let Some(value) = rest.strip_prefix(':') else {
+            continue;
+        };
+        let value = value.trim_start();
         if let Some(hex) = value.strip_prefix('#') {
             let hex: String = hex
                 .chars()

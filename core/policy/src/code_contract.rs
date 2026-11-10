@@ -276,10 +276,17 @@ pub fn resolve_code_contract(
             // CLASS FIRST, and the order is the point. A structural rule is unwaivable regardless
             // of how complete the override is; checking completeness first would let a correctly
             // filled form decide a question that is not about completeness at all.
-            if spec.enforcement == "structural" {
+            // FAIL CLOSED on the class (#2745): `enforcement` is a free string, so a misspelled
+            // "structural" must not read as a waivable class.
+            let refusal = match spec.enforcement.as_str() {
+                "quality" | "preference" => None,
+                "structural" => Some("<structural rules cannot be waived>"),
+                _ => Some("<only quality and preference rules can be waived>"),
+            };
+            if let Some(missing) = refusal {
                 return Err(ResolutionRefusal::WaiverInvalid {
                     rule: rule_id,
-                    missing: "<structural rules cannot be waived>".to_owned(),
+                    missing: missing.to_owned(),
                 });
             }
 

@@ -157,7 +157,7 @@ pub fn mint(
         allowed_tools: derive_allowed_tools(surfaces),
         effects: effects.iter().cloned().collect(),
         revoked: false,
-        expires_at: now + ttl_seconds,
+        expires_at: now.saturating_add(ttl_seconds),
     }
 }
 

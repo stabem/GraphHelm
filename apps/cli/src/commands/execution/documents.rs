@@ -4,6 +4,7 @@ use std::io::Read;
 use std::path::Path;
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
+use graphhelm_execution::tasks::valid_repo;
 use graphhelm_protocols::{EventKind, EvidenceId, OpaqueId, PersistedActor};
 use graphhelm_tool_host::documents::{DocumentError, ProjectDocuments};
 use serde::{Deserialize, Serialize};
@@ -1428,27 +1429,6 @@ fn heartbeat_cooldown_elapsed(
     now.signed_duration_since(previous) >= chrono::Duration::seconds(300)
 }
 
-/// `owner/name` of a GitHub repository (#420): an owner of 1-39 ASCII letters, digits or `-` not
-/// starting with `-`; a name of 1-100 of letters, digits, `_`, `.` or `-` that is not `.`, `..` or
-/// all dots. The same rule as `task-event.schema.json` `$defs.repo`.
-fn valid_repo(repo: &str) -> bool {
-    let Some((owner, name)) = repo.split_once('/') else {
-        return false;
-    };
-    let owner_ok = (1..=39).contains(&owner.len())
-        && !owner.starts_with('-')
-        && owner
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-');
-    let name_ok = (1..=100).contains(&name.len())
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
-        && name.trim_start_matches('.').len() + 2 >= name.len()
-        && name.bytes().any(|b| b != b'.');
-    repo.len() <= 140 && owner_ok && name_ok
-}
-
 /// #534 (#569 review): the reserved owner execution and the approval id space are the owner's.
 /// Before any kind-specific check: nobody but the owner records into `graphhelm-owner`, and no
 /// signal of another kind may take a `journey-approved-` id, so an agent cannot squat the id an
@@ -2459,6 +2439,17 @@ pub(crate) fn save_with_protected(
         serde_json::json!({"contentSha256":after,"changeId":change_id,"target":"main_project",
         "notification":{"status":if pending.is_empty(){"recorded"}else{"pending"},"notifiedRuns":notified,"pendingRuns":pending}}),
     )
+}
+
+#[cfg(test)]
+mod repo_tests {
+    /// #2745: the CLI kept its own copy of the `owner/name` rule, which accepted a single-dot name
+    /// of 100 characters that `task-event.schema.json` and the core rule refuse.
+    #[test]
+    fn a_single_dot_name_follows_the_schema_length() {
+        assert!(super::valid_repo(&format!("o/.{}", "a".repeat(98))));
+        assert!(!super::valid_repo(&format!("o/.{}", "a".repeat(99))));
+    }
 }
 
 #[cfg(test)]

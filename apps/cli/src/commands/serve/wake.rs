@@ -462,7 +462,7 @@ fn webhook_steps(
             match trigger_for(&signal.kind, &document, actor, &mut authors) {
                 Trigger::Step(step) => steps.push((event.sequence, step)),
                 Trigger::NoAuthor(pr) => {
-                    dispatcher.log_skip(&format!("pr-{pr}:{}", &signal.kind), "skipped-no-author");
+                    dispatcher.log_skip(&format!("pr-{pr}:{}", signal.kind), "skipped-no-author");
                 }
                 Trigger::Nothing => {}
             }

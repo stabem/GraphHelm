@@ -1,0 +1,16 @@
+{
+  "promise": "Slice 3 of the wake webhook: when a task.review_assigned record lands, the Runtime's sweep hands a step to the reviewer lane's webhook, once per delivery id (lane:step:head), with the url map and signing secrets read from gitignored files under .graphhelm/, an append-only delivery log (no url, secret or payload), a persisted cursor whose first pass takes the head and sends nothing for history, and no journal write; a lane without a url or secret is off and logged as skipped. Only the pinned deliver is public: Transport is crate-private.",
+  "scopePaths": [
+    "adapters/wake-webhook/Cargo.toml",
+    "adapters/wake-webhook/src/lib.rs",
+    "adapters/wake-webhook/src/dispatch.rs",
+    "apps/cli/Cargo.toml",
+    "apps/cli/src/commands/serve/wake.rs",
+    "apps/cli/tests/wake_http.rs",
+    "Cargo.lock",
+    ".graphhelm/cards/issue-2714-slice3.json"
+  ],
+  "proof": "cargo test -p graphhelm-wake-webhook (25 passed: dispatcher once-per-step, skipped lines, pinned real notify, path-like lane names read no secret, config pin); cargo test -p graphhelm-cli --test cli a_review_assignment_is_handed_to_the_webhook_dispatcher (a signed review assignment reaches the dispatcher once; secret absent so nothing leaves the machine); cargo clippy -D warnings. Not observed: a real POST to OpenBot (needs the owner's secrets); BLOCK/APPROVE/merged triggers; break-once of the e2e test",
+  "exportedSymbols": ["Dispatcher"],
+  "journeys": []
+}

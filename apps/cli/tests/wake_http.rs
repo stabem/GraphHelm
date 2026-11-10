@@ -4751,3 +4751,74 @@ fn the_pipe_wait_is_bounded_below_the_leases_it_races() {
         pipe_bound - tightest
     );
 }
+
+/// #2714 slice 3: a review assignment reaches the webhook dispatcher, once, for the lane it names.
+/// The lane's secret file is absent on purpose, so nothing leaves the machine: the delivery log
+/// says the lane was skipped, which is the observable proof that the Runtime found the step (the
+/// reviewer, the head) in the signed record. The first pass only takes the cursor, so an unrelated
+/// signal runs it first.
+/// Cost: one local server, temp stores only.
+#[test]
+fn a_review_assignment_is_handed_to_the_webhook_dispatcher() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    start_execution(&events, directory.path(), "exec-webhook");
+    std::fs::write(
+        directory.path().join("wake-webhooks.json"),
+        r#"{"agent-sleeper":"https://signal.openbot.run/v1/webhooks/fixture"}"#,
+    )
+    .unwrap();
+    let (_guard, address, token) = serve(&events);
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-webhook/signal",
+        "webhook-first",
+        &signal_body("webhook-first"),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let cursor = directory.path().join("wake-webhook.cursor");
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
+    while !cursor.exists() {
+        assert!(Instant::now() < deadline, "the first pass takes the cursor");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let document = serde_json::json!({
+        "schema": "graphhelm-task-event-v1", "taskId": "issue-1772", "revision": 1,
+        "at": "2026-10-21T00:00:00Z", "pr": 1772, "headSha": "0123456789abcdef0123456789abcdef01234567",
+        "reviewer": "agent-sleeper", "ordinal": 1,
+    });
+    let body = serde_json::json!({"signal": {
+        "id": "webhook-review", "type": "task.review_assigned",
+        "source": {"type": "user", "id": "agent-wake-test"}, "severity": "low",
+        "evidence": ["https://github.com/stabem/GraphHelm/pull/1772"],
+        "emittedAt": "2026-10-21T00:00:00Z", "description": document.to_string(),
+    }});
+    let (status, reply) = post_json(
+        &address,
+        &token,
+        "/v1/executions/exec-webhook/signal",
+        "webhook-review",
+        &body,
+    );
+    assert_eq!(status, 200, "{reply}");
+    let log = directory.path().join("wake-webhook.log");
+    let wanted = "agent-sleeper:review:0123456789abcdef0123456789abcdef01234567 skipped-no-secret";
+    let deadline = Instant::now() + scaled(Duration::from_secs(30));
+    loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains(wanted) {
+            assert_eq!(text.matches(wanted).count(), 1, "once per step: {text}");
+            assert!(
+                !text.contains("signal.openbot.run"),
+                "no url in the log: {text}"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the review step must reach the dispatcher: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

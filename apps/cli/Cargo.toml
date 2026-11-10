@@ -35,6 +35,7 @@ graphhelm-gateway = { path = "../../core/gateway" }
 graphhelm-governor = { path = "../../core/governor" }
 graphhelm-graph = { path = "../../core/graph" }
 graphhelm-model-gateway = { path = "../../adapters/model-gateway" }
+graphhelm-wake-webhook = { path = "../../adapters/wake-webhook" }
 graphhelm-process-tree = { path = "../../adapters/process-tree" }
 graphhelm-policy = { path = "../../core/policy" }
 graphhelm-postgres-event-store = { path = "../../adapters/postgres-event-store", optional = true }

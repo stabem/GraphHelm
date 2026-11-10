@@ -958,6 +958,7 @@ dependencies = [
  "graphhelm-test-shims",
  "graphhelm-tool-broker",
  "graphhelm-tool-host",
+ "graphhelm-wake-webhook",
  "hex",
  "keel-contract-index",
  "libc",
@@ -1381,10 +1382,12 @@ dependencies = [
 name = "graphhelm-wake-webhook"
 version = "1.0.0"
 dependencies = [
+ "chrono",
  "hex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "ureq",
  "zeroize",
 ]

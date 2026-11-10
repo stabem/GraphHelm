@@ -6,6 +6,10 @@
 //! calls and never writes the journal. A signing secret is a [`Secret`]: its `Debug` text is
 //! fixed, so no log line or error can carry the value.
 
+mod dispatch;
+
+pub use dispatch::Dispatcher;
+
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -154,7 +158,10 @@ impl Config {
 }
 
 /// One POST: status code, or why there was none. A seam so retries are tested without a network.
-pub trait Transport {
+///
+/// Crate-private on purpose (Shino's review of #2736): a public `post` would reach any url with
+/// no host pin. Outside the crate the only way to send is [`deliver`], which pins.
+pub(crate) trait Transport {
     fn post(&self, url: &str, headers: &[(&str, String)], body: &str) -> Result<u16, String>;
 }
 
@@ -197,7 +204,7 @@ impl Transport for Ureq {
 /// Signs and posts `step`; a 503 is retried up to [`MAX_RETRIES`] times with `pause` between tries.
 /// 401/404 and any other 4xx are never retried. No secret or url appears in the outcome.
 pub fn deliver(
-    transport: &dyn Transport,
+    transport: &Ureq,
     url: &str,
     secret: &Secret,
     step: &Step,
@@ -554,27 +561,30 @@ mod tests {
 
     #[test]
     fn deliver_itself_refuses_a_url_off_the_pinned_host() {
-        let fake = Fake {
-            replies: RefCell::new(vec![]),
-            seen: RefCell::new(vec![]),
-        };
+        // The real client, and the exact refusal: if the pin were removed the request would go out
+        // and fail as a transport error (a different message), so this test fails.
+        let client = Ureq::new(Duration::from_millis(500));
         for url in [
             "http://signal.openbot.run/x",
             "https://evil.example/x",
             "https://signal.openbot.run@evil.example/x",
             "https://signal.openbot.run.evil.example/x",
+            "http://127.0.0.1:9/x",
         ] {
             let outcome = deliver(
-                &fake,
+                &client,
                 url,
                 &Secret::new("k"),
                 &step(),
                 &|| (1, "t".into()),
                 &|_| {},
             );
-            assert!(matches!(outcome, Outcome::Failed(_)), "{url}");
+            assert_eq!(
+                outcome,
+                Outcome::Failed("url is not https on the pinned host".to_owned()),
+                "{url}"
+            );
         }
-        assert!(fake.seen.borrow().is_empty(), "nothing was sent");
     }
 
     #[test]

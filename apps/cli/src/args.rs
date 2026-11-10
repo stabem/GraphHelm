@@ -740,7 +740,7 @@ pub struct StudioOpenArgs {
     /// The Studio port on 127.0.0.1.
     #[arg(long, default_value_t = 5183)]
     pub port: u16,
-    /// Launch no browser and return the one-time login link as `data.url`, for a caller that opens
+    /// Launch no browser and return the reusable project link as `data.url`, for a caller that opens
     /// it in its own browser; without it the link is returned only when the browser fails to open.
     #[arg(long = "no-browser")]
     pub no_browser: bool,
@@ -1403,14 +1403,14 @@ pub struct ServeArgs {
     pub staging: Option<PathBuf>,
     /// The deployer's own default workspace root for `start`/`resume`, used whenever a request
     /// omits `"project"` — never required, never part of the real-executor group above. Absent,
-    /// the prior behavior is unchanged: the server's own process working directory. Exists
+    /// an initialised working directory (one holding `.graphhelm/`) is the project (#2360);
+    /// otherwise the default is the server's own process working directory. Exists
     /// because neither `start` nor `resume`'s MCP tool schema exposes a `project` field (issue
     /// #82) — an operator confined to the MCP surface has no channel to avoid the default
     /// colliding with `--staging` when the server happens to run from a `--staging` ancestor, so
     /// the deployer must be able to fix the default once, the same way `--staging` itself is
     /// fixed once, rather than every caller needing infrastructure knowledge it was never given.
-    /// Meaningful only alongside the tool half (`--staging`/`--allow-program`; `drive` only ever
-    /// consults it there); given without it, it is accepted but silently unused.
+    /// It also names the project whose identity, documents and journeys the server serves.
     #[arg(long)]
     pub project: Option<PathBuf>,
     /// The agent workspace root (#360) that `GET /v1/workspaces` lists and the owner's

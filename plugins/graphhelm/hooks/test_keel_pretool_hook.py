@@ -45,6 +45,12 @@ class KeelPreToolHook(unittest.TestCase):
         self.assertEqual(result["permissionDecision"], "deny")
         self.assertIn("keel-card.json", result["permissionDecisionReason"])
 
+    def test_denial_names_the_work_tree_it_checked(self):
+        """#2731: the reason says which directory had no card."""
+        result = self.run_hook("app.py", content="x = 1\n" * 20)
+        top = self.repo.resolve().as_posix().lower()
+        self.assertIn(top, result["permissionDecisionReason"].replace("\\", "/").lower())
+
     def test_master_only_repository_still_gates(self):
         # #2180: a repo whose only base is master once let every edit through without a card.
         with tempfile.TemporaryDirectory() as other:

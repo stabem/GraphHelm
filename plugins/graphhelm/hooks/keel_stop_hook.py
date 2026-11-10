@@ -310,7 +310,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     card = repo / rel
     if not card.is_file():
         return (f"Keel: this branch changes code past the summary-only row, and there is no card at "
-                f"{rel.as_posix()}. Write the card (promise, scopePaths, proof; shape in "
+                f"{rel.as_posix()} in {repo.as_posix()}. Write the card (promise, scopePaths, proof; shape in "
                 f"docs/keel/KEEL_CHECK.md), run its proof, then finish.")
     cli = shutil.which("graphhelm")
     if cli is None:
@@ -347,7 +347,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     except (ValueError, AttributeError):
         pass
     detail = "; ".join(codes[:5]) or "see `graphhelm keel check` output"
-    return (f"Keel: `graphhelm keel check` refuses this diff against {rel.as_posix()}: {detail}. "
+    return (f"Keel: `graphhelm keel check` refuses this diff against {rel.as_posix()} in {repo.as_posix()}: {detail}. "
             f"Widen the card and say why, or remove the change.")
 
 

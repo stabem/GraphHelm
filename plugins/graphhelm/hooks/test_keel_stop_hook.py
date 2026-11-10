@@ -136,6 +136,14 @@ class KeelStopHook(unittest.TestCase):
         self.assertEqual(result["decision"], "block")
         self.assertIn("keel-card.json", result["reason"])
 
+    def test_block_names_the_work_tree_it_checked(self):
+        """#2731: a lane told 'no card' could not tell which directory was checked."""
+        self.code(20)
+        (self.repo / "sub").mkdir()
+        reason = self.run_hook(cwd=str(self.repo / "sub"))["reason"]
+        top = self.repo.resolve().as_posix().lower()
+        self.assertIn(top, reason.replace("\\", "/").lower())
+
     def test_committed_change_without_card_blocks(self):
         self.code(20)
         git(self.repo, "add", ".")

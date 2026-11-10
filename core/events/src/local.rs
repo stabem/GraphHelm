@@ -376,6 +376,136 @@ fn phase_end(name: &'static str, started: Option<std::time::Instant>) {
     }
 }
 
+/// One holder of the store's file lock in this process, for the waiters' "who was I queued behind".
+struct Holder {
+    id: u64,
+    label: &'static str,
+}
+
+static HOLDERS: Mutex<Vec<Holder>> = Mutex::new(Vec::new());
+static HOLDER_IDS: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    static MY_HOLDER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn tracking() -> bool {
+    LOCK_TRACKING.with(std::cell::Cell::get)
+}
+
+/// A registration in [`HOLDERS`], removed when it is dropped: an early return or a `?` cannot leave
+/// a stale label behind. While timing is off nothing is registered and no global lock is taken.
+struct HolderGuard(u64);
+
+impl HolderGuard {
+    fn enter(label: &'static str) -> Self {
+        if !tracking() {
+            return Self(0);
+        }
+        let id = HOLDER_IDS.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut holders) = HOLDERS.lock() {
+            holders.push(Holder { id, label });
+        }
+        MY_HOLDER.with(|cell| cell.set(id));
+        Self(id)
+    }
+
+    fn label(&self) -> &'static str {
+        if self.0 == 0 {
+            return "unlabelled";
+        }
+        HOLDERS
+            .lock()
+            .ok()
+            .and_then(|holders| {
+                holders
+                    .iter()
+                    .find(|entry| entry.id == self.0)
+                    .map(|entry| entry.label)
+            })
+            .unwrap_or("unlabelled")
+    }
+}
+
+impl Drop for HolderGuard {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            if let Ok(mut holders) = HOLDERS.lock() {
+                holders.retain(|holder| holder.id != self.0);
+            }
+            MY_HOLDER.with(|cell| cell.set(0));
+        }
+    }
+}
+
+fn holder_relabel(label: &'static str) {
+    let id = MY_HOLDER.with(std::cell::Cell::get);
+    if id != 0
+        && let Ok(mut holders) = HOLDERS.lock()
+        && let Some(holder) = holders.iter_mut().find(|holder| holder.id == id)
+    {
+        holder.label = label;
+    }
+}
+
+/// The label of the longest-registered holder right now, or `None` when no holder in THIS process
+/// is registered (the lock is held by another process, or the wait is the turnstile queue).
+fn holder_now() -> Option<&'static str> {
+    HOLDERS
+        .lock()
+        .ok()
+        .and_then(|holders| holders.first().map(|holder| holder.label))
+}
+
+/// Phase names are static strings; the lock kinds a holder can carry map to theirs here.
+fn hold_phase(label: &'static str) -> &'static str {
+    match label {
+        "append" => "hold.append",
+        "open" => "hold.open",
+        "read_stream_after" => "hold.read_stream_after",
+        "read_replay_stream" => "hold.read_replay_stream",
+        "read_unique_replay_stream" => "hold.read_unique_replay_stream",
+        "scan_replay_stream" => "hold.scan_replay_stream",
+        "sealed_evidence_batch" => "hold.sealed_evidence_batch",
+        "list_streams" => "hold.list_streams",
+        "read_stream" => "hold.read_stream",
+        "evidence_exists" => "hold.evidence_exists",
+        "next_sequence" => "hold.next_sequence",
+        "active_version" => "hold.active_version",
+        "artifact_exists" => "hold.artifact_exists",
+        "committed_events_for_idempotency" => "hold.committed_events_for_idempotency",
+        "unlabelled" => "hold.unlabelled",
+        _ => "hold.other",
+    }
+}
+
+fn behind_phase(label: Option<&'static str>) -> &'static str {
+    match label {
+        None => "behind.none_in_process",
+        Some("append") => "behind.append",
+        Some("open") => "behind.open",
+        Some("read_stream_after") => "behind.read_stream_after",
+        Some("read_replay_stream") => "behind.read_replay_stream",
+        Some("read_unique_replay_stream") => "behind.read_unique_replay_stream",
+        Some("scan_replay_stream") => "behind.scan_replay_stream",
+        Some("sealed_evidence_batch") => "behind.sealed_evidence_batch",
+        Some("list_streams") => "behind.list_streams",
+        Some("read_stream") => "behind.read_stream",
+        Some("evidence_exists") => "behind.evidence_exists",
+        Some("next_sequence") => "behind.next_sequence",
+        Some("active_version") => "behind.active_version",
+        Some("artifact_exists") => "behind.artifact_exists",
+        Some("committed_events_for_idempotency") => "behind.committed_events_for_idempotency",
+        Some("unlabelled") => "behind.unlabelled",
+        Some(_) => "behind.other",
+    }
+}
+
+/// A count with no time: an event worth counting (a clean-open hit, an upgrade) while timing is on.
+fn phase_count(name: &'static str) {
+    phase_end(name, lock_clock());
+}
+
 /// The append phases this thread accumulated since the last call, and a fresh start.
 #[must_use]
 pub fn take_store_phases() -> StorePhases {
@@ -752,10 +882,14 @@ impl LocalEventRepository {
             |cache: &PrefixCache| cache.slot.lock().map_or(true, |slot| slot.is_some());
         // #1721 single-flight: only ONE cold open per cache walks from genesis; the others wait
         // for it (within their budget) and then find the slot filled. Held to the end of open.
+        let tick = lock_clock();
         let _cold_walk = match prefix_cache {
             Some(cache) if !slot_filled(cache) => Some(cache.acquire_walker(&read_budget)?),
             _ => None,
         };
+        if _cold_walk.is_some() {
+            phase_end("open.cold_walk_wait", tick);
+        }
         let cached = prefix_cache.is_some_and(slot_filled);
         let walked = if cached {
             None
@@ -799,6 +933,7 @@ impl LocalEventRepository {
         // Shared alone would starve writers (PR #1317 BLOCK: 0 appends in 300 s under readers
         // that overlap without a break), so every acquisition goes through the `Turnstile`
         // first and releases it once its levels are held -- below, after either branch.
+        let tick = lock_clock();
         let turnstile = Turnstile::enter(&root_handle, &root)?;
         lock_root_shared(&root_handle)?;
         // #143: a COMPLETE layout first tries the SHARED fast path — eight concurrent
@@ -824,6 +959,9 @@ impl LocalEventRepository {
         };
         // Both levels are held in their final mode for this phase; later arrivals may queue.
         drop(turnstile);
+        phase_end("open.lock_wait", tick);
+        let open_hold = lock_clock();
+        let open_holder = HolderGuard::enter("open");
         if file_identity(&open_directory(&root)?)? != root_identity {
             return Err(EventRepositoryError::IntegrityAt(
                 "open:root-identity-after-lock",
@@ -913,7 +1051,10 @@ impl LocalEventRepository {
             repository.full_load_count.fetch_add(1, Ordering::SeqCst);
         }
         let recovery = (|| {
+            let tick = lock_clock();
             repository.validate_anchors()?;
+            phase_end("open.anchors", tick);
+            let tick = lock_clock();
             let loaded = match repository.load_state("open") {
                 // #1624: a prefix walked before the lock that the locked suffix does not extend
                 // (a writer rolled back, or the journal changed under the walk) is dropped, and
@@ -933,6 +1074,7 @@ impl LocalEventRepository {
                 }
                 loaded => loaded,
             };
+            phase_end("open.load_state", tick);
             // ADR-046: a torn tail is trimmed only by the Runtime's start-up open, and only under
             // the EXCLUSIVE lock. A shared open that finds one skips the read-only fast path and
             // takes the upgrade below; every other open refuses it and names who recovers it.
@@ -967,6 +1109,7 @@ impl LocalEventRepository {
                 // through this cache syncs its own line, so a store taking appends between reads
                 // does not make every read pay both again. The marker check stays: it is cheap and
                 // reads the markers themselves.
+                let tick = lock_clock();
                 let stamp = match prefix_cache {
                     Some(_) => Some(repository.clean_open_stamp()?),
                     None => None,
@@ -983,7 +1126,11 @@ impl LocalEventRepository {
                     && let Some(state) = &state
                     && repository.active_markers_clean(&published_in(state))?
                 {
+                    phase_end("open.clean_check", tick);
+                    phase_count("open.clean_hit");
+                    let tick = lock_clock();
                     repository.sync_journal_beyond_watermark(state)?;
+                    phase_end("open.sync_beyond", tick);
                     #[cfg(test)]
                     if let Some(cache) = prefix_cache {
                         cache.clean_open_hits.fetch_add(1, Ordering::SeqCst);
@@ -994,10 +1141,14 @@ impl LocalEventRepository {
                         .fetch_add(1, Ordering::SeqCst);
                     return Ok(());
                 }
+                phase_end("open.clean_check", tick);
+                phase_count("open.clean_miss");
+                let tick = lock_clock();
                 let plan = match &state {
                     Some(state) => Some(repository.plan_reconcile(state)?),
                     None => None,
                 };
+                phase_end("open.plan_reconcile", tick);
                 if let (Some(state), Some(plan)) = (&state, &plan)
                     && plan.is_noop()
                     && repository.active_markers_clean(&published_in(state))?
@@ -1006,7 +1157,9 @@ impl LocalEventRepository {
                     if let Some(cache) = prefix_cache {
                         cache.clean_open_scans.fetch_add(1, Ordering::SeqCst);
                     }
+                    let tick = lock_clock();
                     repository.sync_journal_beyond_watermark(state)?;
+                    phase_end("open.sync_beyond", tick);
                     if plan.settled()
                         && let (Some(cache), Some(stamp)) = (prefix_cache, stamp)
                         && let Ok(mut slot) = cache.clean_open.lock()
@@ -1022,6 +1175,7 @@ impl LocalEventRepository {
                 // The plan holds the handles it planned to delete through; the redo below plans
                 // again, and a handle kept from here would read to it as a foreign holder.
                 drop(plan);
+                phase_count("open.upgrade");
                 // UPGRADE: release shared, take exclusive, and REDO from scratch —
                 // another process may have acted in the gap, so the cache is dropped
                 // and the world re-read; correctness equals a fresh exclusive open.
@@ -1077,6 +1231,8 @@ impl LocalEventRepository {
             repository.reconcile_orphans(&state)?;
             repository.publish_active_marker(&published_in(&state))
         })();
+        phase_end("hold.open", open_hold);
+        drop(open_holder);
         let named_unlock = {
             let lock = repository
                 .lock
@@ -1397,6 +1553,7 @@ impl LocalEventRepository {
         // `validate_anchors`, and no surface shares a handle today. Left as a seed rather than
         // changed without a guard that can fail.
         let waiting = lock_clock();
+        let queued_behind = waiting.map(|_| holder_now());
         let _gate = self
             .operation_gate
             .lock()
@@ -1442,7 +1599,12 @@ impl LocalEventRepository {
         drop(turnstile);
         if let Some(started) = waiting {
             LOCK_TIMING.with(|cell| cell.borrow_mut().wait += started.elapsed());
+            if let Some(behind) = queued_behind {
+                phase_end(behind_phase(behind), Some(started));
+            }
         }
+        let held = lock_clock();
+        let holder = HolderGuard::enter("unlabelled");
         let anchors = lock_clock();
         let before = self.validate_anchors();
         if let Some(started) = anchors {
@@ -1459,6 +1621,8 @@ impl LocalEventRepository {
             (_, Err(error)) => Err(error),
             (Err(error), Ok(())) => Err(error),
         };
+        phase_end(hold_phase(holder.label()), held);
+        drop(holder);
         let named_unlock =
             FileExt::unlock(&*file).map_err(|error| EventRepositoryError::StorageAt {
                 site: "with-lock:release",
@@ -2461,6 +2625,7 @@ impl LocalEventRepository {
     }
 
     fn load_state(&self, kind: &'static str) -> Result<Arc<LoadedState>, EventRepositoryError> {
+        holder_relabel(kind);
         // `kind` names WHICH operation is paying for this load (design section 2: never
         // one flat bucket). It feeds the cfg(test) per-kind accounting only; production
         // pays one &'static str argument.
@@ -7223,6 +7388,110 @@ mod limit_tests {
             "not creating means the layout says the child must exist, so its ABSENCE is damage \
              and keeps the integrity verdict"
         );
+    }
+
+    /// The holder registry is process-wide, so the tests that read it take turns.
+    static HOLDER_TESTS: Mutex<()> = Mutex::new(());
+
+    /// #2694 (review): an early return or `?` after a holder registered cannot leave its label behind.
+    #[test]
+    fn an_early_return_clears_the_holder() {
+        let _serial = HOLDER_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        fn early(fail: bool) -> Result<(), ()> {
+            let _holder = HolderGuard::enter("open");
+            assert!(holder_now().is_some(), "registered while it runs");
+            if fail {
+                return Err(());
+            }
+            Ok(())
+        }
+        start_lock_timing();
+        assert!(early(true).is_err());
+        assert!(early(false).is_ok());
+        stop_lock_timing();
+        assert_eq!(holder_now(), None, "no label outlives its holder");
+    }
+
+    /// #2694 (review): with timing off the lock path registers no holder and touches no registry.
+    #[test]
+    fn with_timing_off_no_holder_is_registered() {
+        let _serial = HOLDER_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        let store =
+            LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap();
+        stop_lock_timing();
+        store
+            .with_exclusive_lock(|| {
+                store.load_state("append")?;
+                assert_eq!(holder_now(), None, "nothing registered while timing is off");
+                assert_eq!(MY_HOLDER.with(std::cell::Cell::get), 0);
+                Ok(())
+            })
+            .unwrap();
+        assert!(take_store_phases().is_empty(), "and nothing was timed");
+    }
+
+    /// #2694: a lock waiter reports who it was queued behind, and the holder reports its own hold.
+    /// Another handle on the same root holds the exclusive lock (labelled by `load_state`) for a
+    /// while; a second handle's read waits for it and names it; with nobody registered the same wait
+    /// is labelled as none in this process (another process, or the turnstile queue).
+    #[test]
+    fn a_lock_waiter_names_the_holder_it_queued_behind() {
+        let _serial = HOLDER_TESTS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("repository");
+        let first =
+            LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap();
+        let second =
+            LocalEventRepository::open(&root, Arc::new(FixedClock), Arc::new(FixedIds)).unwrap();
+        let hold = std::time::Duration::from_millis(300);
+        let (held, holding) = std::sync::mpsc::channel();
+        let (waiter, holder) = std::thread::scope(|scope| {
+            let holder = scope.spawn(|| {
+                start_lock_timing();
+                first
+                    .with_exclusive_lock(|| {
+                        first.load_state("append")?;
+                        held.send(()).unwrap();
+                        std::thread::sleep(hold);
+                        Ok(())
+                    })
+                    .unwrap();
+                stop_lock_timing();
+                take_store_phases()
+            });
+            holding.recv().unwrap();
+            start_lock_timing();
+            second.with_shared_lock(|| Ok(())).unwrap();
+            stop_lock_timing();
+            (take_store_phases(), holder.join().unwrap())
+        });
+        let behind = waiter
+            .get("behind.append")
+            .map(|(count, spent)| (*count, *spent));
+        assert!(
+            behind.is_some_and(|(count, spent)| count == 1 && spent >= hold / 2),
+            "the waiter was queued behind the append: {waiter:?}"
+        );
+        assert!(
+            holder
+                .get("hold.append")
+                .is_some_and(|(count, spent)| *count == 1 && *spent >= hold * 8 / 10),
+            "the holder reports its own hold: {holder:?}"
+        );
+        // Nobody in this process holds the lock now: the same read waits behind none.
+        start_lock_timing();
+        second.with_shared_lock(|| Ok(())).unwrap();
+        stop_lock_timing();
+        let idle = take_store_phases();
+        assert!(idle.contains_key("behind.none_in_process"), "{idle:?}");
     }
 
     #[test]

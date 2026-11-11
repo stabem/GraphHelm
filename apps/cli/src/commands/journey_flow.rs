@@ -48,6 +48,13 @@ fn read(file: &Path) -> Result<(String, Value), Vec<Finding>> {
             "flow is not readable UTF-8",
         )]);
     }
+    let value = parse_flow(&text)?;
+    Ok((text, value))
+}
+
+/// The part of `read` that depends only on the text: size, anchors, YAML, schema. A draft is
+/// checked with this before any byte reaches the flow file.
+fn parse_flow(text: &str) -> Result<Value, Vec<Finding>> {
     if text.len() as u64 > MAX_FLOW_BYTES {
         return Err(vec![Finding::new(
             "flow.too_large",
@@ -57,14 +64,14 @@ fn read(file: &Path) -> Result<(String, Value), Vec<Finding>> {
     }
     // Public parser events are private. Refuse reference tokens outside quoted scalars/comments
     // before parsing; the parser otherwise expands aliases before deserialization.
-    if yaml_reference(&text) {
+    if yaml_reference(text) {
         return Err(vec![Finding::new(
             "flow.not_yaml",
             "",
             "anchors and aliases are not permitted",
         )]);
     }
-    let yaml = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&text).map_err(|_| {
+    let yaml = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(text).map_err(|_| {
         vec![Finding::new(
             "flow.not_yaml",
             "",
@@ -91,7 +98,7 @@ fn read(file: &Path) -> Result<(String, Value), Vec<Finding>> {
         .map(|d| Finding::new("flow.schema_invalid", d.path, d.message))
         .collect();
     if findings.is_empty() {
-        Ok((text, value))
+        Ok(value)
     } else {
         Err(findings)
     }
@@ -2022,36 +2029,25 @@ pub(crate) fn write_draft(
             "the draft is unchanged: only a lane that changes a flow is recorded as its writer",
         );
     }
-    let restore = |previous: &Option<Vec<u8>>| match previous {
-        Some(bytes) => std::fs::write(file, bytes).is_ok(),
-        None => std::fs::remove_file(file).is_ok(),
-    };
-    if std::fs::write(file, yaml).is_err() {
-        restore(&previous);
-        return input_error(COMMAND, "the draft could not be written");
-    }
-    let flow = match read(file) {
-        Ok((_, flow))
-            if flow["id"] == id && flow["status"] == "draft" && flow["approved"].is_null() =>
-        {
+    // #2811: the posted text is validated in memory; a refusal writes nothing, so the existing
+    // flow (it can be the approved one) is never replaced by bytes that were not checked.
+    let flow = match parse_flow(yaml) {
+        Ok(flow) if flow["id"] == id && flow["status"] == "draft" && flow["approved"].is_null() => {
             flow
         }
         Ok(_) => {
-            restore(&previous);
             return input_error(
                 COMMAND,
                 "a draft names this id, says `status: draft` and has `approved: null`",
             );
         }
         Err(findings) => {
-            restore(&previous);
             return report(COMMAND, vec![], findings, json!({}));
         }
     };
     // #1178: review approves only canonical bytes, and the digest ignores the difference, so a
     // non-canonical draft would be accepted here and refused only at the reviewer. Refuse it now.
     if yaml != canonical(&flow, false) {
-        restore(&previous);
         return report(
             COMMAND,
             vec![],
@@ -2066,12 +2062,22 @@ pub(crate) fn write_draft(
     // #1955: an agent's draft says why each step and each non-obvious check is there.
     let gaps = unexplained(&flow, true);
     if !gaps.is_empty() {
-        restore(&previous);
         return report(COMMAND, vec![], gaps, json!({}));
+    }
+    if atomic_write(file, yaml.as_bytes()).is_err() {
+        return input_error(COMMAND, "the draft could not be written");
     }
     let digest = approval_digest_of(&flow);
     if let Err(message) = super::journey_owner::record_drafted(&project, id, &digest, writer) {
-        restore(&previous);
+        let restored = match &previous {
+            Some(bytes) => atomic_write(file, bytes).is_ok(),
+            None => std::fs::remove_file(file).is_ok(),
+        };
+        let message = if restored {
+            message
+        } else {
+            format!("{message}; the previous flow could not be restored")
+        };
         return input_error(COMMAND, &message);
     }
     Outcome::success(
@@ -3526,6 +3532,9 @@ viewports: [web]
 }
 
 #[cfg(test)]
+mod draft_test;
+
+#[cfg(test)]
 mod preview_owner_store_tests {
     use super::*;
     use crate::commands::journey_owner::{PreviewEvidence, record_previewed, store};
@@ -3657,7 +3666,11 @@ fn write_grant_audit(
     });
     let dir = project.join(".graphhelm/journey-grant-audit");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("{flow}.json")), audit.to_string()).map_err(|e| e.to_string())
+    atomic_write(
+        &dir.join(format!("{flow}.json")),
+        audit.to_string().as_bytes(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Whether an `Outcome` is a success (the approval was written).

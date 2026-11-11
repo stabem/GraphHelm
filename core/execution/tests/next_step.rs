@@ -7,7 +7,10 @@ use graphhelm_execution::tasks::{TaskEventRecord, fold_task_events, parse_task_e
 use serde_json::{Value, json};
 
 const LANE: &str = "lane-a";
+/// Assigned on the head by `assigned`.
 const REVIEWER: &str = "rev-1";
+/// Never assigned; the one who approves in the cells that must tell the two apart.
+const APPROVER: &str = "rev-2";
 const TASK: &str = "issue-7";
 const HEAD: &str = "aaaaaaa1";
 const FIX_HEAD: &str = "bbbbbbb2";
@@ -58,12 +61,12 @@ fn assigned(sequence: u64, head: &str) -> TaskEventRecord {
     )
 }
 
-fn verdict(sequence: u64, head: &str, word: &str) -> TaskEventRecord {
+fn verdict(sequence: u64, by: &str, head: &str, word: &str) -> TaskEventRecord {
     record(
         sequence,
         "task.review_verdict",
-        REVIEWER,
-        json!({"pr": 70, "headSha": head, "reviewer": REVIEWER, "verdict": word, "commentUrl": URL}),
+        by,
+        json!({"pr": 70, "headSha": head, "reviewer": by, "verdict": word, "commentUrl": URL}),
     )
 }
 
@@ -142,7 +145,7 @@ fn a_block_on_the_head_sends_the_author_back_to_implement() {
         planned(2, "none"),
         opened(3, HEAD),
         assigned(4, HEAD),
-        verdict(5, HEAD, "BLOCK"),
+        verdict(5, REVIEWER, HEAD, "BLOCK"),
     ]);
     assert_eq!(next.step, "implement");
     assert_eq!(next.skill, Some("implement"));
@@ -157,7 +160,7 @@ fn a_new_head_after_a_block_is_back_in_review_until_a_reviewer_is_assigned_on_it
         planned(2, "none"),
         opened(3, HEAD),
         assigned(4, HEAD),
-        verdict(5, HEAD, "BLOCK"),
+        verdict(5, REVIEWER, HEAD, "BLOCK"),
         opened(6, FIX_HEAD),
     ];
     let next = next_of(&after_fix);
@@ -185,7 +188,7 @@ fn an_approval_hands_the_merge_to_the_approving_reviewer() {
         planned(2, "none"),
         opened(3, HEAD),
         assigned(4, HEAD),
-        verdict(5, HEAD, "APPROVE"),
+        verdict(5, REVIEWER, HEAD, "APPROVE"),
     ]);
     assert_eq!(next.step, "merge");
     assert_eq!(next.skill, Some("merge"));
@@ -200,25 +203,120 @@ fn an_approval_with_risk_says_so() {
         planned(2, "none"),
         opened(3, HEAD),
         assigned(4, HEAD),
-        verdict(5, HEAD, "APPROVE-WITH-RISK"),
+        verdict(5, APPROVER, HEAD, "APPROVE-WITH-RISK"),
     ]);
     assert_eq!(next.step, "merge");
     assert_eq!(next.skill, Some("merge"));
-    assert_eq!(actor(&next), Some((REVIEWER, "approver")));
+    assert_eq!(actor(&next), Some((APPROVER, "approver")));
     assert_eq!(next.because, "approved with risk on head");
 }
 
 #[test]
-fn an_approval_nobody_was_assigned_to_names_no_approver() {
+fn an_approval_by_someone_not_assigned_names_the_one_who_approved() {
+    // The assigned reviewer is REVIEWER; APPROVER approves. The merge is APPROVER's.
     let next = next_of(&[
         claimed(1),
         planned(2, "none"),
         opened(3, HEAD),
-        verdict(4, HEAD, "APPROVE"),
+        assigned(4, HEAD),
+        verdict(5, APPROVER, HEAD, "APPROVE"),
     ]);
     assert_eq!(next.step, "merge");
-    assert_eq!(actor(&next), None);
+    assert_eq!(actor(&next), Some((APPROVER, "approver")));
     assert_eq!(next.because, "approved on head");
+}
+
+#[test]
+fn an_approval_with_nobody_assigned_still_names_the_one_who_approved() {
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        verdict(4, APPROVER, HEAD, "APPROVE"),
+    ]);
+    assert_eq!(actor(&next), Some((APPROVER, "approver")));
+}
+
+#[test]
+fn the_newest_approval_on_the_head_is_the_approver() {
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        verdict(4, REVIEWER, HEAD, "APPROVE"),
+        verdict(5, APPROVER, HEAD, "APPROVE"),
+    ]);
+    assert_eq!(actor(&next), Some((APPROVER, "approver")));
+}
+
+#[test]
+fn the_authors_own_approval_is_never_a_merge_instruction() {
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        verdict(5, LANE, HEAD, "APPROVE"),
+    ]);
+    assert_eq!(next.step, "merge");
+    assert_eq!(next.skill, Some("merge"));
+    assert_eq!(actor(&next), None);
+    assert_eq!(
+        next.because,
+        "approval is the author's own; another reviewer must approve"
+    );
+}
+
+#[test]
+fn a_reviewer_assignment_naming_the_author_names_no_reviewer() {
+    let by_author = record(
+        4,
+        "task.review_assigned",
+        LANE,
+        json!({"pr": 70, "headSha": HEAD, "reviewer": LANE, "lane": LANE}),
+    );
+    let next = next_of(&[claimed(1), planned(2, "none"), opened(3, HEAD), by_author]);
+    assert_eq!(next.step, "review");
+    assert_eq!(next.skill, Some("blind-review"));
+    assert_eq!(actor(&next), None);
+    assert_eq!(
+        next.because,
+        "reviewer assigned is the author; another reviewer must be assigned"
+    );
+}
+
+#[test]
+fn an_approval_then_a_new_head_is_back_in_review_with_no_approver() {
+    let tasks = fold_task_events(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        verdict(5, APPROVER, HEAD, "APPROVE"),
+        opened(6, FIX_HEAD),
+    ]);
+    assert_eq!(tasks[0].approved_by, None);
+    let next = next_step(&tasks[0]);
+    assert_eq!(next.step, "review");
+    assert_eq!(actor(&next), None);
+    assert_eq!(next.because, "PR open on head, no reviewer assigned");
+}
+
+#[test]
+fn an_approval_then_a_block_by_another_reviewer_sends_the_author_back() {
+    let tasks = fold_task_events(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        verdict(5, APPROVER, HEAD, "APPROVE"),
+        verdict(6, REVIEWER, HEAD, "BLOCK"),
+    ]);
+    assert_eq!(tasks[0].approved_by, None);
+    let next = next_step(&tasks[0]);
+    assert_eq!(next.step, "implement");
+    assert_eq!(actor(&next), Some((LANE, "author")));
+    assert_eq!(next.because, "BLOCK on head by rev-1");
 }
 
 #[test]
@@ -234,7 +332,7 @@ fn a_merged_task_is_done_with_nothing_to_load() {
         planned(2, "none"),
         opened(3, HEAD),
         assigned(4, HEAD),
-        verdict(5, HEAD, "APPROVE"),
+        verdict(5, REVIEWER, HEAD, "APPROVE"),
         merged,
     ]);
     assert_eq!(next.step, "done");
@@ -267,7 +365,7 @@ fn a_task_with_no_lane_names_no_author() {
         LANE,
         json!({"pr": 70, "headSha": HEAD, "reviewer": REVIEWER}),
     );
-    let next = next_of(&[assigned_without_lane, verdict(2, HEAD, "BLOCK")]);
+    let next = next_of(&[assigned_without_lane, verdict(2, REVIEWER, HEAD, "BLOCK")]);
     assert_eq!(next.step, "implement");
     assert_eq!(actor(&next), None);
     assert_eq!(next.because, "BLOCK on head by rev-1");

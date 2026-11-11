@@ -43,8 +43,8 @@ Shipped (#2829): one entry skill, `graphhelm-work`, drives every task. A session
 | design plan, critic has not passed | `critic` | none | `design plan waits for its critic` |
 | planned, no PR open on a head | `implement` | the lane, `author` | `planned, no PR open on a head` |
 | BLOCK on the head | `implement` | the lane, `author` | `BLOCK on head by <reviewer>` |
-| PR open, no verdict | `review` | the reviewer assigned on the head, `reviewer`; none if unassigned | `PR open on head, no verdict` or `PR open on head, no reviewer assigned` |
-| approved on the head | `merge` | the reviewer assigned on the head, `approver`; none if unassigned | `approved on head` or `approved with risk on head` |
+| PR open, no verdict | `review` | the reviewer assigned on the head, `reviewer`; none if unassigned or if the assigned reviewer is the author | `PR open on head, no verdict`, `PR open on head, no reviewer assigned` or `reviewer assigned is the author; another reviewer must be assigned` |
+| approved on the head | `merge` | the reviewer who approved the current head, `approver`; none if that is the author | `approved on head`, `approved with risk on head` or `approval is the author's own; another reviewer must approve` |
 
 Not shipped: the answers `claim`, `cleanup` and `diagnose` (no task record says when a cleanup finished or that no unblocker resolves a block, so they cannot be derived from records; the diagram below still draws them); the turn-start hook that hands a session its `next` (#2639); and the end-to-end demo.
 

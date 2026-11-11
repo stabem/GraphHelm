@@ -6331,6 +6331,7 @@
       "ended": false,
       "id": 0,
       "state": {
+        "approvedBy": "gh-claude-1",
         "assignedBy": null,
         "assignedReviewers": [
           "gh-claude-1"
@@ -6402,6 +6403,7 @@
       "ended": false,
       "id": 1,
       "state": {
+        "approvedBy": "gh-claude-1",
         "assignedBy": null,
         "assignedReviewers": [
           "gh-claude-1"
@@ -6486,6 +6488,7 @@
       "ended": false,
       "id": 2,
       "state": {
+        "approvedBy": "codexrev-2",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/842#pullrequestreview-5484925287",
           "reviewer": "codexrev-2"
@@ -6563,6 +6566,7 @@
       "ended": false,
       "id": 3,
       "state": {
+        "approvedBy": "codexrev-1",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/890#issuecomment-6117032653",
           "reviewer": "codexrev-1"
@@ -6642,6 +6646,7 @@
       "ended": false,
       "id": 4,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/905#issuecomment-6124347906",
           "reviewer": "codexrev-1"
@@ -6721,6 +6726,7 @@
       "ended": false,
       "id": 5,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/938#issuecomment-6128373896",
           "reviewer": "gh-claude-7"
@@ -6800,6 +6806,7 @@
       "ended": true,
       "id": 6,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/952#issuecomment-6129465376",
           "reviewer": "gh-claude-7"
@@ -6877,6 +6884,7 @@
       "ended": false,
       "id": 7,
       "state": {
+        "approvedBy": "codexrev-1",
         "assignedBy": null,
         "assignedReviewers": [
           "codex-review",
@@ -6963,6 +6971,7 @@
       "ended": false,
       "id": 8,
       "state": {
+        "approvedBy": "codexrev-2",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6137068958",
           "reviewer": "codexrev-2"
@@ -7072,6 +7081,7 @@
       "ended": false,
       "id": 9,
       "state": {
+        "approvedBy": "codexrev-1",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1013#issuecomment-6136789893",
           "reviewer": "codexrev-1"
@@ -7170,6 +7180,7 @@
       "ended": false,
       "id": 10,
       "state": {
+        "approvedBy": "gh-claude-10",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1036#issuecomment-6137116361",
           "reviewer": "gh-claude-10"
@@ -7243,6 +7254,7 @@
       "ended": false,
       "id": 11,
       "state": {
+        "approvedBy": "gh-claude-7",
         "assignedBy": null,
         "assignedReviewers": [
           "codex-review",
@@ -7339,6 +7351,7 @@
       "ended": false,
       "id": 12,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1051#issuecomment-6138160720",
           "reviewer": "gh-claude-7"
@@ -7401,6 +7414,7 @@
       "ended": false,
       "id": 13,
       "state": {
+        "approvedBy": "codexrev-3",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1070#issuecomment-6138853353",
           "reviewer": "codexrev-3"
@@ -7478,6 +7492,7 @@
       "ended": false,
       "id": 14,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1075#issuecomment-6139552537",
           "reviewer": "gh-claude-7"
@@ -7569,6 +7584,7 @@
       "ended": false,
       "id": 15,
       "state": {
+        "approvedBy": "gh-claude-7",
         "assignedBy": null,
         "assignedReviewers": [
           "codex-review",
@@ -7642,6 +7658,7 @@
       "ended": false,
       "id": 16,
       "state": {
+        "approvedBy": "gh-claude-7",
         "assignedBy": null,
         "assignedReviewers": [
           "codex-review",
@@ -7715,6 +7732,7 @@
       "ended": false,
       "id": 17,
       "state": {
+        "approvedBy": "gh-claude-7",
         "assignedBy": null,
         "assignedReviewers": [
           "codex-review",
@@ -7771,6 +7789,7 @@
       "ended": false,
       "id": 18,
       "state": {
+        "approvedBy": "gh-claude-10",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1091#issuecomment-6141507064",
           "reviewer": "gh-claude-10"
@@ -7859,6 +7878,7 @@
       "ended": false,
       "id": 19,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1092#issuecomment-6141481426",
           "reviewer": "gh-claude-7"
@@ -7938,6 +7958,7 @@
       "ended": false,
       "id": 20,
       "state": {
+        "approvedBy": "gh-claude-9",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1100#issuecomment-6142890915",
           "reviewer": "gh-claude-9"
@@ -8016,6 +8037,7 @@
       "ended": false,
       "id": 21,
       "state": {
+        "approvedBy": "gh-claude-9",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1102#issuecomment-6143220178",
           "reviewer": "codexrev-3"
@@ -8094,6 +8116,7 @@
       "ended": false,
       "id": 22,
       "state": {
+        "approvedBy": "gh-claude-10",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1104#issuecomment-6143678098",
           "reviewer": "codexrev-1"
@@ -8172,6 +8195,7 @@
       "ended": false,
       "id": 23,
       "state": {
+        "approvedBy": "codexrev-1",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1109#issuecomment-6144041871",
           "reviewer": "codexrev-1"
@@ -8249,6 +8273,7 @@
       "ended": false,
       "id": 24,
       "state": {
+        "approvedBy": "codexrev-1",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1115#issuecomment-6152038150",
           "reviewer": "codexrev-1"
@@ -8338,6 +8363,7 @@
       "ended": false,
       "id": 25,
       "state": {
+        "approvedBy": "gh-claude-7",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1110#issuecomment-6145179836",
           "reviewer": "gh-claude-7"
@@ -8417,6 +8443,7 @@
       "ended": false,
       "id": 26,
       "state": {
+        "approvedBy": "codexrev-3",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1111#issuecomment-6145786201",
           "reviewer": "codexrev-3"
@@ -9204,6 +9231,7 @@
       "ended": false,
       "id": 36,
       "state": {
+        "approvedBy": "codexrev-1",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1174#issuecomment-6155564424",
           "reviewer": "codexrev-1"
@@ -9353,6 +9381,7 @@
       "ended": false,
       "id": 38,
       "state": {
+        "approvedBy": "gh-claude-opt-1",
         "assignedBy": "Plano de otimização GraphHelm",
         "assignedReviewers": [
           "gh-claude-opt-1"
@@ -9680,6 +9709,7 @@
       "ended": false,
       "id": 43,
       "state": {
+        "approvedBy": "codexrev-1",
         "approvedWithRisk": {
           "commentUrl": "https://github.com/stabem/GraphHelm/pull/1209#issuecomment-6161356187",
           "reviewer": "codexrev-1"
@@ -9736,6 +9766,7 @@
   ],
   "tasks": [
     {
+      "approvedBy": "gh-claude-1",
       "assignedBy": null,
       "assignedReviewers": [
         "gh-claude-1"
@@ -9802,6 +9833,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "gh-claude-1",
       "assignedBy": null,
       "assignedReviewers": [
         "gh-claude-1"
@@ -9881,6 +9913,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "codexrev-2",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/842#pullrequestreview-5484925287",
         "reviewer": "codexrev-2"
@@ -9953,6 +9986,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "codexrev-1",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/890#issuecomment-6117032653",
         "reviewer": "codexrev-1"
@@ -10027,6 +10061,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "gh-claude-7",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/905#issuecomment-6124347906",
         "reviewer": "codexrev-1"
@@ -10101,6 +10136,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "gh-claude-7",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/938#issuecomment-6128373896",
         "reviewer": "gh-claude-7"
@@ -10175,6 +10211,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "codexrev-1",
       "assignedBy": null,
       "assignedReviewers": [
         "codex-review",
@@ -10256,6 +10293,7 @@
       "title": null
     },
     {
+      "approvedBy": "codexrev-1",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1013#issuecomment-6136789893",
         "reviewer": "codexrev-1"
@@ -10349,6 +10387,7 @@
       "title": "Studio: Runtime down reads as no build slots; one miss breaks every slot"
     },
     {
+      "approvedBy": "codexrev-2",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/991#issuecomment-6137068958",
         "reviewer": "codexrev-2"
@@ -10453,6 +10492,7 @@
       "title": "Studio: test view opens with its result bar hidden"
     },
     {
+      "approvedBy": "gh-claude-10",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1036#issuecomment-6137116361",
         "reviewer": "gh-claude-10"
@@ -10521,6 +10561,7 @@
       "title": null
     },
     {
+      "approvedBy": "gh-claude-7",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1051#issuecomment-6138160720",
         "reviewer": "gh-claude-7"
@@ -10578,6 +10619,7 @@
       "title": null
     },
     {
+      "approvedBy": "gh-claude-7",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1075#issuecomment-6139552537",
         "reviewer": "gh-claude-7"
@@ -10664,6 +10706,7 @@
       "title": "Journeys: retire or rewrite off-focus Studio journeys"
     },
     {
+      "approvedBy": "gh-claude-7",
       "assignedBy": null,
       "assignedReviewers": [
         "codex-review",
@@ -10755,6 +10798,7 @@
       "title": "Journey: a watchdog verdict routes the task, not just reports it"
     },
     {
+      "approvedBy": "gh-claude-7",
       "assignedBy": null,
       "assignedReviewers": [
         "codex-review",
@@ -10823,6 +10867,7 @@
       "title": "Journeys: retire or rewrite off-focus Studio journeys"
     },
     {
+      "approvedBy": "gh-claude-7",
       "assignedBy": null,
       "assignedReviewers": [
         "codex-review",
@@ -10891,6 +10936,7 @@
       "title": "Journey: a watchdog verdict routes the task, not just reports it"
     },
     {
+      "approvedBy": "codexrev-3",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1070#issuecomment-6138853353",
         "reviewer": "codexrev-3"
@@ -10963,6 +11009,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "gh-claude-7",
       "assignedBy": null,
       "assignedReviewers": [
         "codex-review",
@@ -11014,6 +11061,7 @@
       "title": null
     },
     {
+      "approvedBy": "gh-claude-7",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1092#issuecomment-6141481426",
         "reviewer": "gh-claude-7"
@@ -11088,6 +11136,7 @@
       "title": "Runtime: find why it exits and Codex runs fail"
     },
     {
+      "approvedBy": "gh-claude-10",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1091#issuecomment-6141507064",
         "reviewer": "gh-claude-10"
@@ -11171,6 +11220,7 @@
       "title": "Journey: a watchdog verdict routes the task, not just reports it"
     },
     {
+      "approvedBy": "gh-claude-9",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1100#issuecomment-6142890915",
         "reviewer": "gh-claude-9"
@@ -11244,6 +11294,7 @@
       "title": "Journeys: retire or rewrite off-focus Studio journeys"
     },
     {
+      "approvedBy": "gh-claude-10",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1104#issuecomment-6143678098",
         "reviewer": "codexrev-1"
@@ -11317,6 +11368,7 @@
       "title": "Journeys: retire or rewrite off-focus Studio journeys"
     },
     {
+      "approvedBy": "gh-claude-9",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1102#issuecomment-6143220178",
         "reviewer": "codexrev-3"
@@ -11390,6 +11442,7 @@
       "title": "Journey: a watchdog verdict routes the task, not just reports it"
     },
     {
+      "approvedBy": "codexrev-1",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1109#issuecomment-6144041871",
         "reviewer": "codexrev-1"
@@ -11462,6 +11515,7 @@
       "title": "Journeys: retire or rewrite off-focus Studio journeys"
     },
     {
+      "approvedBy": "gh-claude-7",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1110#issuecomment-6145179836",
         "reviewer": "gh-claude-7"
@@ -11536,6 +11590,7 @@
       "title": "Journeys: retire or rewrite off-focus Studio journeys"
     },
     {
+      "approvedBy": "codexrev-3",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1111#issuecomment-6145786201",
         "reviewer": "codexrev-3"
@@ -11864,6 +11919,7 @@
       "title": "Studio: envelopes are opened and committed one at a time, so loading takes minutes after the network is done"
     },
     {
+      "approvedBy": "codexrev-1",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1115#issuecomment-6152038150",
         "reviewer": "codexrev-1"
@@ -12279,6 +12335,7 @@
       "title": "Studio: envelopes are opened and committed one at a time, so loading takes minutes after the network is done"
     },
     {
+      "approvedBy": "codexrev-1",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1174#issuecomment-6155564424",
         "reviewer": "codexrev-1"
@@ -12496,6 +12553,7 @@
       "title": "Adoption: deduplicate MCP providers and preserve project routing"
     },
     {
+      "approvedBy": "gh-claude-opt-1",
       "assignedBy": "Plano de otimização GraphHelm",
       "assignedReviewers": [
         "gh-claude-opt-1"
@@ -12744,6 +12802,7 @@
       "title": "Lanes and Graph: agents in projects without task records never appear"
     },
     {
+      "approvedBy": "codexrev-1",
       "approvedWithRisk": {
         "commentUrl": "https://github.com/stabem/GraphHelm/pull/1209#issuecomment-6161356187",
         "reviewer": "codexrev-1"

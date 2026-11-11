@@ -52,6 +52,18 @@ fn answer((step, skill): Pair, actor: Option<NextActor>, because: String) -> Nex
     }
 }
 
+fn actor(id: &str, role: &'static str) -> NextActor {
+    NextActor {
+        id: id.to_owned(),
+        role,
+    }
+}
+
+/// The task's own author never reviews or approves it (DELIVERY §4/§5).
+fn is_author(task: &TaskState, id: &str) -> bool {
+    task.lane.as_deref() == Some(id)
+}
+
 fn author(task: &TaskState) -> Option<NextActor> {
     task.lane.as_ref().map(|lane| NextActor {
         id: lane.clone(),
@@ -83,30 +95,39 @@ pub fn next_step(task: &TaskState) -> NextStep {
                 format!("BLOCK on head by {}", blocker.reviewer),
             ),
             None => {
-                let reviewer = task.current_reviewer.as_ref().map(|id| NextActor {
-                    id: id.clone(),
-                    role: "reviewer",
-                });
-                let because = if reviewer.is_some() {
-                    "PR open on head, no verdict"
-                } else {
-                    "PR open on head, no reviewer assigned"
+                let (reviewer, because) = match task.current_reviewer.as_deref() {
+                    None => (None, "PR open on head, no reviewer assigned"),
+                    Some(id) if is_author(task, id) => (
+                        None,
+                        "reviewer assigned is the author; another reviewer must be assigned",
+                    ),
+                    Some(id) => (Some(actor(id, "reviewer")), "PR open on head, no verdict"),
                 };
                 answer(REVIEW, reviewer, because.to_owned())
             }
         },
         TaskStep::Merge => {
-            // The fold keeps the assignment on the head after an approval; a risk approval names
-            // its own reviewer.
-            let (approver, because) = match &task.approved_with_risk {
-                Some(risk) => (Some(risk.reviewer.clone()), "approved with risk on head"),
-                None => (task.current_reviewer.clone(), "approved on head"),
+            // The fold records who approved the current head; the assignment says nothing of it.
+            let (approver, because) = match task.approved_by.as_deref() {
+                None => (None, "approved on head, approver not recorded"),
+                Some(id) if is_author(task, id) => (
+                    None,
+                    "approval is the author's own; another reviewer must approve",
+                ),
+                Some(id) => {
+                    let risky = task
+                        .approved_with_risk
+                        .as_ref()
+                        .is_some_and(|risk| risk.reviewer == id);
+                    let because = if risky {
+                        "approved with risk on head"
+                    } else {
+                        "approved on head"
+                    };
+                    (Some(actor(id, "approver")), because)
+                }
             };
-            let actor = approver.map(|id| NextActor {
-                id,
-                role: "approver",
-            });
-            answer(MERGE, actor, because.to_owned())
+            answer(MERGE, approver, because.to_owned())
         }
     }
 }

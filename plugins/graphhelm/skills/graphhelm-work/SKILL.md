@@ -11,7 +11,7 @@ This is the one entry skill. Do not work from memory of the flow.
 
 1. Read the task's state with the GraphHelm MCP `tasks` tool (or `status` with its tasks block when `tasks` is not connected) and find the task in the `tasks` array. Its `next` field is `{step, skill, actor, because}`. If the task has no `next`, the Runtime is older than this skill: report `OBSERVER_MISSING` for `next` and stop; do not infer the next step from memory.
 2. If `step` is `done`, the task is finished (merged, or released): stop and report done.
-3. If `actor` is null or `actor.id` is not you, stop and report to the orchestrator; do not act for someone else.
+3. If `actor` is null or `actor.id` is not you, stop and report to the orchestrator, with `because`; do not act for someone else. A null actor on a `review` or `merge` step means the author would be the one acting: another reviewer must be assigned or approve.
 4. If `skill` is null, report `OBSERVER_MISSING` and stop. Never treat a missing skill as success.
 5. Load the skill named in `skill`, do that step, and record it (claim, PR, verdict, merge) with the task record tools.
 6. Go back to step 1.

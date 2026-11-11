@@ -382,6 +382,11 @@ sets `"recordOwnerPrompts": true`. Then each prompt in a title-bound lane sessio
 the team execution as a candidate ask (`task.request_recorded`, requestId `candidate-…`, title
 `candidate: …`), capped at 1000 characters, skipped when it looks like a secret, and sent only with
 that lane's own credential to a loopback Runtime. It never blocks the prompt and prints nothing.
+Claude's `PostToolUse` hook on the `Skill` tool (`hooks/skill_record_hook.py`) records each skill a
+bound session loads as one `skill.loaded` signal (low severity) carrying only the skill name, the
+session id and, for a subagent, its agent id. It never records the skill's `args`, any other tool
+input or any tool output; outside a bound execution, or on any failure, it does nothing, prints
+nothing and never blocks the tool call. Codex has no such hook, so a Codex session records nothing.
 Installing updated source does not prove host activation; verify a fresh native session
 separately.
 

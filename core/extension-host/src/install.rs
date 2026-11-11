@@ -24,6 +24,7 @@
 //! `remove_dir_all`. The parameter that could disagree is gone instead of checked, so the
 //! mismatch has no spelling -- `claim.install_root()` is the only root these functions can reach.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -267,7 +268,16 @@ fn write_pointer(install_root: &Path, pointer: &ActiveVersions) -> Result<(), In
     };
     let bytes = serde_json::to_vec(&persisted).map_err(|_| InstallRefusal::Unwritable)?;
     let temporary = install_root.join(format!("{POINTER_NAME}.tmp-{}", uuid::Uuid::new_v4()));
-    std::fs::write(&temporary, &bytes).map_err(|_| InstallRefusal::Unwritable)?;
+    // The bytes must be on stable storage BEFORE the rename publishes them: a rename that
+    // survives a power cut while the data does not leaves an empty or partial pointer.
+    let flushed = std::fs::File::create(&temporary).and_then(|mut file| {
+        file.write_all(&bytes)?;
+        file.sync_all()
+    });
+    if flushed.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(InstallRefusal::Unwritable);
+    }
     if std::fs::rename(&temporary, install_root.join(POINTER_NAME)).is_err() {
         let _ = std::fs::remove_file(&temporary);
         return Err(InstallRefusal::Unwritable);

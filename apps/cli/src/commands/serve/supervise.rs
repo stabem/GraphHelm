@@ -125,16 +125,14 @@ pub(super) fn run(args: &ServeArgs) -> Outcome {
         }
         if lasted >= STEADY || handed_from.is_some() {
             delay = FIRST_DELAY;
-            fast_exits = 0;
-        } else if lasted < FAST_EXIT {
-            fast_exits += 1;
-            if fast_exits >= FAST_EXIT_LIMIT {
-                note("the Runtime exited at start five times in a row; the supervisor stops");
-                return Outcome::internal(
-                    COMMAND,
-                    "the supervised Runtime exits at start; read its stderr",
-                );
-            }
+        }
+        fast_exits = fast_exits_after(fast_exits, lasted, handed_from.is_some());
+        if fast_exits >= FAST_EXIT_LIMIT {
+            note("the Runtime exited at start five times in a row; the supervisor stops");
+            return Outcome::internal(
+                COMMAND,
+                "the supervised Runtime exits at start; read its stderr",
+            );
         }
         let code = status
             .ok()
@@ -147,6 +145,16 @@ pub(super) fn run(args: &ServeArgs) -> Outcome {
         std::thread::sleep(delay);
         delay = (delay * 2).min(MAX_DELAY);
         restarts += 1;
+    }
+}
+
+/// The fast-exit count after a run. It counts fast exits IN A ROW, so any run that is not a
+/// fast exit (a steady run, a handover, or one in between) ends the row.
+fn fast_exits_after(count: u32, lasted: Duration, handed_over: bool) -> u32 {
+    if lasted < FAST_EXIT && !handed_over {
+        count + 1
+    } else {
+        0
     }
 }
 
@@ -178,6 +186,36 @@ fn watch_successor(events: &Path, from: u32) -> Ending {
                 }
             }
             Some(other) => return other,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_exits_count_only_in_a_row() {
+        let ms = Duration::from_millis(1);
+        assert_eq!(fast_exits_after(2, FAST_EXIT - ms, false), 3);
+        assert_eq!(fast_exits_after(3, STEADY, false), 0);
+        assert_eq!(fast_exits_after(3, FAST_EXIT - ms, true), 0);
+        // A run that is neither fast nor steady ends the row.
+        assert_eq!(fast_exits_after(4, FAST_EXIT, false), 0);
+        assert_eq!(fast_exits_after(4, STEADY - ms, false), 0);
+
+        let fast = FAST_EXIT - ms;
+        let five = (0..FAST_EXIT_LIMIT).fold(0, |n, _| fast_exits_after(n, fast, false));
+        assert_eq!(five, FAST_EXIT_LIMIT);
+
+        let mut n = 0;
+        for _ in 0..FAST_EXIT_LIMIT - 1 {
+            n = fast_exits_after(n, fast, false);
+        }
+        n = fast_exits_after(n, FAST_EXIT, false);
+        for _ in 0..FAST_EXIT_LIMIT - 1 {
+            n = fast_exits_after(n, fast, false);
+            assert!(n < FAST_EXIT_LIMIT);
         }
     }
 }

@@ -968,8 +968,6 @@ fn route_set_schema() -> serde_json::Value {
                 "description": "Delegation tiers served (ADR-041). Absent on a replace: kept; [] clears."},
             "contextWindowTokens": {"type": "integer", "minimum": 0,
                 "description": "Input context window in tokens (ADR-042). Absent on a replace: kept; 0 clears."},
-            "manifest": {"type": "string",
-                "description": "Manifest path override; absent, the Runtime's own."},
         }),
         &["id", "provider", "baseUrl", "model"],
     )
@@ -2255,13 +2253,15 @@ pub(crate) fn call(
                     body[field] = value.clone();
                 }
             }
-            let path = match str_arg(arguments, "manifest") {
-                Some(manifest) => {
-                    format!("/v1/gateway/routes?manifest={}", url::query_value(manifest))
-                }
-                None => "/v1/gateway/routes".to_owned(),
-            };
-            Ok(api.request("PUT", &path, Some(&body), Some(&key), if_match))
+            // No `manifest` query: the Runtime refuses one on a mutation (the destination is the
+            // manifest `serve` started with), so the tool does not offer it.
+            Ok(api.request(
+                "PUT",
+                "/v1/gateway/routes",
+                Some(&body),
+                Some(&key),
+                if_match,
+            ))
         }),
         "probe" => require(arguments, "route").map(|route| {
             let mut path = format!("/v1/gateway/probe?route={}", url::query_value(route));
@@ -2743,6 +2743,166 @@ mod envelope_tests {
             }
             HandlerOutcome::Result(value) => panic!("a refusal stays a refusal: {value}"),
         }
+    }
+
+    /// A loopback stand-in for the Runtime that records each request's first line and answers
+    /// `200 {"ok":true}`. The returned list is what the tool actually put on the wire.
+    fn recording_runtime() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 1024];
+                let head_end = loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break None;
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                    if let Some(at) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break Some(at + 4);
+                    }
+                };
+                let Some(head_end) = head_end else { continue };
+                let head = String::from_utf8_lossy(&raw[..head_end]).to_ascii_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .and_then(|value| value.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                while raw.len() < head_end + length {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                }
+                let line = String::from_utf8_lossy(&raw)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned();
+                recorded.lock().unwrap().push(line);
+                let body = r#"{"ok":true}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (base, seen)
+    }
+
+    fn route_set_arguments() -> serde_json::Value {
+        serde_json::json!({
+            "id": "deepseek",
+            "provider": "openai",
+            "baseUrl": "https://api.deepseek.com",
+            "model": "deepseek-chat",
+        })
+    }
+
+    /// #2773: the Runtime refuses every `manifest` query on `PUT /v1/gateway/routes`, so the
+    /// tool must not offer the argument at all.
+    #[test]
+    fn route_set_does_not_offer_a_manifest_argument() {
+        let list = tool_list();
+        let tool = list["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "route_set")
+            .expect("route_set is in the catalog");
+        let properties = tool["inputSchema"]["properties"].as_object().unwrap();
+        assert!(
+            properties.contains_key("id"),
+            "HARNESS-BROKE: {properties:?}"
+        );
+        assert!(!properties.contains_key("manifest"), "{properties:?}");
+    }
+
+    /// #2773: a caller that still sends `manifest` is refused by argument validation (-32602,
+    /// `GHS002_SCHEMA`, "properties that are not allowed") and nothing reaches the Runtime.
+    #[test]
+    fn route_set_with_a_manifest_is_refused_before_any_request() {
+        let (base, seen) = recording_runtime();
+        let api = ApiClient::new(
+            base,
+            super::super::client::TokenSource::Fixed(Zeroizing::new("tok".to_owned())),
+            "a".into(),
+            "agent".into(),
+            None,
+            None,
+            "0123456789abcdef".to_owned(),
+        );
+        let mut arguments = route_set_arguments();
+        arguments["manifest"] = serde_json::json!("other.json");
+        match call(
+            &api,
+            "0123456789abcdef",
+            &serde_json::json!(1),
+            "route_set",
+            &arguments,
+        ) {
+            HandlerOutcome::Error {
+                code,
+                message,
+                data,
+            } => {
+                assert_eq!(code, INVALID_PARAMS);
+                assert!(
+                    message.starts_with("tool arguments do not match the input schema"),
+                    "{message}"
+                );
+                let diagnostics = data.expect("diagnostics ride the refusal").to_string();
+                assert!(diagnostics.contains("GHS002_SCHEMA"), "{diagnostics}");
+                assert!(
+                    diagnostics.contains("properties that are not allowed"),
+                    "{diagnostics}"
+                );
+            }
+            HandlerOutcome::Result(value) => panic!("a refusal stays a refusal: {value}"),
+        }
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "no request reaches the Runtime: {:?}",
+            seen.lock().unwrap()
+        );
+    }
+
+    /// #2773: a valid `route_set` is one `PUT /v1/gateway/routes` with no query string.
+    #[test]
+    fn route_set_puts_the_routes_path_with_no_query() {
+        let (base, seen) = recording_runtime();
+        let api = ApiClient::new(
+            base,
+            super::super::client::TokenSource::Fixed(Zeroizing::new("tok".to_owned())),
+            "a".into(),
+            "agent".into(),
+            None,
+            None,
+            "0123456789abcdef".to_owned(),
+        );
+        match call(
+            &api,
+            "0123456789abcdef",
+            &serde_json::json!(1),
+            "route_set",
+            &route_set_arguments(),
+        ) {
+            HandlerOutcome::Result(value) => assert_eq!(value["isError"], false, "{value}"),
+            HandlerOutcome::Error { message, .. } => panic!("a valid call is served: {message}"),
+        }
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["PUT /v1/gateway/routes HTTP/1.1".to_owned()]
+        );
     }
 
     /// The refusal keeps its code and its reason; the example is appended, never substituted.

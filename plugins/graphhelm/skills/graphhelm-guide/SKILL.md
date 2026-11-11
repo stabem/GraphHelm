@@ -50,7 +50,7 @@ stateDiagram-v2
     done --> [*]
 ```
 
-Read the diagram as the plan: each arrow is a planned `next` answer, and its label is the record that would cause it. Ids are meant to match the `step` enum and the journey edge ids; the conformance check that enforces this is planned, not yet run.
+Read the diagram as the plan: each arrow is a planned `next` answer, and its label is the record that would cause it. Ids are meant to match the `step` enum and the journey edge ids; the conformance test in `apps/cli/tests/skill_transitions.rs` checks the step skills' transition tables against this diagram and the declared detours below.
 
 Who acts at each state, as planned (the author never reviews or merges their own work). The skill names are planned; only the ones in the plugin folder exist as files, the rest live in extension folders or are still to write:
 
@@ -63,11 +63,22 @@ Who acts at each state, as planned (the author never reviews or merges their own
 | `cleanup` | the merger removes the PR's worktrees and local branch | `merge` |
 | `diagnose` | the owner decides why the task is stuck | none; owner decides |
 
+Declared detours: skill-to-skill rows of the step skills' transition tables that the diagram does not draw.
+
+| From skill | To | When |
+|---|---|---|
+| `task-plan` | `task-plan` | the plan lacks a proof kind |
+| `implement` | `implement` | a BLOCK on your head (same branch, then a new review) |
+| `implement` | `journey-prove` | the proof kind is journey or both |
+| `journey-prove` | `blind-review` | every approved flow replays green |
+| `journey-prove` | `implement` | a step fails on replay |
+| `merge` | `blind-review` | the head moved after approval |
+
 A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owner heartbeat). The unblocker's step becomes the next step, so a BLOCK on a PR sends the author back to `implement` on the same branch with the named defect, and a stall that only the owner can clear goes to `diagnose`.
 
 Every step skill ends with its own transition table (what its record leads to, and who acts next) and sends the session back to `graphhelm-work`. If a session is unsure, it reads the "If in doubt" index at the end of its skill, which is the same in every skill.
 
-The planned proof (not run) is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. A planned conformance test would fail when a skill's transition names a skill that does not exist, or when the diagram omits a state or transition the Runtime maps. Neither exists yet.
+The planned proof (not run) is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. The conformance test (`apps/cli/tests/skill_transitions.rs`) fails when a transition names a skill that does not exist, or when a transition table and this diagram disagree (a row that is neither an arrow nor a declared detour, or an arrow with no row). The demo does not exist yet.
 
 ## Prefer the GraphHelm MCP tools
 

@@ -158,6 +158,9 @@ up)
   mkdir -p "$dir/project/.graphhelm/observers"
   cp "$repo/tools/journey-driver/driver.mjs" "$dir/project/.graphhelm/observers/journey_driver.mjs"
   cp "$repo/tools/journey-driver/judge.mjs" "$dir/project/.graphhelm/observers/judge.mjs"
+  # The driver imports ../hidden-node-children.mjs, and `observer_ready` counts it among the three
+  # files a ready observer has: without it every inner browser run installs on a "warm" fixture.
+  cp "$repo/tools/hidden-node-children.mjs" "$dir/project/.graphhelm/hidden-node-children.mjs"
   [ -f "$dir/project/package.json" ] || printf '{"private":true}\n' > "$dir/project/package.json"
   npm --prefix "$dir/project" install --save-dev --prefer-offline --no-audit --no-fund \
     @playwright/test@1.64.0 > "$dir/.graphhelm/observer-install.log" 2>&1 \

@@ -10,11 +10,13 @@ import os
 import subprocess
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import keel_record
 import session_hook
 import skill_record_hook
 
@@ -132,6 +134,58 @@ class SkillLoadedTest(unittest.TestCase):
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 self.assertEqual(skill_record_hook.main(), 0)
             self.assertEqual((out.getvalue(), err.getvalue()), ("", ""))
+
+
+class Clock:
+    """A `datetime` stand-in whose `now` moves one minute on every call."""
+
+    def __init__(self):
+        self.minute = 0
+
+    def now(self, tz=None):
+        self.minute += 1
+        return datetime(2026, 11, 11, 10, self.minute, 0, tzinfo=tz)
+
+
+def posted(payload, calls=None, execution_bound=BOUND):
+    calls = calls or Calls(bound=execution_bound)
+    run_main(json.dumps(payload), calls)
+    return calls.requests[-1]
+
+
+class OncePerSessionTest(unittest.TestCase):
+    """One record per (execution, session, subagent, skill): the signal bound is shared (10,000)."""
+
+    def setUp(self):
+        clock = Clock()
+        patcher = mock.patch.object(keel_record, "datetime", clock)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_second_load_of_the_same_skill_repeats_the_id_key_and_body(self):
+        calls = Calls()
+        first = posted(skill_payload(), calls)
+        second = posted(skill_payload(), calls)
+        self.assertEqual(len(calls.requests), 2)
+        self.assertEqual(first[3], second[3])
+        self.assertEqual(first[4]["Idempotency-Key"], second[4]["Idempotency-Key"])
+        self.assertEqual(first[4]["Idempotency-Key"], first[3]["signal"]["id"])
+        # No timestamp: the Runtime fills `emittedAt`, so the repeat stays a recognized retry.
+        self.assertNotIn("emittedAt", first[3]["signal"])
+        self.assertTrue(first[3]["signal"]["id"].startswith("skill-loaded-"))
+
+    def test_skill_session_subagent_and_execution_each_give_a_different_id(self):
+        def key(**changes):
+            payload = skill_payload(**changes.pop("extra", {}))
+            payload.update(changes)
+            return posted(payload)[4]["Idempotency-Key"]
+        base = key()
+        other_skill = skill_payload()
+        other_skill["tool_input"]["skill"] = "graphhelm-development-contracts:keel"
+        ids = {base, key(session_id="s2"), key(extra={"agent_id": "child-1"}),
+               key(extra={"agent_id": "child-2"}), posted(other_skill)[4]["Idempotency-Key"],
+               posted(skill_payload(), execution_bound=("other",) + BOUND[1:])[4]["Idempotency-Key"]}
+        self.assertEqual(len(ids), 6)
 
 
 class ScriptRunTest(unittest.TestCase):

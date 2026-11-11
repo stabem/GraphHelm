@@ -1927,8 +1927,8 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
     } else {
         arguments.is_some()
     };
+    let still_serving = true;
     if malformed {
-        let still_serving = true;
         return (refuse("live.request_invalid"), still_serving);
     }
     // A page tool is the page's own code: on a draft the owner's `safe` mark for an edge that leaves
@@ -1938,11 +1938,11 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
         let marked = session.current.as_deref().is_some_and(|current| {
             session.flow["edges"]
                 .as_array()
-                .unwrap()
-                .iter()
+                .into_iter()
+                .flatten()
                 .any(|edge| {
                     edge["from"] == current
-                        && edge["acts"].as_array().unwrap().iter().any(|act| {
+                        && edge["acts"].as_array().into_iter().flatten().any(|act| {
                             act["kind"] == "tool" && act["role"] == role && act["name"] == name
                         })
                         && super::journey_flow::edge_marked_safe_by_owner(
@@ -1953,7 +1953,7 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
                 })
         });
         if !marked {
-            return (refuse("live.act_refused_destructive"), true);
+            return (refuse("live.act_refused_destructive"), still_serving);
         }
     }
     let lower = name.to_lowercase();

@@ -220,7 +220,7 @@ fn json_sorted(value: &Value) -> String {
                 keys.into_iter()
                     .map(|key| format!(
                         "{}: {}",
-                        serde_json::to_string(key).expect("string serialization"),
+                        Value::String((*key).clone()),
                         json_sorted(&map[key])
                     ))
                     .collect::<Vec<_>>()

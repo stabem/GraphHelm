@@ -25,7 +25,7 @@ only replies. No raw exception, input, stack, or secret is logged to stderr.
 |---|---|---|
 | `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false), `coverage: boolean` (default false), `webmcp: boolean` (default false; launches the browser with the WebMCP feature, #2837) | `url` |
 | `snapshot` | `expect: [{role,name}]` (0–8) | `url`, `ariaYaml`, `fingerprint`, `controls` |
-| `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; for `tool`, `role: webmcp` and optional `arguments` (a JSON object of at most 4096 bytes and 8 levels; never `text` or a secret); optional `locator` | `url`, `locator`; a `tool` act also `toolResult` |
+| `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; for `tool`, `role: webmcp` and optional `arguments` (a JSON object of at most 4096 bytes of compact `JSON.stringify` and 8 levels (the flow validator measures its own, longer text form, so a flow it passes fits here); never `text` or a secret); optional `locator` | `url`, `locator`; a `tool` act also `toolResult` |
 | `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` |
 | `coverage` | none; only after `open`, once per session | `path: "coverage.json"`, `schema: "graphhelm-js-coverage/1"` |
 | `close` | none | `closed: true` |

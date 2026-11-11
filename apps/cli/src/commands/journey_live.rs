@@ -1918,21 +1918,30 @@ pub(crate) fn live_tool_act_allowed(
     host_started_app: bool,
     edge_safe: &dyn Fn(&Value) -> bool,
 ) -> std::result::Result<(), &'static str> {
-    if flow["status"] == "approved" || host_started_app {
-        return Ok(());
+    fn arguments_of<'v>(act: &'v Value, empty: &'v Value) -> &'v Value {
+        act.get("arguments")
+            .filter(|value| !value.is_null())
+            .unwrap_or(empty)
     }
-    let marked = current.is_some_and(|current| {
-        flow["edges"].as_array().into_iter().flatten().any(|edge| {
-            edge["from"] == current
+    let empty = json!({});
+    let mut declared = flow["edges"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|edge| {
+            current.is_some_and(|current| edge["from"] == current)
                 && edge["acts"].as_array().into_iter().flatten().any(|act| {
-                    act["kind"] == "tool"
+                    act["kind"] == requested["kind"]
                         && act["role"] == requested["role"]
                         && act["name"] == requested["name"]
+                        && arguments_of(act, &empty) == arguments_of(requested, &empty)
                 })
-                && edge_safe(edge)
         })
-    });
-    if marked {
+        .peekable();
+    if declared.peek().is_none() {
+        return Err("live.act_refused_destructive");
+    }
+    if flow["status"] == "approved" || host_started_app || declared.any(edge_safe) {
         Ok(())
     } else {
         Err("live.act_refused_destructive")

@@ -9,7 +9,8 @@ absent meaning `{}`. The act's `allOf` rules are untouched, so a tool act cannot
 What JSON Schema cannot say without a new `allOf` branch is enforced by the flow validator, with
 stable codes and pointers: `role` must be exactly `webmcp` (`flow.tool_role_invalid`), `arguments`
 belongs to a tool act only (`flow.act_arguments_unexpected`), and the arguments are bounded to 4096
-bytes of canonical JSON and 8 levels of nesting (`flow.tool_arguments_too_large`). A tool act is a
+bytes of the flow's canonical text form (the one-line `{"k": v}` form the canonical writer emits, with
+its `": "` and `", "` separators, not compact JSON) and 8 levels of nesting (`flow.tool_arguments_too_large`). A tool act is a
 browser act: a flow that also has an `http` or `cli` act is refused by the existing mixing rule
 (`flow.observer_mixed`). The screen the edge reaches still judges the step; the tool's result is
 recorded and never decides. The canonical writer emits `arguments` last, only when present, with

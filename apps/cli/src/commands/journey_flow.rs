@@ -187,7 +187,10 @@ pub(crate) fn declared_states(flow: &Value) -> Vec<String> {
         .collect()
 }
 
-/// #2837: the most canonical JSON bytes and the deepest nesting a `tool` act's `arguments` may have.
+/// #2837: the most bytes of the flow's own text form (the one-line YAML flow `{"k": v, ...}` with
+/// `": "` and `", "` separators, keys sorted, as `canonical` writes it; not compact JSON) and the
+/// deepest nesting a `tool` act's `arguments` may have. The driver measures compact `JSON.stringify`,
+/// which is shorter, so nothing this bound passes is refused there.
 /// They are bounds on what reaches a page, as `headers` is bounded in the schema: small enough that
 /// a flow file stays readable and a driver frame (64 KiB) never carries more than the page needs.
 const TOOL_ARGUMENTS_MAX_BYTES: usize = 4096;

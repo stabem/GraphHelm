@@ -78,7 +78,7 @@ drift: []
 - **`tool`** (#2837): `{kind: tool, role: webmcp, name: rename_heading, arguments: {title: Hi}}`
   calls the WebMCP page tool registered under `name` in the page (the browser is launched with the
   WebMCP feature only for a flow that has one). `arguments` is the tool's arguments, an
-  object (absent means `{}`; at most 4096 bytes and 8 levels, else `flow.tool_arguments_too_large`);
+  object (absent means `{}`; at most 4096 bytes of the flow's canonical text form (the one-line `{"k": v}` form with its separators, not compact JSON) and 8 levels, else `flow.tool_arguments_too_large`);
   `role` must be `webmcp` (`flow.tool_role_invalid`), `arguments` belongs to a tool act only
   (`flow.act_arguments_unexpected`), and `text`, `secret` and `headers` are refused, since a secret
   would land in the page. The tool is the hands and the screen is the proof: the

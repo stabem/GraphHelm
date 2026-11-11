@@ -106,6 +106,30 @@ class RecordBlockTest(unittest.TestCase):
         self.assertEqual(body["signal"]["type"], "keel.blocked")
         self.assertEqual(body["signal"]["source"], {"type": "node", "id": "implementation"})
 
+    def test_a_block_id_still_folds_the_timestamp_into_its_digest(self):
+        import hashlib
+        from datetime import datetime
+        sent = []
+
+        class Fixed:
+            @staticmethod
+            def now(tz=None):
+                return datetime(2026, 11, 11, 10, 0, 0, tzinfo=tz)
+
+        bound = ("demo", "token-file", "http://127.0.0.1:1", "origin", "implementation")
+        with mock.patch.object(keel_record, "datetime", Fixed), \
+                mock.patch.object(keel_record.session_hook, "binding", lambda payload=None: bound), \
+                mock.patch.object(keel_record.session_hook, "token_from_file", lambda path: "tok"), \
+                mock.patch.object(keel_record.session_hook, "request",
+                                  lambda url, token, method, body, headers, timeout=1.0: sent.append((body, headers))):
+            self.assertTrue(keel_record.record_block("pretool", "no card", {"session_id": "s1"}))
+        body, headers = sent[0]
+        digest = hashlib.sha256("demo\0s1\0pretool\0no card\0".encode()
+                                + b"2026-11-11T10:00:00+00:00").hexdigest()[:24]
+        self.assertEqual(body["signal"]["id"], f"keel-blocked-{digest}")
+        self.assertEqual(headers["Idempotency-Key"], f"keel-blocked-{digest}")
+        self.assertEqual(body["signal"]["emittedAt"], "2026-11-11T10:00:00+00:00")
+
     def test_an_unreachable_runtime_never_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
             token = Path(tmp) / "t"

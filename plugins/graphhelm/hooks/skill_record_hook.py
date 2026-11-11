@@ -3,7 +3,8 @@
 Runs after the Skill tool. Best effort and silent: outside a bound execution, on a payload that is
 not a Skill call with a non-empty string name, or on any failure, nothing happens. It records the
 skill name, the session and (for a subagent) the agent id, and never `args`, any other tool input
-or any tool output. It prints nothing, always exits 0 and never changes the tool call.
+or any tool output. The id and idempotency key come from the execution, session, agent and skill
+alone, so a repeat load is a recognized retry, not a second record. It prints nothing, always exits 0 and never changes the tool call.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ def record(payload: object) -> bool:
                        kind="skill.loaded", severity="low", description=f"Skill loaded: {name}",
                        evidence_for=lambda session: [f"skill: {name}", f"session: {session}",
                                                      *([f"agent: {agent}"] if agent else [])],
-                       tool_id="skill-record")
+                       tool_id="skill-record", once=True)
 
 
 def main() -> int:

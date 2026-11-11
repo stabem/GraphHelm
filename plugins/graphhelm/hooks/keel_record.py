@@ -58,10 +58,13 @@ def record_check(envelope: dict, payload: dict) -> bool:
 
 
 def post_signal(payload: dict, *, id_prefix: str, digest_text: str, kind: str, severity: str,
-                description: str, evidence_for, tool_id: str) -> bool:
+                description: str, evidence_for, tool_id: str, once: bool = False) -> bool:
     """Best-effort signal on the bound execution; False outside one and on any failure.
 
-    `evidence_for(session)` builds the evidence lines once the session id is known.
+    `evidence_for(session)` builds the evidence lines once the session id is known. With `once`,
+    the id and Idempotency-Key come from (execution, session, `digest_text`) alone and the body
+    leaves `emittedAt` for the Runtime to fill, so a repeat is a byte-identical request that the
+    Runtime answers as a recognized retry without appending a second event.
     """
     try:
         bound = session_hook.binding(payload)
@@ -70,11 +73,14 @@ def post_signal(payload: dict, *, id_prefix: str, digest_text: str, kind: str, s
         execution, token_file, url, _origin, node_id = bound
         session = str(payload.get("session_id") or "unknown")[:128]
         emitted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        digest = hashlib.sha256(f"{execution}\0{session}\0{digest_text}\0{emitted_at}".encode()).hexdigest()[:24]
+        stamp = "" if once else f"\0{emitted_at}"
+        digest = hashlib.sha256(f"{execution}\0{session}\0{digest_text}{stamp}".encode()).hexdigest()[:24]
         signal_id = f"{id_prefix}-{digest}"
         source = {"type": "node", "id": node_id} if node_id else {"type": "tool", "id": tool_id}
         signal = {"id": signal_id, "source": source, "type": kind, "severity": severity,
-                  "description": description, "evidence": evidence_for(session), "emittedAt": emitted_at}
+                  "description": description, "evidence": evidence_for(session)}
+        if not once:
+            signal["emittedAt"] = emitted_at
         session_hook.request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
                              session_hook.token_from_file(token_file), "POST", {"signal": signal},
                              {"X-GraphHelm-Actor": source["id"], "X-GraphHelm-Actor-Type": "agent",

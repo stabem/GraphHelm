@@ -5791,7 +5791,7 @@ fn default_claim_seq(events: &Path, execution_id: &str) -> Result<u64, Response>
         several => Err(bad_request(
             CLEAR_COMMAND,
             &format!(
-                "\"claimSeq\" was left out and this execution has several open claims ({});                  name one",
+                "\"claimSeq\" was left out and this execution has several open claims ({}); name one",
                 several
                     .iter()
                     .map(u64::to_string)

@@ -1902,6 +1902,43 @@ fn answer(session: &mut Session, request: Option<Value>) -> (Value, bool) {
     }
 }
 
+/// Whether a live act of kind `tool` may run. Pure: no I/O; the owner's record of a safe mark is the
+/// caller's `edge_safe`.
+///
+/// The requested act must be an act the flow declares on an edge leaving `current`, with the same
+/// `kind`, `role`, `name` and `arguments` (JSON values: key order does not matter, absent equals
+/// `{}`, a number is not a string). On a draft that edge must also carry the owner's safe mark,
+/// unless `host_started_app` (the app this host launched itself, which is what a preview or a replay
+/// waives the mark for too). An approved flow needs no mark: its digest binds every act, arguments
+/// included (`journey_flow::approval_digest` writes them through `ACT_FIELDS`).
+pub(crate) fn live_tool_act_allowed(
+    flow: &Value,
+    current: Option<&str>,
+    requested: &Value,
+    host_started_app: bool,
+    edge_safe: &dyn Fn(&Value) -> bool,
+) -> std::result::Result<(), &'static str> {
+    if flow["status"] == "approved" || host_started_app {
+        return Ok(());
+    }
+    let marked = current.is_some_and(|current| {
+        flow["edges"].as_array().into_iter().flatten().any(|edge| {
+            edge["from"] == current
+                && edge["acts"].as_array().into_iter().flatten().any(|act| {
+                    act["kind"] == "tool"
+                        && act["role"] == requested["role"]
+                        && act["name"] == requested["name"]
+                })
+                && edge_safe(edge)
+        })
+    });
+    if marked {
+        Ok(())
+    } else {
+        Err("live.act_refused_destructive")
+    }
+}
+
 fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
     let refuse = |code: &str| json!({"ok":false,"code":code});
     let (Some(kind), Some(role), Some(name)) = (
@@ -1931,29 +1968,20 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
     if malformed {
         return (refuse("live.request_invalid"), still_serving);
     }
-    // A page tool is the page's own code: on a draft the owner's `safe` mark for an edge that leaves
-    // this screen and has this very act lets it run, unless this host started the app itself, as in a
-    // preview. An approved flow carries the owner's approval of every act.
-    if kind == "tool" && session.flow["status"] != "approved" && session.launched.is_none() {
-        let marked = session.current.as_deref().is_some_and(|current| {
-            session.flow["edges"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|edge| {
-                    edge["from"] == current
-                        && edge["acts"].as_array().into_iter().flatten().any(|act| {
-                            act["kind"] == "tool" && act["role"] == role && act["name"] == name
-                        })
-                        && super::journey_flow::edge_marked_safe_by_owner(
-                            &session.flow,
-                            edge,
-                            &session.project,
-                        )
-                })
-        });
-        if !marked {
-            return (refuse("live.act_refused_destructive"), still_serving);
+    // A page tool is the page's own code: see `live_tool_act_allowed` for what it takes to run one.
+    if kind == "tool" {
+        let requested = json!({"kind":kind,"role":role,"name":name,
+            "arguments":arguments.cloned().unwrap_or_else(|| json!({}))});
+        let flow = &session.flow;
+        let project = &session.project;
+        if let Err(code) = live_tool_act_allowed(
+            flow,
+            session.current.as_deref(),
+            &requested,
+            session.launched.is_some(),
+            &|edge| super::journey_flow::edge_marked_safe_by_owner(flow, edge, project),
+        ) {
+            return (refuse(code), still_serving);
         }
     }
     let lower = name.to_lowercase();
@@ -2275,6 +2303,129 @@ mod watch_guard_tests {
         assert_eq!(would("enter_text", "Send to"), None);
         assert_eq!(would("wait_for", "Order sent"), None);
         assert_eq!(would("inspect", "Remove"), None);
+    }
+
+    /// A flow on screen `a` whose edge `a -> b` declares the tool act `rename_heading` with `args`
+    /// (and carries a safe mark when `marked`), plus an edge `b -> a` declaring `elsewhere`, which
+    /// does not leave `a`.
+    fn flow(status: &str, args: Option<serde_json::Value>, marked: bool) -> serde_json::Value {
+        let mut act = json!({"kind":"tool","role":"webmcp","name":"rename_heading"});
+        if let Some(args) = args {
+            act["arguments"] = args;
+        }
+        let mut edge = json!({"id":"e1","from":"a","to":"b","acts":[act]});
+        if marked {
+            edge["safe"] = json!({"digest":"sha256:x"});
+        }
+        json!({"status":status,"edges":[edge,
+            {"id":"e2","from":"b","to":"a","acts":[
+                {"kind":"tool","role":"webmcp","name":"elsewhere"}]}]})
+    }
+
+    fn live(
+        flow: &serde_json::Value,
+        name: &str,
+        arguments: serde_json::Value,
+        host_started_app: bool,
+    ) -> std::result::Result<(), &'static str> {
+        let requested = json!({"kind":"tool","role":"webmcp","name":name,"arguments":arguments});
+        super::live_tool_act_allowed(flow, Some("a"), &requested, host_started_app, &|edge| {
+            !edge["safe"].is_null()
+        })
+    }
+
+    const REFUSED: std::result::Result<(), &str> = Err("live.act_refused_destructive");
+
+    /// A live tool act on a draft runs only as the exact act the owner marked safe: the same
+    /// arguments as JSON values, on an edge leaving the current screen. Defect named: the guard
+    /// compared kind, role and name only, so one marked call opened that tool to any arguments.
+    #[test]
+    fn a_live_tool_act_on_a_draft_must_be_the_exact_marked_act() {
+        let marked = flow("draft", Some(json!({"title":"Hi","n":1})), true);
+        assert_eq!(
+            live(
+                &marked,
+                "rename_heading",
+                json!({"n":1,"title":"Hi"}),
+                false
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            live(
+                &marked,
+                "rename_heading",
+                json!({"title":"Bye","n":1}),
+                false
+            ),
+            REFUSED
+        );
+        assert_eq!(
+            live(
+                &marked,
+                "rename_heading",
+                json!({"title":"Hi","n":1,"x":1}),
+                false
+            ),
+            REFUSED
+        );
+        assert_eq!(
+            live(
+                &marked,
+                "rename_heading",
+                json!({"title":"Hi","n":"1"}),
+                false
+            ),
+            REFUSED
+        );
+        assert_eq!(live(&marked, "rename_heading", json!({}), false), REFUSED);
+        assert_eq!(
+            live(&marked, "other_tool", json!({"title":"Hi","n":1}), false),
+            REFUSED
+        );
+        // Declared, but on an edge that does not leave screen `a`.
+        assert_eq!(live(&marked, "elsewhere", json!({}), false), REFUSED);
+        let bare = flow("draft", None, true);
+        assert_eq!(live(&bare, "rename_heading", json!({}), false), Ok(()));
+        assert_eq!(
+            live(&bare, "rename_heading", json!({"title":"Hi"}), false),
+            REFUSED
+        );
+        let empty = flow("draft", Some(json!({})), true);
+        assert_eq!(live(&empty, "rename_heading", json!({}), false), Ok(()));
+        let unmarked = flow("draft", Some(json!({"title":"Hi"})), false);
+        assert_eq!(
+            live(&unmarked, "rename_heading", json!({"title":"Hi"}), false),
+            REFUSED
+        );
+    }
+
+    /// An app this host started itself waives the mark, never the declaration: the act is still the
+    /// flow's own. On an approved flow the exact act is enough; another argument or an undeclared
+    /// tool is refused, because the approval digest covers the arguments and nothing else.
+    #[test]
+    fn a_started_app_waives_the_mark_and_an_approval_covers_only_the_flows_own_acts() {
+        let unmarked = flow("draft", Some(json!({"title":"Hi"})), false);
+        assert_eq!(
+            live(&unmarked, "rename_heading", json!({"title":"Hi"}), true),
+            Ok(())
+        );
+        assert_eq!(
+            live(&unmarked, "rename_heading", json!({"title":"Bye"}), true),
+            REFUSED
+        );
+        assert_eq!(live(&unmarked, "other_tool", json!({}), true), REFUSED);
+        let approved = flow("approved", Some(json!({"title":"Hi"})), false);
+        assert_eq!(
+            live(&approved, "rename_heading", json!({"title":"Hi"}), false),
+            Ok(())
+        );
+        assert_eq!(
+            live(&approved, "rename_heading", json!({"title":"Bye"}), false),
+            REFUSED
+        );
+        assert_eq!(live(&approved, "other_tool", json!({}), false), REFUSED);
+        assert_eq!(live(&approved, "elsewhere", json!({}), false), REFUSED);
     }
 }
 

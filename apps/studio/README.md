@@ -54,3 +54,23 @@ npx vitest run --maxWorkers=4
 
 The journeys that prove the Studio are `.graphhelm/journeys/studio2-*.journey.yaml`, replayed by
 the fixture in `tools/studio-journey-fixture`.
+
+## WebMCP page tools
+
+In a browser that offers WebMCP (`document.modelContext`), the Studio registers three page tools,
+each by the component that owns the control, through `usePageTools` in `src/webmcp/page-tools.ts`;
+without a host nothing is registered and the Studio behaves as before.
+
+- `studio_select_view` `{view: graph|lanes|proof}`: opens that view, as clicking its tab does.
+- `studio_proof_run` `{journey}`: runs the function behind the Journeys column's `Run <journey name>`
+  button (`runSingle`), which selects the journey and starts its run. It is not the run panel's `Run`
+  button; both reach the same "Preparing the browser" screen.
+- `studio_proof_set_log` `{open}`: opens or closes the run console, as Show log / Hide log does.
+
+A tool refuses (`{ok:false, reason}`) where its control is disabled or absent and otherwise answers
+`{ok:true}`: it reports that the action was dispatched, never the outcome. The rendered screen is the
+outcome, which the draft journey `studio2-proof-run-tools` judges with the same screens as the click
+journey `studio2-proof-run`. Approve, reject, send-to-fix, stop, merge, reassign, start-run and
+add-folder are deliberately not page tools. Tool calls reach the Runtime through the same client as
+clicks, so they are recorded as the Studio operator, exactly like a click; a separate actor is future
+work. #1870 stays open for the other tools.

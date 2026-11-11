@@ -151,3 +151,59 @@ fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
         misses.join("\n")
     );
 }
+
+/// #2839: `studio2-proof-run-tools` proves the same screens as the click flow `studio2-proof-run`
+/// through the Studio's page tools, so it must never be judged by easier screens: the screens are
+/// equal in every field, each tool-flow edge joins the same screens as the click flow's edge of that
+/// id, an edge whose acts differ carries only tool acts, and every other edge's acts are identical.
+#[test]
+fn the_page_tool_flow_is_judged_by_the_click_flows_screens() {
+    let read = |id: &str| -> Value {
+        let path = repo().join(format!(".graphhelm/journeys/{id}.journey.yaml"));
+        serde_yaml_ng::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    let click = read("studio2-proof-run");
+    let tools = read("studio2-proof-run-tools");
+    assert_eq!(
+        tools["screens"], click["screens"],
+        "the tool flow's screens must equal the click flow's, field for field"
+    );
+    let click_edges = click["edges"].as_array().unwrap();
+    let tool_edges = tools["edges"].as_array().unwrap();
+    assert_eq!(
+        tool_edges.len(),
+        click_edges.len(),
+        "one tool-flow edge per click-flow edge"
+    );
+    let mut replaced = 0;
+    for edge in tool_edges {
+        let id = edge["id"].as_str().unwrap();
+        let twin = click_edges
+            .iter()
+            .find(|candidate| candidate["id"] == edge["id"])
+            .unwrap_or_else(|| panic!("edge {id} has no click-flow edge of that id"));
+        assert_eq!(edge["from"], twin["from"], "edge {id}: from");
+        assert_eq!(edge["to"], twin["to"], "edge {id}: to");
+        if edge["acts"] == twin["acts"] {
+            continue;
+        }
+        replaced += 1;
+        let acts = edge["acts"].as_array().unwrap();
+        assert!(
+            !acts.is_empty() && acts.iter().all(|act| act["kind"] == "tool"),
+            "edge {id}: a replaced edge carries tool acts only"
+        );
+        assert!(
+            twin["acts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|act| act["kind"] != "tool"),
+            "edge {id}: the click flow's edge must stay a click"
+        );
+    }
+    assert!(
+        replaced > 0,
+        "the tool flow replaces at least one click act"
+    );
+}

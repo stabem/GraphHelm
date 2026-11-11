@@ -1,5 +1,6 @@
 import { When } from "../time/Stamp";
 import { VIEWS, type View } from "../routing/route";
+import { usePageTools } from "../webmcp/page-tools";
 
 const LABEL: Record<View, string> = { graph: "Graph", lanes: "Lanes", proof: "Proof" };
 
@@ -14,6 +15,18 @@ interface Props {
 
 /** The top bar of the design (Topbar.dc.html): where you are, the three views, and the one action. */
 export function Topbar({ project, run, view, updated, onView, onStart }: Props) {
+  // #2839: the tabs' own handler, offered to a WebMCP agent; no tab is ever disabled.
+  usePageTools([{
+    name: "studio_select_view",
+    description: "Open the Graph, Lanes or Proof view, as clicking its tab does.",
+    inputSchema: { type: "object", properties: { view: { type: "string", enum: [...VIEWS] } }, required: ["view"], additionalProperties: false },
+    handler: ({ view: next }) => {
+      const wanted = VIEWS.find((key) => key === next);
+      if (wanted === undefined) return { ok: false, reason: `view must be one of ${VIEWS.join(", ")}.` };
+      onView(wanted);
+      return { ok: true };
+    },
+  }]);
   return (
     <header aria-label="Top bar" className="topbar">
       <h2 className="crumb-project">{project}</h2>

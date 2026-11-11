@@ -518,9 +518,10 @@ Get-Content "C:\path\to\your-project\.graphhelm\codex.config.toml" | Add-Content
 The server `graphhelm mcp` exposes a closed list of tools named after the Runtime verbs (the table is `TOOLS` in `apps/cli/src/commands/mcp/tools.rs`; its size changes with the release) —
 `list`, `status`, `briefing`, `events`, `evidence`, `approve`, `pause`, `resume`, `signal`,
 `cancel`, `sweep`, … (`apps/cli/src/commands/mcp/tools.rs`); a harness shows them under the
-server name, e.g. `mcp__graphhelm__list` in Claude Code. The Studio's WebMCP page tools (the
-`graphhelm_*` names) were retired with the old Studio (#1808, #1870): agents use this MCP server,
-which serves every Runtime verb. If `init` detected neither harness
+server name, e.g. `mcp__graphhelm__list` in Claude Code. The Studio's old WebMCP page tools (the
+`graphhelm_*` names) were retired with the old Studio (#1808); the Studio now registers only three
+(`studio_select_view`, `studio_proof_run`, `studio_proof_set_log`, #2839, in a browser with WebMCP
+enabled), and #1870 stays open for the rest. Agents use this MCP server for every Runtime verb. If `init` detected neither harness
 (`"harnesses": []`), pass `--harness claude-code` or `--harness codex` explicitly.
 
 ## 7. Where to go next

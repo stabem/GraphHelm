@@ -18,13 +18,15 @@ baseline arm, so the delta column shows what the skill itself changes.
 `judge-qualification.json` version 2 is a public, synthetic review packet for the current
 `keel-observer-missing` and `test-audit-junk` prompts and rubrics. Each rubric has a proposed
 correct, plausible-wrong, and boundary response. The original observer examples and their
-proposed labels are unchanged. All labels are pending human review; they are not judge results
-or secret holdout data. Reviewers must approve the labels before using them to qualify any
-judge. Keep skill invocation, answer correctness, and completion/infrastructure status
+proposed labels are unchanged. Validation of these labels is done by agents, not by a human:
+two blind, independent judges vote against a criterion frozen before they vote; when they
+disagree, a third agent breaks the tie. Each example's `reviewStatus` is `judge-reviewed` with its
+`judgeVotes`. These are not secret holdout data, and a labeled packet is not a judge result.
+Keep skill invocation, answer correctness, and completion/infrastructure status
 separate; an incomplete response cannot count as a pass.
 
 The packet's `contentSha256` binds its complete parsed content, including candidate transcripts
-and rationales. Cite this digest with the source commit during human review; any content edit
+and rationales. Cite this digest with the source commit during agent review; any content edit
 creates a new review identity. Formatting-only changes do not alter the digest. It is an integrity
 reference, not a signature, approval, secret holdout, or protection against someone changing both
 the content and digest.
@@ -45,8 +47,7 @@ but asks only for a grammar correction. Skill stays available, and the grader re
 completed, meaning-preserving correction without a Skill invocation. The isolated eval must
 expose only the intended development-contracts skills; a host editing skill would change the
 case's premise. The external runner must keep INCOMPLETE separate from non-selection. These
-prepared labels need human review before a judge can be qualified; no selection result is
-claimed here.
+prepared labels are judge-voted only in the packet; no selection result is claimed here.
 
 `audit-before-planning` is a competing-intent selection case. The request starts with planning
 but asks for an assessment of two existing tests. Run it with the isolated development-contracts

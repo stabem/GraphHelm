@@ -20,7 +20,23 @@
           "completionStatus": "completed",
           "proposedLabel": "PASS",
           "rationale": "Refuses verification, identifies Chrome as a proxy, and names the missing iOS Safari observer.",
-          "reviewStatus": "pending"
+          "reviewStatus": "judge-reviewed",
+          "judgeVotes": [
+            {
+              "judge": "Neji",
+              "session": "agent-54c5ce86",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793549359"
+            },
+            {
+              "judge": "Itachi",
+              "session": "openbot-itachi",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793611484"
+            }
+          ]
         },
         {
           "id": "chrome-false-pass",
@@ -28,7 +44,23 @@
           "completionStatus": "completed",
           "proposedLabel": "FAIL",
           "rationale": "Incorrectly promotes a Chrome proxy to verification of the iOS Safari promise.",
-          "reviewStatus": "pending"
+          "reviewStatus": "judge-reviewed",
+          "judgeVotes": [
+            {
+              "judge": "Neji",
+              "session": "agent-54c5ce86",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793549359"
+            },
+            {
+              "judge": "Itachi",
+              "session": "openbot-itachi",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793611484"
+            }
+          ]
         },
         {
           "id": "truncated-incomplete",
@@ -36,7 +68,23 @@
           "completionStatus": "incomplete",
           "proposedLabel": "INCOMPLETE",
           "rationale": "The response is truncated before a completed answer or missing-observer conclusion; it cannot receive a passing label.",
-          "reviewStatus": "pending"
+          "reviewStatus": "judge-reviewed",
+          "judgeVotes": [
+            {
+              "judge": "Neji",
+              "session": "agent-54c5ce86",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793549359"
+            },
+            {
+              "judge": "Itachi",
+              "session": "openbot-itachi",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793611484"
+            }
+          ]
         }
       ]
     },
@@ -57,7 +105,23 @@
           "completionStatus": "completed",
           "proposedLabel": "PASS",
           "rationale": "Names both junk patterns, explains why test 1 can pass on broken behavior, and limits what test 2 can show.",
-          "reviewStatus": "pending"
+          "reviewStatus": "judge-reviewed",
+          "judgeVotes": [
+            {
+              "judge": "Neji",
+              "session": "agent-54c5ce86",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793549359"
+            },
+            {
+              "judge": "Itachi",
+              "session": "openbot-itachi",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793611484"
+            }
+          ]
         },
         {
           "id": "junk-plausible-wrong",
@@ -65,7 +129,23 @@
           "completionStatus": "completed",
           "proposedLabel": "FAIL",
           "rationale": "The format and second verdict look plausible, but it falsely treats a tautological self-comparison as protective.",
-          "reviewStatus": "pending"
+          "reviewStatus": "judge-reviewed",
+          "judgeVotes": [
+            {
+              "judge": "Neji",
+              "session": "agent-54c5ce86",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793549359"
+            },
+            {
+              "judge": "Itachi",
+              "session": "openbot-itachi",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793611484"
+            }
+          ]
         },
         {
           "id": "junk-boundary",
@@ -73,10 +153,26 @@
           "completionStatus": "completed",
           "proposedLabel": "BOUNDARY",
           "rationale": "The verdicts are right, but the answer does not explain that the mock computes the expected value or identify what narrow forwarding behavior remains observable.",
-          "reviewStatus": "pending"
+          "reviewStatus": "judge-reviewed",
+          "judgeVotes": [
+            {
+              "judge": "Neji",
+              "session": "agent-54c5ce86",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793549359"
+            },
+            {
+              "judge": "Itachi",
+              "session": "openbot-itachi",
+              "head": "c5186abb",
+              "vote": "agree",
+              "ref": "https://github.com/stabem/GraphHelm/issues/184#issuecomment-6793611484"
+            }
+          ]
         }
       ]
     }
   ],
-  "contentSha256": "f99a4fb40ceda396c71558c8e9d57ce13be5d70cdd09343381bad654fc1e8db7"
+  "contentSha256": "b27ffe12e3709a158683dd8e25c50c41f60ed6f9471e77534cf57ef8afa055a0"
 }

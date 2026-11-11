@@ -630,3 +630,84 @@ test('a cross-origin iframe navigation is refused and never reaches the other se
   assert.equal(snap.code,'driver.host_refused',JSON.stringify(snap));
   assert.deepEqual(hits,[],'the refused frame must not reach the other server');
 });
+
+// #2837: a `tool` act calls a WebMCP page tool. The tool is the hands; the screen is the proof.
+// Gap: the other cells act by role and name; none proves a tool the page registered runs for real,
+// nor that its returned text never decides the step. Cost: one Chromium session per cell (~3 s;
+// ~25 s for the one that waits out an unmet expectation), local fixture only.
+const toolLocator=name=>({role:'webmcp',name,exact:true,testId:null,context:null,nth:null});
+
+test('a tool act runs the page tool and the reached screen is judged by what is rendered',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);await open(c,f.base+'/webmcp',[],{webmcp:true});
+  const r=await act(c,'tool','webmcp','rename_heading',{arguments:{title:'Renamed by a tool'}});
+  assert.equal(r.ok,true,JSON.stringify(r));
+  assert.equal(r.result.toolResult,'ok');
+  assert.deepEqual(r.result.locator,toolLocator('rename_heading'));
+  const seen=await c.send('snapshot',{expect:[{role:'heading',name:'Renamed by a tool'}]});
+  assert.equal(seen.ok,true,JSON.stringify(seen));
+  // No arguments means `{}`: the tool still runs and its default applies.
+  const bare=await act(c,'tool','webmcp','rename_heading');assert.equal(bare.ok,true,JSON.stringify(bare));
+  assert.equal((await c.send('snapshot',{expect:[{role:'heading',name:'Renamed'}]})).ok,true);
+});
+
+test('the tool result never judges the step: a tool that answers ok but changes nothing fails the screen',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const c=await client(t);await open(c,f.base+'/webmcp',[],{webmcp:true});
+  const r=await act(c,'tool','webmcp','says_ok');
+  assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.result.toolResult,'ok');
+  const seen=await c.send('snapshot',{expect:[{role:'heading',name:'Renamed'}]});
+  assert.equal(seen.ok,false);assert.equal(seen.code,'driver.expectation_failed');
+});
+
+test('a tool act names its failure: missing, ambiguous, thrown, or no WebMCP in the browser',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const missing=await client(t);await open(missing,f.base+'/webmcp',[],{webmcp:true});
+  assert.equal((await act(missing,'tool','webmcp','no_such_tool')).code,'driver.tool_missing');
+  // The browser lists a same-origin frame's tools with the page's: two tools named `twin`.
+  const twin=await client(t);await open(twin,f.base+'/webmcp-twin',[],{webmcp:true});
+  // The frame's tool is registered once the frame has loaded; the page says so in its heading.
+  assert.equal((await twin.send('snapshot',{expect:[{role:'heading',name:'Twins ready'}]})).ok,true);
+  assert.equal((await act(twin,'tool','webmcp','twin')).code,'driver.tool_ambiguous');
+  const thrown=await client(t);await open(thrown,f.base+'/webmcp',[],{webmcp:true});
+  assert.equal((await act(thrown,'tool','webmcp','explode')).code,'driver.tool_failed');
+  // Opened without `webmcp` the browser has no `document.modelContext`: the observer cannot do
+  // this act, which is not a missing tool and never a pass.
+  const without=await client(t);await open(without,f.base+'/webmcp');
+  assert.equal((await act(without,'tool','webmcp','rename_heading')).code,'driver.webmcp_unavailable');
+});
+
+test('a tool result is recorded masked and cut, and a secret never reaches the reply',async t=>{
+  const secret='CANARY_tool_result_2837';
+  const server=createServer((_,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<h1>Tool</h1><script>const mc=document.modelContext;mc.registerTool({name:'echo',description:'echo',inputSchema:{type:'object'},execute:async()=>'token ${secret} end'});mc.registerTool({name:'long_result',description:'long',inputSchema:{type:'object'},execute:async()=>'x'.repeat(4000)});mc.registerTool({name:'rename_heading',description:'rename',inputSchema:{type:'object'},execute:async()=>'ok'});</script>`);});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const c=await client(t,{GRAPHHELM_SECRET_TOOL:secret});
+  await open(c,`http://127.0.0.1:${server.address().port}/`,[],{webmcp:true,survive:true});
+  const r=await act(c,'tool','webmcp','echo');
+  assert.equal(r.ok,true,JSON.stringify(r));
+  assert.equal(r.result.toolResult,'token «secret:TOOL» end');
+  assert.ok(!JSON.stringify(r).includes(secret));
+  const long=await act(c,'tool','webmcp','long_result');
+  assert.equal(long.ok,true,JSON.stringify(long));
+  assert.ok(Buffer.byteLength(long.result.toolResult)<=512,String(long.result.toolResult.length));
+  // A secret named in the act's own arguments is refused before the page sees it.
+  const leaked=await act(c,'tool','webmcp','rename_heading',{arguments:{title:secret}});
+  assert.equal(leaked.code,'driver.secret_literal');
+});
+
+// #2837: with a session open, a malformed tool act is refused before the page sees it. Without a
+// session every one of these would read protocol_invalid for the wrong reason, so each is sent to
+// a live one.
+test('a tool act needs role webmcp, no text or secret, and arguments that are a bounded JSON object',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  let deep='leaf';for(let i=0;i<9;i++)deep={k:deep};
+  for(const extra of [{role:'button'},{secretEnv:'GRAPHHELM_SECRET_X'},{text:'{}'},{arguments:[1]},{arguments:'x'},{arguments:null},{arguments:{big:'x'.repeat(5000)}},{arguments:deep}]) {
+    const c=await client(t,{GRAPHHELM_SECRET_X:'CANARY_tool_secret_2837'});await open(c,f.base+'/webmcp',[],{webmcp:true});
+    const r=await c.send('act',{kind:'tool',role:'webmcp',name:'says_ok',...extra});
+    assert.equal(r.code,'driver.protocol_invalid',JSON.stringify(extra).slice(0,80));
+  }
+  // `arguments` belongs to the tool kind alone.
+  const c=await client(t);await open(c,f.base+'/webmcp',[],{webmcp:true});
+  assert.equal((await c.send('act',{kind:'activate',role:'button',name:'Save',arguments:{}})).code,'driver.protocol_invalid');
+});

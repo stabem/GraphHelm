@@ -58,6 +58,26 @@ export async function startFixture() {
     else if(u.pathname==='/redirect') {res.writeHead(302,{Location:canaryOrigin+'/redirected'});res.end();}
     else if(u.pathname==='/sw.js') {res.setHeader('Content-Type','application/javascript');res.end(`fetch('${canaryOrigin}/worker');`);}
     else if(u.pathname==='/late') res.end(shell(`<main><h1 id="title">Loading</h1><script>setTimeout(()=>{document.getElementById('title').textContent='Ready';const b=document.createElement('button');b.textContent='Continue';document.querySelector('main').append(b);},1500)</script></main>`));
+    // #2837: a page that registers WebMCP page tools (only when the browser was launched with the
+    // feature). Each tool is the page's own code: `rename_heading` changes the heading, `says_ok`
+    // answers "ok" and changes nothing, `explode` throws, and `long_result` returns far more text
+    // than a reply keeps.
+    // `no-tools` (a fault) serves the page without registering any, for a tool that has gone missing.
+    else if(u.pathname==='/webmcp') res.end(shell(`<main><h1>Original</h1></main>`+(fault?.kind==='no-tools'?'':`<script>
+const mc=document.modelContext;
+if(mc){
+  const tools={
+    rename_heading:a=>{document.querySelector('h1').textContent=(a&&a.title)||'Renamed';return 'ok';},
+    says_ok:()=>'ok',
+    explode:()=>{throw new Error('the tool failed');},
+    long_result:()=>'x'.repeat(4000),
+  };
+  for(const [name,run] of Object.entries(tools)) mc.registerTool({name,description:name,inputSchema:{type:'object',properties:{title:{type:'string'}}},execute:async a=>run(a)});
+}
+</script>`)));
+    // Two tools with one name: the top page and a same-origin frame each register `twin`.
+    else if(u.pathname==='/webmcp-twin') res.end(shell(`<main><h1>Twins</h1><iframe src="/webmcp-twin-frame" title="twin frame" onload="document.querySelector('h1').textContent='Twins ready'"></iframe></main><script>document.modelContext?.registerTool({name:'twin',description:'top',inputSchema:{type:'object'},execute:async()=>'top'});</script>`));
+    else if(u.pathname==='/webmcp-twin-frame') res.end(shell(`<h2>Frame</h2><script>document.modelContext?.registerTool({name:'twin',description:'frame',inputSchema:{type:'object'},execute:async()=>'frame'});</script>`));
     else {res.writeHead(404);res.end(shell('<h1>Missing</h1>'));}
   });
   await new Promise(done=>app.listen(0,'127.0.0.1',done));

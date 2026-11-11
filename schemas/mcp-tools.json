@@ -400,6 +400,9 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "arguments": {
+            "type": "object"
+          },
           "kind": {
             "enum": [
               "activate",
@@ -407,7 +410,8 @@
               "enter_text",
               "navigate",
               "wait_for",
-              "inspect"
+              "inspect",
+              "tool"
             ]
           },
           "name": {

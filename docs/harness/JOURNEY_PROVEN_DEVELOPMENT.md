@@ -421,7 +421,8 @@ silently installing or falling back to a model. Node 24.13.1 / Playwright 1.63.0
 
 Replay validates canonical approved YAML and generated projections, executes every act and exact
 visible expectation, and opens a fresh context for main and each sorted named path. Supported acts
-are activate, submit, navigate, enter_text, wait_for and inspect. Resource selection, upload,
+are activate, submit, navigate, enter_text, wait_for, inspect and tool (#2837: a WebMCP page tool
+called by name; the reached screen still decides, never the tool's result). Resource selection, upload,
 download, recovery, approval, fuzzy selection and healing remain unsupported. Secret values come
 only from named environment entries and are redacted from text and masked before PNG creation.
 

@@ -1,5 +1,27 @@
 # Schema Changelog
 
+## journey-flow 1.16.0 - a step can call a WebMCP page tool (#2837)
+
+The act `kind` enum gains `tool`, and an act gains an optional `arguments` (an object, at most 32
+keys): `{kind: tool, role: webmcp, name: <the page tool's registered name>, arguments: {...}}`,
+absent meaning `{}`. The act's `allOf` rules are untouched, so a tool act cannot carry `text` or
+`secret` (they are for `enter_text` and `http`) nor `headers` (`http` only): the schema refuses each.
+What JSON Schema cannot say without a new `allOf` branch is enforced by the flow validator, with
+stable codes and pointers: `role` must be exactly `webmcp` (`flow.tool_role_invalid`), `arguments`
+belongs to a tool act only (`flow.act_arguments_unexpected`), and the arguments are bounded to 4096
+bytes of the flow's canonical text form (the one-line `{"k": v}` form the canonical writer emits, with
+its `": "` and `", "` separators, not compact JSON) and 8 levels of nesting (`flow.tool_arguments_too_large`). A tool act is a
+browser act: a flow that also has an `http` or `cli` act is refused by the existing mixing rule
+(`flow.observer_mixed`). The screen the edge reaches still judges the step; the tool's result is
+recorded and never decides. The canonical writer emits `arguments` last, only when present, with
+its keys sorted at every level. Additive: `baseline_origin` classes the three changed pointers as
+the enum widened (`/$defs/act/properties/kind/enum`, compatible), an optional property added
+(`/$defs/act/properties/arguments`, compatible) and the description changed (annotation), so a
+minor step is enough; every 1.15.0 flow stays valid with the same bytes and digest. A reader older
+than 1.16.0 refuses a flow that contains a `tool` act as `flow.schema_invalid` (the kind enum is
+closed); no existing flow changes meaning. The catalog digest is updated from canonical JSON
+(`graphhelm schema digest --file`).
+
 ## journey-flow 1.15.0 - the states a flow is seen in (#1784)
 
 A flow may declare a top-level `states`: 1 to 8 distinct state ids (the flow id pattern), the

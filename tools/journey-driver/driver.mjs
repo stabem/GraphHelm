@@ -26,9 +26,9 @@ const MOBILE = Object.freeze({
   userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36',
 });
 const fields = {
-  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage', 'clock', 'device'], snapshot: ['expect','discover'],
+  open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage', 'clock', 'device', 'webmcp'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
-  act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
+  act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator', 'arguments'],
   capture: ['path', 'maskSecrets'], coverage: [], close: [],
 };
 const roles = new Set(['dialog','alertdialog','banner','complementary','contentinfo','form','main','navigation','region','search','heading','button','checkbox','combobox','link','menuitem','menuitemcheckbox','menuitemradio','option','radio','searchbox','slider','spinbutton','switch','tab','textbox','treeitem']);
@@ -42,7 +42,7 @@ let pageErrorSequence = 0, latestPageError;
 // A headed (live) session survives an observation failure so the owner sees where the journey
 // broke (#398); so does a healing replay's session, which repairs the broken edge in place
 // (#356). Protocol, privacy and host failures still end it.
-const SURVIVABLE = new Set(['driver.locator_missing','driver.locator_ambiguous','driver.expectation_failed','driver.action_failed','driver.timeout']);
+const SURVIVABLE = new Set(['driver.locator_missing','driver.locator_ambiguous','driver.expectation_failed','driver.action_failed','driver.timeout','driver.tool_missing','driver.tool_ambiguous','driver.tool_failed']);
 const secretInputs = [];
 const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;
@@ -115,12 +115,21 @@ function expectation(v) {
   if (Object.hasOwn(v ?? {},'text')) return exactKeys(v,['role','name','text']) && string(v.text,256) && string(v.role,64) && string(v.name,256);
   return pair(v);
 }
+// #2837: the arguments of a tool act are a JSON object of at most 4096 bytes and 8 levels (the
+// bounds the flow validator applies too); false for anything else.
+function toolArguments(value) {
+  const depth = v => v !== null && typeof v === 'object' ? 1 + Math.max(0, ...Object.values(v).map(depth)) : 0;
+  return plain(value) && depth(value) <= 8 && Buffer.byteLength(JSON.stringify(value)) <= 4096;
+}
 function validate(r) {
   if (!plain(r) || r.protocol !== PROTOCOL || !Number.isSafeInteger(r.requestId) || r.requestId !== requestId + 1 || !Object.hasOwn(fields,r.op)) fail('driver.protocol_invalid');
   if (!exactKeys(r,['protocol','requestId','op'],fields[r.op])) fail('driver.protocol_invalid');
   if (r.op === 'open') {
     if (Object.hasOwn(r,'headed') && typeof r.headed !== 'boolean') fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'coverage') && typeof r.coverage !== 'boolean') fail('driver.protocol_invalid');
+    // #2837: `webmcp` launches the browser with the WebMCP feature. The caller sets it only for a
+    // flow that has a `tool` act; absent, the browser is launched exactly as before.
+    if (Object.hasOwn(r,'webmcp') && typeof r.webmcp !== 'boolean') fail('driver.protocol_invalid');
     if (Object.hasOwn(r,'survive') && typeof r.survive !== 'boolean') fail('driver.protocol_invalid');
     // #491: `show` (a watch) draws its caption and outline in the page, headed or not (#519).
     if (Object.hasOwn(r,'show') && typeof r.show !== 'boolean') fail('driver.protocol_invalid');
@@ -142,8 +151,15 @@ function validate(r) {
     if (Object.hasOwn(r,'discover') && typeof r.discover !== 'boolean') fail('driver.protocol_invalid');
   } else if (r.op === 'act') {
     if (!string(r.kind,64) || !string(r.role,64) || !string(r.name,256)) fail('driver.protocol_invalid');
-    if (!['activate','submit','enter_text','navigate','wait_for','inspect'].includes(r.kind)) fail('driver.unsupported_act');
-    if (r.kind === 'enter_text') {
+    if (!['activate','submit','enter_text','navigate','wait_for','inspect','tool'].includes(r.kind)) fail('driver.unsupported_act');
+    if (r.kind === 'tool') {
+      // #2837: a page tool is addressed by its registered name under role `webmcp`; its arguments
+      // are a bounded JSON object in `arguments`, never `text` or a secret (a secret would land in
+      // the page).
+      if (r.role !== 'webmcp' || Object.hasOwn(r,'secretEnv') || Object.hasOwn(r,'text') || (Object.hasOwn(r,'arguments') && !toolArguments(r.arguments))) fail('driver.protocol_invalid');
+    } else if (Object.hasOwn(r,'arguments')) {
+      fail('driver.protocol_invalid');
+    } else if (r.kind === 'enter_text') {
       if (Object.hasOwn(r,'text') === Object.hasOwn(r,'secretEnv') || (Object.hasOwn(r,'text') && !string(r.text,2048,true)) || (Object.hasOwn(r,'secretEnv') && (typeof r.secretEnv !== 'string' || !/^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(r.secretEnv)))) fail('driver.protocol_invalid');
       if (Object.hasOwn(r,'secretEnv') && !process.env[r.secretEnv]) fail('driver.secret_missing');
       if (Object.hasOwn(r,'text') && secrets.some(([,v]) => v && v === r.text)) fail('driver.secret_literal');
@@ -445,6 +461,35 @@ function requestMetadata(request,parsed) {
   if (kind) { meta['sec-fetch-mode']=kind[0]; meta['sec-fetch-dest']=kind[1]; }
   return meta;
 }
+// #2837: the tool a page registered under `r.name`, run in the page. The page's own handler does the
+// work; this only finds the one tool of that exact name and calls it, so a tool absent, a name two
+// tools share, a handler that throws and a browser without WebMCP each have their own code and none
+// is guessed past (no first match). What the handler returns is recorded, masked and cut, and is
+// never what judges the step: the snapshot that follows does, as after a click.
+const TOOL_RESULT = 512;
+async function toolAct(r) {
+  const args = r.arguments ?? {};
+  let timer;
+  const outcome = await Promise.race([
+    page.evaluate(async ({name, args}) => {
+      const host = document.modelContext ?? navigator.modelContext;
+      if (!host || typeof host.getTools !== 'function' || typeof host.executeTool !== 'function') return {status:'unavailable'};
+      let tools;
+      try { tools = (await host.getTools()).filter(tool => tool.name === name); } catch { return {status:'failed'}; }
+      if (tools.length === 0) return {status:'missing'};
+      if (tools.length > 1) return {status:'ambiguous'};
+      try {
+        const value = await host.executeTool(tools[0], args);
+        return {status:'ok', value: typeof value === 'string' ? value : (JSON.stringify(value) ?? '')};
+      } catch { return {status:'failed'}; }
+    }, {name:r.name, args}),
+    new Promise(done => { timer = setTimeout(() => done({status:'timeout'}), TIMEOUT); }),
+  ]).finally(() => clearTimeout(timer));
+  const codes = {unavailable:'driver.webmcp_unavailable', missing:'driver.tool_missing', ambiguous:'driver.tool_ambiguous', failed:'driver.tool_failed', timeout:'driver.timeout'};
+  if (outcome.status !== 'ok') fail(codes[outcome.status]);
+  checkHost();
+  return {url:redacted(page.url()), locator:{role:r.role,name:r.name,exact:true,testId:null,context:null,nth:null}, toolResult:utf8Prefix(redacted(outcome.value),TOOL_RESULT)};
+}
 async function run(r) {
   if (r.op === 'open') {
     if (opened) fail('driver.protocol_invalid');
@@ -459,6 +504,7 @@ async function run(r) {
       const launchArgs=['--host-resolver-rules=MAP *.test 127.0.0.1,MAP *.localhost 127.0.0.1,EXCLUDE localhost'];
       const window=r.show === true && r.headed === true;
       if (window) launchArgs.push('--start-maximized');
+      if (r.webmcp === true) launchArgs.push('--enable-features=WebMCP');
       browser=await chromium.launch({headless:r.headed !== true,timeout:TIMEOUT,args:launchArgs});
       // #585: declared storage is the context's starting state, so it survives every reload of the
       // run and the app's own writes replace it.
@@ -699,6 +745,7 @@ async function run(r) {
     // Identity reads the whole page; the model gets the page within its budget (#356).
     return clean({url:redacted(page.url()),ariaYaml:r.discover?summarized(ariaYaml,SNAPSHOT_DISCOVER):ariaYaml,...skeleton(ariaYaml),checks,...(r.discover?{expectations}:{})});
   }
+  if (r.op === 'act' && r.kind === 'tool') return toolAct(r);
   if (r.op === 'act') {
     const target=await locate(r), locator=await observedLocator(target,r);
     if (r.kind === 'enter_text') {

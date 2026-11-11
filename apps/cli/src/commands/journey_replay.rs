@@ -778,6 +778,15 @@ impl Driver {
                 "driver.redaction_failed" => "driver.redaction_failed",
                 "driver.capture_refused" => "driver.capture_refused",
                 "driver.action_failed" => "driver.action_failed",
+                // #2837: a page tool (a `tool` act) is addressed by its name the way a control is by
+                // role and name, so its three failures read as the locator and act failures they
+                // stand for, and no drift code is added: no tool is a missing locator, two of one
+                // name an ambiguous one, a handler that throws a failed act. A browser without
+                // WebMCP cannot observe the act at all, which is a missing observer, never a red step.
+                "driver.tool_missing" => "driver.locator_missing",
+                "driver.tool_ambiguous" => "driver.locator_ambiguous",
+                "driver.tool_failed" => "driver.action_failed",
+                "driver.webmcp_unavailable" => "driver.observer_missing",
                 _ => {
                     return Err(failure(
                         "replay.driver_frame_invalid",
@@ -808,6 +817,8 @@ impl Driver {
                 "expectations",
             ],
             "snapshot" => &["url", "ariaYaml", "controls", "fingerprint", "checks"],
+            // #2837: a tool act also carries what the page tool returned, as text for the reader.
+            "act" if request["kind"] == "tool" => &["url", "locator", "toolResult"],
             "act" => &["url", "locator"],
             "capture" => &["path", "width", "height", "masked"],
             "coverage" => &["path", "schema"],
@@ -880,6 +891,7 @@ impl Driver {
                 }
                 "act" => {
                     text(&result["url"], 4096)
+                        && (request["kind"] != "tool" || text(&result["toolResult"], 1024))
                         && closed(
                             &result["locator"],
                             &["role", "name", "exact", "testId", "context", "nth"],
@@ -1065,6 +1077,7 @@ pub(super) fn preflight(
         "navigate",
         "wait_for",
         "inspect",
+        "tool",
     ];
     let mut secrets = BTreeMap::new();
     let selected: BTreeSet<_> = flow["paths"]
@@ -1245,10 +1258,26 @@ pub(super) fn declared_browser(flow: &Value, default: Value) -> (Value, Option<V
     if let Some(clock) = flow["clock"].as_str() {
         declared.insert("clock".into(), clock.into());
     }
+    // #2837: a flow with a `tool` act opens its browser with the WebMCP feature; one without opens
+    // exactly as before.
+    if has_tool_act(flow) {
+        declared.insert("webmcp".into(), true.into());
+    }
     (
         viewport,
         (!declared.is_empty()).then_some(Value::Object(declared)),
     )
+}
+
+/// Whether any edge of the flow plays a `tool` act (#2837).
+pub(super) fn has_tool_act(flow: &Value) -> bool {
+    flow["edges"].as_array().into_iter().flatten().any(|edge| {
+        edge["acts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|act| act["kind"] == "tool")
+    })
 }
 
 /// `open`'s request with the fields the flow declares (`storage`, `clock`) added, when it
@@ -1872,6 +1901,9 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                         json!({"kind":act["kind"],"role":act["role"],"name":act["name"]});
                     if let Some(text) = act.get("text") {
                         request["text"] = text.clone();
+                    }
+                    if let Some(arguments) = act.get("arguments") {
+                        request["arguments"] = arguments.clone();
                     }
                     if let Some(secret) = act["secret"].as_str() {
                         request["secretEnv"] = format!("GRAPHHELM_SECRET_{secret}").into();
@@ -3044,6 +3076,103 @@ mod tests {
                 .as_ref(),
         );
         assert_eq!(open, json!({"base": "http://localhost/", "clock": instant}));
+    }
+
+    /// #2837: a flow opens its browser with the WebMCP feature only when it has a `tool` act.
+    /// Defects named: the feature on for every flow (a browser feature switched on for pages that
+    /// never asked for it), or off for the flow that needs it (every tool act then reads as an
+    /// unavailable observer), or `tool` not a kind the replay's preflight plays. Cost: microseconds.
+    #[test]
+    fn only_a_flow_with_a_tool_act_opens_its_browser_with_webmcp() {
+        let default = json!({"width": 1280, "height": 720});
+        let click =
+            json!({"edges": [{"acts": [{"kind": "activate", "role": "button", "name": "Save"}]}]});
+        assert!(declared_browser(&click, default.clone()).1.is_none());
+        let tool = json!({"edges": [
+            {"acts": [{"kind": "activate", "role": "button", "name": "Save"}]},
+            {"acts": [{"kind": "tool", "role": "webmcp", "name": "rename_heading"}]}]});
+        let open = with_declared(
+            json!({"base": "http://localhost/"}),
+            declared_browser(&tool, default).1.as_ref(),
+        );
+        assert_eq!(open, json!({"base": "http://localhost/", "webmcp": true}));
+        let flow = json!({"paths": {"main": ["a"]}, "screens": [{"id": "s", "url": "/"}],
+            "edges": [{"id": "a", "from": "s", "to": "s",
+                "acts": [{"kind": "tool", "role": "webmcp", "name": "rename_heading"}]}]});
+        assert!(preflight(&flow, &BTreeMap::new()).is_ok());
+    }
+
+    /// #2837: what the driver says about a page tool reads as the failure it stands for, and the
+    /// tool's result is a closed field of a tool act's reply only. Defects named: the three tool
+    /// codes refused as an invalid frame (every missing tool a protocol failure), a missing WebMCP
+    /// read as a red step instead of a missing observer, a result accepted on a click's reply.
+    /// Cost: milliseconds, fixed peer frames; no public seam.
+    #[test]
+    fn the_driver_tool_frames_read_as_the_locator_and_act_failures_they_stand_for() {
+        let locator = json!({"role":"webmcp","name":"rename_heading","exact":true,"testId":null,"context":null,"nth":null});
+        let request = json!({"kind":"tool","role":"webmcp","name":"rename_heading"});
+        let click = json!({"kind":"activate","role":"webmcp","name":"rename_heading"});
+        let success =
+            |result: Value| json!({"protocol":PROTOCOL,"requestId":1,"ok":true,"result":result});
+        let failed = |code: &str| json!({"protocol":PROTOCOL,"requestId":1,"ok":false,"code":code,"path":"/"});
+        let reply = |request: &Value, frame: Value| {
+            let (writer, requests) = mpsc::sync_channel::<(Vec<u8>, mpsc::SyncSender<bool>)>(1);
+            std::thread::spawn(move || {
+                let (_, ack) = requests.recv().unwrap();
+                ack.send(true).unwrap();
+            });
+            let (peer, replies) = mpsc::sync_channel(1);
+            peer.send(Ok(Some(serde_json::to_vec(&frame).unwrap())))
+                .unwrap();
+            let mut driver = Driver {
+                owned: None,
+                writer,
+                replies,
+                sequence: 0,
+                secrets: vec![],
+                stderr: None,
+                headed: false,
+                last_checks: None,
+                last_page_error: None,
+            };
+            driver
+                .call("act", request.clone(), "/peer")
+                .map(|done| done["toolResult"].clone())
+        };
+        let done = json!({"url":"http://localhost/","locator":locator,"toolResult":"ok"});
+        assert_eq!(reply(&request, success(done.clone())).unwrap(), json!("ok"));
+        // A tool act's reply carries its result; a click's reply never does.
+        assert_eq!(
+            reply(
+                &request,
+                success(json!({"url":"http://localhost/","locator":locator}))
+            )
+            .unwrap_err()
+            .0,
+            "replay.driver_frame_invalid"
+        );
+        assert_eq!(
+            reply(&click, success(done)).unwrap_err().0,
+            "replay.driver_frame_invalid"
+        );
+        for (driver_code, expected, exit) in [
+            ("driver.tool_missing", "driver.locator_missing", 1),
+            ("driver.tool_ambiguous", "driver.locator_ambiguous", 1),
+            ("driver.tool_failed", "driver.action_failed", 1),
+            ("driver.webmcp_unavailable", "driver.observer_missing", 3),
+        ] {
+            let refused = reply(&request, failed(driver_code)).unwrap_err();
+            assert_eq!((refused.0, refused.2), (expected, exit), "{driver_code}");
+        }
+        // The two locator codes are drift: a missing or ambiguous tool names its act like a control.
+        assert_eq!(
+            drift_code(&reply(&request, failed("driver.tool_missing")).unwrap_err()),
+            Some("drift.locator_missing")
+        );
+        assert_eq!(
+            drift_code(&reply(&request, failed("driver.tool_ambiguous")).unwrap_err()),
+            Some("drift.locator_ambiguous")
+        );
     }
 
     /// Contract: successful replies are closed typed frames, not trusted arbitrary JSON.

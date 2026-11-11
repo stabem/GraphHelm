@@ -135,6 +135,12 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: 'yes' }, 'driver.protocol_invalid'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], headed: true, show: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'show', caption: 'Clicks "Checkout"', role: 'button', name: 'Checkout' }, 'driver.protocol_invalid'],
+    // #2837: `webmcp` (a flow with a tool act) is boolean and adds a browser feature, so true
+    // reaches the browser load; a `tool` act is a known kind, so it passes the kind check and is
+    // refused only because no session is open.
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], webmcp: true }, 'driver.observer_missing'],
+    [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], webmcp: 'yes' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'act', kind: 'tool', role: 'webmcp', name: 'rename_heading', arguments: {title:'x'} }, 'driver.protocol_invalid'],
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];

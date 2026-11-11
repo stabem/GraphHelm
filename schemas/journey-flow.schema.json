@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "1.15.0",
+  "x-graphhelm-schema-version": "1.16.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -284,7 +284,8 @@
             "recover",
             "approve",
             "http",
-            "cli"
+            "cli",
+            "tool"
           ]
         },
         "role": {
@@ -303,6 +304,11 @@
         },
         "secret": {
           "$ref": "#/$defs/id"
+        },
+        "arguments": {
+          "description": "The arguments a `tool` act calls its page tool with (#2837): a JSON object, absent meaning {}. Only a tool act carries it and its size is bounded by the flow validator.",
+          "type": "object",
+          "maxProperties": 32
         },
         "headers": {
           "type": "object",
@@ -395,7 +401,7 @@
           }
         }
       ],
-      "description": "Browser acts address an accessible role and name. Backend acts (#927): `http` sends method `role` to path `name` on `base` with optional body `text` and optional fixed, non-secret request `headers` (1.4.0); `cli` (`role: exec`) runs argv `name` in the project."
+      "description": "Browser acts address an accessible role and name. Backend acts (#927): `http` sends method `role` to path `name` on `base` with optional body `text` and optional fixed, non-secret request `headers` (1.4.0); `cli` (`role: exec`) runs argv `name` in the project. A page tool (1.16.0): `tool` (`role: webmcp`, enforced by the flow validator) calls the WebMCP tool named `name` in the page with `arguments`; the screen the edge reaches judges the step, never the tool's result."
     },
     "screen": {
       "type": "object",

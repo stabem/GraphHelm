@@ -1163,7 +1163,9 @@ fn attach_next(value: &mut serde_json::Value, nexts: &[graphhelm_execution::next
         return;
     };
     for (object, next) in served.iter_mut().zip(nexts) {
-        object["next"] = serde_json::to_value(next).expect("next serializes");
+        if let Ok(next) = serde_json::to_value(next) {
+            object["next"] = next;
+        }
     }
 }
 

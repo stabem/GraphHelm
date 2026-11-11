@@ -30,26 +30,20 @@ pub struct NextStep {
     pub because: String,
 }
 
+type Pair = (&'static str, Option<&'static str>);
+
+const PLAN: Pair = ("plan", Some("task-plan"));
+const CRITIC: Pair = ("critic", None);
+const IMPLEMENT: Pair = ("implement", Some("implement"));
+const REVIEW: Pair = ("review", Some("blind-review"));
+const MERGE: Pair = ("merge", Some("merge"));
+const DONE: Pair = ("done", None);
+
 /// Every `(step, skill)` pair [`next_step`] can emit, so a test can check each skill exists and
 /// agrees with the guide's State table.
-pub const NEXT_TABLE: &[(&str, Option<&str>)] = &[
-    ("plan", Some("task-plan")),
-    ("critic", None),
-    ("implement", Some("implement")),
-    ("review", Some("blind-review")),
-    ("merge", Some("merge")),
-    ("done", None),
-];
+pub const NEXT_TABLE: &[Pair] = &[PLAN, CRITIC, IMPLEMENT, REVIEW, MERGE, DONE];
 
-fn pair(step: &'static str) -> (&'static str, Option<&'static str>) {
-    *NEXT_TABLE
-        .iter()
-        .find(|(name, _)| *name == step)
-        .expect("every step next_step emits is in NEXT_TABLE")
-}
-
-fn answer(step: &'static str, actor: Option<NextActor>, because: String) -> NextStep {
-    let (step, skill) = pair(step);
+fn answer((step, skill): Pair, actor: Option<NextActor>, because: String) -> NextStep {
     NextStep {
         step,
         skill,
@@ -68,28 +62,23 @@ fn author(task: &TaskState) -> Option<NextActor> {
 /// What `task` does next; the first rule that matches wins.
 #[must_use]
 pub fn next_step(task: &TaskState) -> NextStep {
-    if task.step == TaskStep::Merged {
-        return answer("done", None, "merged".to_owned());
-    }
-    if let Some(who) = &task.released_by {
-        return answer("done", None, format!("released by {who}"));
+    if task.step != TaskStep::Merged
+        && let Some(who) = &task.released_by
+    {
+        return answer(DONE, None, format!("released by {who}"));
     }
     match task.step {
-        TaskStep::Merged => unreachable!("handled above"),
-        TaskStep::Plan => answer("plan", author(task), "claimed, no plan recorded".to_owned()),
-        TaskStep::Critic => answer(
-            "critic",
-            None,
-            "design plan waits for its critic".to_owned(),
-        ),
+        TaskStep::Merged => answer(DONE, None, "merged".to_owned()),
+        TaskStep::Plan => answer(PLAN, author(task), "claimed, no plan recorded".to_owned()),
+        TaskStep::Critic => answer(CRITIC, None, "design plan waits for its critic".to_owned()),
         TaskStep::Implement => answer(
-            "implement",
+            IMPLEMENT,
             author(task),
             "planned, no PR open on a head".to_owned(),
         ),
         TaskStep::Review => match &task.blocked_by {
             Some(blocker) => answer(
-                "implement",
+                IMPLEMENT,
                 author(task),
                 format!("BLOCK on head by {}", blocker.reviewer),
             ),
@@ -103,7 +92,7 @@ pub fn next_step(task: &TaskState) -> NextStep {
                 } else {
                     "PR open on head, no reviewer assigned"
                 };
-                answer("review", reviewer, because.to_owned())
+                answer(REVIEW, reviewer, because.to_owned())
             }
         },
         TaskStep::Merge => {
@@ -117,7 +106,7 @@ pub fn next_step(task: &TaskState) -> NextStep {
                 id,
                 role: "approver",
             });
-            answer("merge", actor, because.to_owned())
+            answer(MERGE, actor, because.to_owned())
         }
     }
 }

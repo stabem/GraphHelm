@@ -136,19 +136,21 @@ and nothing else; a session working as a lane beside others on one machine also 
 
 ## Reading map by step
 
-Read the sections your step names, not whole files.
+Read the sections your step names, not whole files. When GraphHelm or your coordinator names a
+skill for your step, or the row names one, load that skill first: it tells you which of these
+sections to read. `graphhelm-work` is the entry when you are handed a task by id.
 
-| Step | Read |
-|---|---|
-| Issue, labels, titles | `docs/process/DELIVERY.md` §1 |
-| Keel card | `keel/KEEL_PLAN.md`; DELIVERY §2 |
-| Write and prove | `keel/KEEL_EXEC.md`; DELIVERY §3 |
-| Build, tests, slot | DELIVERY §3; `docs/process/LANES.md` §3 |
-| Task records | `docs/process/LANES.md` §4 |
-| Review | `keel/KEEL_REVIEW.md`; DELIVERY §4 |
-| Merge and cleanup | `keel/KEEL_MERGE.md`; DELIVERY §5 |
-| Identity line | `docs/process/DELIVERY.md` §4 |
-| Lane rules and wake loop | `docs/process/LANES.md` §1 and §5 |
+| Step | Read | Skill |
+|---|---|---|
+| Issue, labels, titles | `docs/process/DELIVERY.md` §1 | none |
+| Keel card | `keel/KEEL_PLAN.md`; DELIVERY §2 | `task-plan` (a bounded code change plans inside `implement`) |
+| Write and prove | `keel/KEEL_EXEC.md`; DELIVERY §3 | `implement` (journey proof: `journey-prove`) |
+| Build, tests, slot | DELIVERY §3; `docs/process/LANES.md` §3 | none |
+| Task records | `docs/process/LANES.md` §4 | none |
+| Review | `keel/KEEL_REVIEW.md`; DELIVERY §4 | `blind-review` |
+| Merge and cleanup | `keel/KEEL_MERGE.md`; DELIVERY §5 | `merge` |
+| Identity line | `docs/process/DELIVERY.md` §4 | none |
+| Lane rules and wake loop | `docs/process/LANES.md` §1 and §5 | `graphhelm-work` |
 
 ## Bounded tool output (#2424)
 

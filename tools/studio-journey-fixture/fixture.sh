@@ -444,12 +444,13 @@ FLOW
   done
   grep -q '"recorded":true' "$dir/.graphhelm/observer-preview.out"     || echo "fixture: the observer preview did not record (see $dir/.graphhelm/observer-preview.out)" >&2
   fi
+  # studio2-proof-run-tools (#2839) calls the Run page tool for the same studio-home and gets the same fixture.
   # studio2-proof-run presses Run on studio-home, a short browser draft of this fixture's Studio,
   # never on itself: a run of studio2-proof-run would press Run on the run that is playing it and
   # never finish. The observer is warm (the preview above set it up), so the run says "Preparing
   # the browser" until its first screen, not while installing: an install downloads Chromium and
   # outlasts every wait a flow can make.
-  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run ]; then
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run-tools ]; then
     cat > "$dir/project/.graphhelm/journeys/studio-home.journey.yaml" <<FLOW
 schema: graphhelm.journey-flow/1
 id: studio-home

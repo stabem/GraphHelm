@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { usePageTools } from "../webmcp/page-tools";
 
 import { journeyName, RuntimeError, type JourneyFlow, type JourneyRun, type Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
@@ -309,6 +310,21 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
     onPick(flow.id);
     runOne(flow).catch((cause: unknown) => setRefusal(actionErrorDetails("Journey run failed", cause, "The Runtime refused the run.", "Check the Runtime response, then try Run again."))).finally(() => setBusy(null));
   };
+  // #2839: the function behind the Journeys column's `Run <journey name>` button (`runSingle`: it
+  // selects the journey and starts its run), offered to a WebMCP agent. It is not the run panel's
+  // `Run` button; both reach the same preparing screen. It refuses exactly where the card button is disabled.
+  usePageTools([{
+    name: "studio_proof_run",
+    description: "Select a journey and start its run, as the Run <journey name> button on its card in the Journeys column does.",
+    inputSchema: { type: "object", properties: { journey: { type: "string" } }, required: ["journey"], additionalProperties: false },
+    handler: ({ journey }) => {
+      const flow = typeof journey === "string" ? journeys.find((candidate) => candidate.id === journey) : undefined;
+      if (flow === undefined) return { ok: false, reason: "journey must be the id of a journey listed in Proof." };
+      if (busy !== null) return { ok: false, reason: "Run is disabled while the journeys column is busy." };
+      runSingle(flow);
+      return { ok: true };
+    },
+  }]);
   const runAll = async () => {
     const generation = viewGeneration.current;
     const isCurrentView = () => mounted.current && runAllViewIsCurrent(generation, viewGeneration.current);
@@ -639,6 +655,7 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
   const view = (id: string | null) => { setViewing(id); onPast?.(id); };
   const { run, frames, mobileFrames, log, history, earlier, viewed, error, starting, start, dismissError } = useJourneyRun(runtime, flow.id, executionId, onRan, onRun, viewing);
   const [showLog, setShowLog] = useState(false);
+  const showLogAs = (open: boolean) => setShowLog(open);
   // #1914: a panel that goes away (another journey picked) stops reporting; its card must not stay "running".
   useEffect(() => onGone, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [picked, setPicked] = useState<number | null>(null);
@@ -663,6 +680,20 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
   // #2442: an earlier run's console is what the Runtime kept of it; the live run's is what it printed so far.
   const consoleLines = viewed === null ? log : [...outputLines(shown), shown?.launchLog?.tail, shown?.driverLog?.tail].filter((line): line is string => typeof line === "string" && line.trim() !== "");
   const fix = viewed === null && run !== null && offersFix(run) ? <SendToFix key={fixRequestId(flow.id, run)} runtime={runtime} flow={flow} run={run} steps={steps} executionId={executionId} /> : null;
+  // The Show log / Hide log button is there while a run is going, once it has printed, or for an earlier run.
+  const hasLogButton = busy || log.length > 0 || viewed !== null;
+  // #2839: that button's state setter, offered to a WebMCP agent; refuses where the button is absent.
+  usePageTools([{
+    name: "studio_proof_set_log",
+    description: "Open or close the run console of the selected journey, as its Show log or Hide log button does.",
+    inputSchema: { type: "object", properties: { open: { type: "boolean" } }, required: ["open"], additionalProperties: false },
+    handler: ({ open }) => {
+      if (typeof open !== "boolean") return { ok: false, reason: "open must be true or false." };
+      if (!hasLogButton) return { ok: false, reason: "The log button is not shown: no run is going and none has printed." };
+      showLogAs(open);
+      return { ok: true };
+    },
+  }]);
   return (
     <div className="proof-main">
       <section aria-label="Journey run" className="journey-run">
@@ -705,8 +736,8 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
           {status !== null && <span role="status" aria-label={status.name} className="run-status"><span className="pulse" aria-hidden="true" />{status.text}</span>}
           {said !== null && <span role="status" aria-label={said.split(" · ")[0]} className="run-verdict" title={when(run?.ranAt).full || undefined}>{said}</span>}
           {stale && <span className="run-note stale-note">Results and frames from the earlier version ({earlier.ranAt ? when(earlier.ranAt).text : earlier.run}). Run to prove the current version.</span>}
-          {(busy || log.length > 0 || viewed !== null) && (
-            <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => setShowLog(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
+          {hasLogButton && (
+            <button type="button" className="b ghost" aria-expanded={showLog} onClick={() => showLogAs(!showLog)}>{showLog ? "Hide log" : "Show log"}</button>
           )}
         </div>
         {failure !== null && <FailureAlert notice={failure} fix={fix} />}

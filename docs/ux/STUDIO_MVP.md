@@ -28,7 +28,7 @@ One operator question, answered end to end:
 9. Reload the page and find the Runtime untouched and the token forgotten.
 
 An agent performs the read and write steps through the GraphHelm MCP server, and the human view
-moves with it. (The page's WebMCP site tools are retired; see below.)
+moves with it. (The page offers three WebMCP page tools; see below.)
 
 ## 2. Architectural position
 
@@ -38,9 +38,19 @@ moves with it. (The page's WebMCP site tools are retired; see below.)
 - **Public contracts only.** The Studio imports no Rust crate and reads no event file. Every read
   and every write is an HTTP request to the Public Runtime API, the same one the CLI and the MCP
   server use.
-- **WebMCP page tools are retired.** The first Studio exposed its actions to browser agents as
-  WebMCP tools. The Studio v2 cutover (#1808) retired them; agents use the GraphHelm MCP server,
-  which serves every Runtime verb. A port is tracked in #1870.
+- **Three WebMCP page tools exist; the rest stay retired.** The first Studio exposed its actions
+  to browser agents as WebMCP tools; the Studio v2 cutover (#1808) retired them, and #1870 tracks
+  the port, which stays open for every tool not named here. #2839 brought back three, each
+  registered by the component that owns the control and each refusing (`{ok:false, reason}`) where
+  that control is disabled or absent: `studio_select_view` (the top bar's tabs), `studio_proof_run`
+  (the function behind the Journeys column's `Run <journey name>` button, `runSingle`, which selects
+  the journey and starts its run; it is not the run panel's `Run` button) and `studio_proof_set_log`
+  (the Show log / Hide log toggle). A tool answers `{ok:true}` only to say the action was
+  dispatched; the rendered screen is the outcome, and the draft flow `studio2-proof-run-tools`
+  judges the tools by the same screens as the click flow. Approve, reject, send-to-fix, stop,
+  merge, reassign, start-run and add-folder are deliberately not page tools: authority and
+  irreversible actions stay with the person. Agents otherwise use the GraphHelm MCP server, which
+  serves every Runtime verb.
 
 ## 3. The contracts this added
 
@@ -109,7 +119,8 @@ would make the single state an operator has to act on look exactly like the stat
 | Who acted | `X-GraphHelm-Actor-Type` | `X-GraphHelm-Actor` |
 |---|---|---|
 | The person, via a button | `owner` | `studio-operator` |
-| An agent, via the MCP server | `agent` | the MCP session's actor (WebMCP adapter retired, #1808) |
+| An agent, via the MCP server | `agent` | the MCP session's actor |
+| An agent, via a page tool (#2839) | `owner` | `studio-operator`, like the click it stands for (known limit: a separate actor for tool calls is future work) |
 
 A browser's confirmation prompt for a site tool is **consent**, not authorship. The person agreed
 to an action the agent chose; recording it as `owner` would destroy the only distinction the audit
@@ -126,7 +137,7 @@ as a claim the evidence repeats.
 ## 6. Deliberate omissions
 
 - `cancel` was not a site tool in the MVP. Phase 2 (#105) made it one, behind two confirmations
-  (the page asks; the WebMCP host prompted; WebMCP is now retired) and a DESTRUCTIVE-first description — the contract change
+  (the page asks; the WebMCP host prompted; the old tools are retired and `cancel` is not among the three page tools of #2839) and a DESTRUCTIVE-first description — the contract change
   is recorded as ADR-036 in `docs/reference/REFERENCE_STACK_AND_ADRS.md` §41.
 - No Graph DSL editor and no graph creation. The board DRAWS a run's graph and lets the operator
   arrange, annotate and draw on it; it never edits the graph itself. Editing one is a Graph Draft,
@@ -143,7 +154,7 @@ as a claim the evidence repeats.
   it, which is the correct security posture and also means the operator must know the Runtime's
   working directory. There is no server-side "resume from the graph you started with" verb to
   call instead.
-- **WebMCP is retired.** The adapter and its page tools were removed with the old Studio (#1808).
+- **Only three WebMCP page tools exist.** The adapter and its thirteen tools were removed with the old Studio (#1808); #2839 added three (see section 2) and #1870 stays open for the rest.
 - **`GET /v1/executions` replays every listed stream** to decide each row's attention. That is
   what makes the index answer the operator's real question, and it bounds the page at 100 rows;
   it is not a design for a store with tens of thousands of streams.

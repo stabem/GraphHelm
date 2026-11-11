@@ -383,6 +383,50 @@ class WholeRun(unittest.TestCase):
             self.assertEqual(seen, ['/v1/executions/studio%23v2/signal'])
             self.assertTrue(json.loads(state.read_text())['recorded'])
 
+    def test_a_redirect_is_refused_and_the_token_goes_nowhere_else(self):
+        """The receipt used to follow a redirect with the bearer token still attached."""
+        seen = []
+
+        class Sink(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append(self.headers.get('Authorization'))
+                raw = b'{"ok": true}'
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            do_POST = do_GET  # urllib turns a redirected POST into a GET
+
+            def log_message(self, *_):
+                pass
+
+        sink = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Sink)
+
+        class Front(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(302)
+                self.send_header('Location', 'http://127.0.0.1:%d%s' % (sink.server_port, self.path))
+                self.send_header('Content-Length', '0')
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        front = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Front)
+        for server in (sink, front):
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as temp:
+            token = Path(temp) / 'events.token'
+            token.write_text('agent-token\n', encoding='utf-8')
+            args = SimpleNamespace(url='http://127.0.0.1:%d' % front.server_port, execution='e',
+                                   token_file=str(token), allow_shared_token=True)
+            result = mw.post(args, {'signal': {'id': 'receipt-1'}})
+        self.assertIs(result, False)
+        self.assertEqual(seen, [])
+
     def test_scheduled_repo_binding_is_resolved_before_work(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp) / 'scheduled-repo'

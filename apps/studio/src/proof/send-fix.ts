@@ -1,4 +1,4 @@
-import type { JourneyFlow, JourneyRun } from "../runtime/client";
+import { journeyName, type JourneyFlow, type JourneyRun } from "../runtime/client";
 import { isHeld, isWaitingReview, type Step } from "./steps";
 
 /** #1919: the Runtime admits an ask of at most 2000 characters (`task.request_recorded`). */
@@ -56,7 +56,7 @@ const tail = (text: string, max: number) => (text.length > max ? `…${text.slic
 export function fixAsk(flow: JourneyFlow, run: JourneyRun, steps: readonly Step[], note: string): string {
   const step = failingStep(steps);
   const lines = [
-    `Fix the journey ${flow.id} (${flow.name || flow.title || flow.id}): its last run ${run.result === "drift" ? "drifted" : "failed"}.`,
+    `Fix the journey ${flow.id} (${journeyName(flow)}): its last run ${run.result === "drift" ? "drifted" : "failed"}.`,
     `Flow file: .graphhelm/journeys/${flow.id}.journey.yaml`,
     `Run: ${run.kind ?? "preview"} at ${run.ranAt ?? run.startedAt ?? "an unrecorded time"}`,
   ];
@@ -83,7 +83,7 @@ export function fixAsk(flow: JourneyFlow, run: JourneyRun, steps: readonly Step[
 
 /** The request's short title: "Fix <journey name>". */
 export function fixTitle(flow: JourneyFlow): string {
-  return `Fix ${flow.name || flow.title || flow.id}`.slice(0, 120);
+  return `Fix ${journeyName(flow)}`.slice(0, 120);
 }
 
 /** The `POST /v1/executions/{id}/signal` body of the owner's `task.request_recorded` (#1792), the

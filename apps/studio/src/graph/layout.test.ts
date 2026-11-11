@@ -38,6 +38,15 @@ describe("Graph view layout", () => {
     expect(journeyMeta(cards[1])).toBe("2 issues · stalled");
   });
 
+  it("names a journey card as the Proof screen does: the owner's name, else the title, else the id", () => {
+    const live = board([task({ key: "a", issue: 10, journeys: ["j1"] })]);
+    const titleOf = (row: JourneyFlow[]) => journeyCards(live, row)[0].title;
+    expect(titleOf([{ id: "j1", title: "Old title", name: "New name", status: "draft" }])).toBe("New name");
+    expect(titleOf([{ id: "j1", title: "Old title", status: "draft" }])).toBe("Old title");
+    expect(titleOf([{ id: "j1", title: "", status: "draft" }])).toBe("j1");
+    expect(titleOf([])).toBe("j1");
+  });
+
   it("counts the header per column and narrows it to a journey", () => {
     expect(counts(b, flows, null)).toMatchObject({ implementing: 1, review: 1, merged: 1, ready: 1 });
     expect(counts(b, flows, "j1")).toMatchObject({ implementing: 1, review: 1, merged: 0, ready: 0 });

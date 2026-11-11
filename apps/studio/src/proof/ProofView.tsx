@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { RuntimeError, type JourneyFlow, type JourneyRun, type Runtime } from "../runtime/client";
+import { journeyName, RuntimeError, type JourneyFlow, type JourneyRun, type Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CheckMarks, CompareFrame } from "./CompareFrame";
 import { FrameWaiting } from "./FrameWaiting";
@@ -47,7 +47,7 @@ const WATCH_POLL_MS = 2_000;
 const WATCH_MAX_FAILURES = 5;
 
 function nameOf(flow: JourneyFlow): string {
-  return flow.name || flow.title || flow.id;
+  return journeyName(flow);
 }
 
 function runAllReasonText(reason: RunAllReason | undefined): string {

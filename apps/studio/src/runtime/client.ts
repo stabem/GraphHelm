@@ -166,6 +166,11 @@ export interface JourneyFlow {
   rejected?: { note?: string } | null;
 }
 
+/** The name a journey is shown by everywhere: the owner's rename, else the original title, else the id. */
+export function journeyName(flow: Pick<JourneyFlow, "id" | "title" | "name">): string {
+  return flow.name || flow.title || flow.id;
+}
+
 /** #1802: one journey an issue names, with its newest finished run on main (`null`: never run). */
 export interface IssueJourney {
   id: string;

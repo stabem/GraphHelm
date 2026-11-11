@@ -326,7 +326,9 @@ class SkillChain(unittest.TestCase):
         self.git("branch", "-M", "main")
         guard.write(self.repo, "main")
         self.git("add", "-A")
-        self.git("commit", "-qm", "normalize generated fixture chain")
+        # Empty when the copied tree's chain is already current: `git commit` exits 1 on nothing to
+        # commit, which failed this setup exactly when the repository was correct (#2795).
+        self.git("commit", "--allow-empty", "-qm", "normalize generated fixture chain")
 
     release = False
 

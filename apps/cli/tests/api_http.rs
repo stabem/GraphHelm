@@ -10096,6 +10096,45 @@ fn clear_without_claim_seq_clears_the_one_open_claim() {
     );
     assert_eq!(cleared["data"]["nodeStates"]["implementation"], "succeeded");
 
+    // #2820: the same request under the same key (a retry after a lost reply) replays the
+    // recorded result, not a divergent-key refusal.
+    let (status, replayed) = post_json(
+        &format!("{base}/v1/executions/{execution}/clear"),
+        &token,
+        &customs_headers("default-seq-clear"),
+        &serde_json::json!({ "file": customs_graph(), "fixtures": fixtures,
+            "evidence": customs_evidence(&["test_report"]) }),
+    );
+    assert_eq!(status, 200, "{replayed}");
+    assert_eq!(
+        replayed["data"]["idempotency"]["recognizedRetry"], true,
+        "{replayed}"
+    );
+    assert_eq!(
+        replayed["data"]["nodeStates"]["implementation"],
+        "succeeded"
+    );
+    let store = graphhelm_events::LocalEventRepository::open(
+        &events,
+        Arc::new(WallClock),
+        Arc::new(Ids::default()),
+    )
+    .unwrap();
+    let (_, history) = store.read_unique_replay_stream().unwrap();
+    let clearances = history
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                graphhelm_protocols::EventKind::CompletionCleared(_)
+            )
+        })
+        .count();
+    assert_eq!(
+        clearances, 1,
+        "the retry must not journal a second clearance"
+    );
+
     let (status, refused) = post_json(
         &format!("{base}/v1/executions/{execution}/clear"),
         &token,

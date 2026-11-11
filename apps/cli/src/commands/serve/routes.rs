@@ -5616,53 +5616,14 @@ pub(super) async fn clear(
         Err(response) => return response,
     };
     // #1284: `claimSeq` defaults to the execution's one open claim, as `claim` defaults `waitSeq`
-    // to the node's open wait. A present value must be a non-negative integer; absent with no
-    // open claim, or with several, is refused naming the choice the caller has to make.
-    let claim_seq = match payload.get("claimSeq") {
-        None | Some(serde_json::Value::Null) => {
-            let Ok(store) = event_store(&state.events) else {
-                return respond(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Outcome::internal(CLEAR_COMMAND, "the event store could not be opened").output,
-                );
-            };
-            let Ok((_, _, projection)) = execution::load_projection(&store, Some(&execution_id))
-            else {
-                return bad_request(
-                    CLEAR_COMMAND,
-                    "the execution could not be read",
-                    "/execution",
-                );
-            };
-            let open: Vec<u64> = projection.open_claims.keys().copied().collect();
-            match open.as_slice() {
-                [only] => *only,
-                [] => {
-                    return bad_request(
-                        CLEAR_COMMAND,
-                        "\"claimSeq\" was left out and this execution has no open claim",
-                        "/claimSeq",
-                    );
-                }
-                several => {
-                    return bad_request(
-                        CLEAR_COMMAND,
-                        &format!(
-                            "\"claimSeq\" was left out and this execution has several open claims \
-                             ({}); name one",
-                            several
-                                .iter()
-                                .map(u64::to_string)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        "/claimSeq",
-                    );
-                }
-            }
-        }
+    // to the node's open wait. The door checks only the type of a present value; the default is
+    // resolved INSIDE the mutation (#2820), after the idempotency lookup. A retry of a committed
+    // clear has no open claim left, so resolving it here would answer "no open claim" before the
+    // retry could reach the lookup that replays the recorded result.
+    let requested_claim_seq = match payload.get("claimSeq") {
+        None | Some(serde_json::Value::Null) => None,
         Some(value) => match value.as_u64() {
-            Some(seq) => seq,
+            Some(seq) => Some(seq),
             None => {
                 return bad_request(
                     CLEAR_COMMAND,
@@ -5721,6 +5682,17 @@ pub(super) async fn clear(
 
     mutate(&state, &execution_id, CLEAR_COMMAND, identity, |actor, key| {
             Box::pin(async move {
+                let claim_seq = match requested_claim_seq {
+                    Some(seq) => seq,
+                    None => {
+                        let events = drive_state.events.clone();
+                        let execution = drive_execution_id.clone();
+                        off_reactor(move || default_claim_seq(&events, &execution))
+                            .await
+                            .ok_or_else(|| driver_failure("the claim lookup worker stopped"))?
+                            .map_err(MutationError::Prepared)?
+                    }
+                };
                 let (version, snapshot_hash) = match &source {
                     GraphSource::Snapshot => {
                         let sealing = drive_state.sealing.clone();
@@ -5788,6 +5760,47 @@ pub(super) async fn clear(
         },
     )
     .await
+}
+
+/// #1284/#2820: the claim a `clear` that left out `claimSeq` countersigns: the execution's one open
+/// claim. No open claim, or several, is a 400 naming the choice; the messages and pointers are
+/// the ones the door gave before the default moved inside the mutation.
+#[allow(clippy::result_large_err)]
+fn default_claim_seq(events: &Path, execution_id: &str) -> Result<u64, Response> {
+    let Ok(store) = event_store(events) else {
+        return Err(respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Outcome::internal(CLEAR_COMMAND, "the event store could not be opened").output,
+        ));
+    };
+    let Ok((_, _, projection)) = execution::load_projection(&store, Some(execution_id)) else {
+        return Err(bad_request(
+            CLEAR_COMMAND,
+            "the execution could not be read",
+            "/execution",
+        ));
+    };
+    let open: Vec<u64> = projection.open_claims.keys().copied().collect();
+    match open.as_slice() {
+        [only] => Ok(*only),
+        [] => Err(bad_request(
+            CLEAR_COMMAND,
+            "\"claimSeq\" was left out and this execution has no open claim",
+            "/claimSeq",
+        )),
+        several => Err(bad_request(
+            CLEAR_COMMAND,
+            &format!(
+                "\"claimSeq\" was left out and this execution has several open claims ({}); name one",
+                several
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "/claimSeq",
+        )),
+    }
 }
 
 // -------------------------------------------------------------------------------------------

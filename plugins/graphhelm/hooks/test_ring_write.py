@@ -29,10 +29,6 @@ class RingWrite(unittest.TestCase):
             self.assertTrue(base.with_suffix(".waiter.rang").exists())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RingOnTheStopPath(unittest.TestCase):
     """#2643 slice 2: the Stop path (evaluate) rings the lane when a new event is passed in."""
 
@@ -49,3 +45,7 @@ class RingOnTheStopPath(unittest.TestCase):
             base = Path(tmp) / "state.json"
             hook.evaluate({"cwd": "", "stop_hook_active": False}, new_event=False, ring_base=base)
             self.assertFalse(base.with_suffix(".waiter.rang").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -396,6 +396,29 @@ fn the_runtimes_next_table_and_the_guides_state_table_agree() {
     }
 }
 
+/// #2831: the Keel section and the reading map both route agents; the Keel section must name the
+/// skill of each role so an author who reads only it is not sent to files first.
+#[test]
+fn the_keel_section_routes_each_role_to_its_skill() {
+    let agents = read("AGENTS.md");
+    let heading = "### Keel: how code is written here";
+    let start = agents
+        .find(heading)
+        .expect("AGENTS.md has the Keel section");
+    let rest = &agents[start + heading.len()..];
+    let body = &rest[..rest.find("\n#").unwrap_or(rest.len())];
+    for skill in ["implement", "blind-review", "merge", "graphhelm-work"] {
+        assert!(
+            body.contains(&format!("`{skill}`")),
+            "the Keel section must name `{skill}`"
+        );
+        assert!(
+            skill_exists_on_disk(skill),
+            "skill '{skill}' has no <tree>/{skill}/SKILL.md"
+        );
+    }
+}
+
 #[test]
 fn the_reading_map_names_only_skills_that_exist() {
     let agents = read("AGENTS.md");

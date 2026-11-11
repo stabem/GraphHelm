@@ -457,6 +457,11 @@ WAKE_WAIT_FAILURE_LIMIT = 5
 STDERR_TAIL = 400
 
 
+def _waiter_started_path(pid_path: Path) -> Path:
+    """The waiter's creation time, recorded beside its pid file so a reused PID is told apart."""
+    return pid_path.with_suffix(".started")
+
+
 def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
     return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.alive")
 
@@ -525,6 +530,7 @@ def sweep_dead_waiters(limit: int = SWEEP_LIMIT) -> int:
                 if _pid_alive(int(pid_path.read_text(encoding="ascii"))):
                     continue
                 pid_path.unlink()
+                _waiter_started_path(pid_path).unlink(missing_ok=True)
                 removed += 1
             except (OSError, ValueError):
                 continue
@@ -610,6 +616,14 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
             if attempt == len(attempts) - 1:
                 raise
     pid_path.write_text(str(child.pid), encoding="ascii")
+    try:
+        started = _process_identity(child.pid)
+        if started is not None:
+            _waiter_started_path(pid_path).write_text(started, encoding="ascii")
+        else:
+            _waiter_started_path(pid_path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
@@ -694,6 +708,7 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
         try:
             if int(pid_path.read_text(encoding="ascii")) == os.getpid():
                 pid_path.unlink()
+                _waiter_started_path(pid_path).unlink(missing_ok=True)
         except (FileNotFoundError, ValueError, OSError):
             pass
         if _session_gone(payload, bound, host, heartbeat):
@@ -705,13 +720,24 @@ def wait_for_lane(host: str, session: str, events: Path, heartbeat: Path,
 def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> None:
     _heartbeat_path(payload, bound, host).unlink(missing_ok=True)
     pid_path = _waiter_path(payload, bound, host)
+    started_path = _waiter_started_path(pid_path)
+    # A pid file can outlive its process and the PID can be reused, so only a process with the creation
+    # time recorded at the waiter's start is signalled; a waiter left alone ends once its heartbeat is gone.
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
-        if _pid_alive(pid):
+        try:
+            recorded = started_path.read_text(encoding="ascii").strip()
+        except OSError:
+            recorded = ""
+        if _pid_alive(pid) and recorded and recorded == _process_identity(pid):
             os.kill(pid, signal.SIGTERM)
-        pid_path.unlink(missing_ok=True)
     except (FileNotFoundError, ValueError, OSError):
         pass
+    for leftover in (pid_path, started_path):
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            pass
     try:
         arm_lane_wake(payload, bound, matures_in=1)
     except (OSError, ValueError, KeyError):

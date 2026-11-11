@@ -377,6 +377,8 @@ class SessionHookTests(unittest.TestCase):
                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             try:
                 marker.write_text(str(child.pid), encoding="ascii")
+                # The waiter's creation time is recorded beside its pid when it starts.
+                marker.with_suffix(".started").write_text(hook._process_identity(child.pid) or "", encoding="ascii")
                 hook.stop_lane_waiter({"session_id": "session-123"}, bound, "codex")
                 child.wait(timeout=3)
                 self.assertFalse(marker.exists())
@@ -384,6 +386,48 @@ class SessionHookTests(unittest.TestCase):
                 if child.poll() is None:
                     child.kill()
                     child.wait()
+
+    def _session_end_with_recorded_waiter(self, identity):
+        """Runs the session end against a pid file naming this very process, with `identity` (None
+        for no record) beside it, and a mocked kill. Returns the kill mock and the two paths."""
+        spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        self.env["GRAPHHELM_EXECUTION_ID"] = "run-test"
+        payload = {"session_id": "session-123"}
+        bound = hook._binding_values("run-test", str(self.token_file),
+                                     f"http://127.0.0.1:{self.server.server_port}", None)
+        with patch.dict(os.environ, self.env):
+            marker = hook._waiter_path(payload, bound, "codex")
+            started = marker.with_suffix(".started")
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(str(os.getpid()), encoding="ascii")
+            started.unlink(missing_ok=True)
+            if identity is not None:
+                started.write_text(identity, encoding="ascii")
+            with patch.object(hook.os, "kill") as kill, patch.object(hook, "arm_lane_wake"):
+                hook.stop_lane_waiter(payload, bound, "codex")
+        return kill, marker, started
+
+    def test_session_end_does_not_signal_a_process_that_only_shares_the_pid(self):
+        for identity in (None, "1"):
+            with self.subTest(identity=identity):
+                kill, marker, started = self._session_end_with_recorded_waiter(identity)
+                kill.assert_not_called()
+                self.assertFalse(marker.exists())
+                self.assertFalse(started.exists())
+
+    def test_session_end_stops_the_waiter_it_started(self):
+        spec = importlib.util.spec_from_file_location("session_hook_identity", SCRIPT)
+        probe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(probe)
+        identity = probe._process_identity(os.getpid())
+        if identity is None:
+            self.skipTest("process creation time is not readable on this platform")
+        kill, marker, started = self._session_end_with_recorded_waiter(identity)
+        kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        self.assertFalse(marker.exists())
+        self.assertFalse(started.exists())
 
     def test_stale_heartbeat_cannot_rearm_waiter(self):
         spec = importlib.util.spec_from_file_location("session_hook_test", SCRIPT)

@@ -1,18 +1,24 @@
 # Schema Changelog
 
-## journey-flow 1.16.0 - a step can call a WebMCP page tool (#2837)
+## journey-flow 2.0.0 - a step can call a WebMCP page tool (#2837)
 
 The act `kind` enum gains `tool`: `{kind: tool, role: webmcp, name: <the page tool's registered
 name>, text: <a JSON object written as text>}`. For `kind: tool` the schema requires `role` to be
 exactly `webmcp` and refuses `secret` (a secret would land in the page); `headers` was already
-refused for every kind but `http`, and `text`, which was only allowed for `enter_text` and `http`,
-is now allowed for `tool` too. That `text` parses to a JSON object (absent means `{}`) is checked by
-the flow validator (`flow.tool_arguments_invalid`), not the schema, since a JSON schema cannot say
-it. A tool act is a browser act: a flow that also has an `http` or `cli` act is refused by the
-existing mixing rule (`flow.observer_mixed`). The screen the edge reaches still judges the step; the
-tool's result is recorded and never decides. Additive: every 1.15.0 flow stays valid with the same
+refused for every kind but `http`. `text` was allowed only for `enter_text` and `http`, so the act's
+first `allOf` branch (no `text` or `secret` unless the kind is one of them) lists `tool` too and a
+new branch states the two constraints above. That `text` parses to a JSON object (absent means `{}`)
+is checked by the flow validator (`flow.tool_arguments_invalid`), not the schema, since a JSON schema
+cannot say it. A tool act is a browser act: a flow that also has an `http` or `cli` act is refused by
+the existing mixing rule (`flow.observer_mixed`). The screen the edge reaches still judges the step;
+the tool's result is recorded and never decides.
+
+Why a major version for a change no existing flow feels: the compatibility checker
+(`compare_catalogs`) cannot show that an edited `allOf` branch only widens, so it classes the edit
+as `GHC003_BREAKING_CHANGE` ("composition ambiguous"), and a break is declared only by the exact
+major step `expected_version` names (1.15.0 to 2.0.0). Every 1.15.0 flow stays valid with the same
 bytes and digest, and the canonical writer and approval digest need no change (`text` is already
-written). A reader older than 1.16.0 refuses a flow that contains a `tool` act as
+written). A reader older than 2.0.0 refuses a flow that contains a `tool` act as
 `flow.schema_invalid` (the kind enum is closed); no existing flow changes meaning. The catalog
 digest is updated from canonical JSON (`graphhelm schema digest --file`).
 

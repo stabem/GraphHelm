@@ -433,8 +433,8 @@ pub struct JourneyWatchArgs {
 pub struct JourneyActArgs {
     /// The session id `journey open` printed.
     pub session: String,
-    /// `activate`, `submit`, `enter_text`, `navigate`, `wait_for`, `inspect` or `tool` (#2837: calls
-    /// the WebMCP page tool named `--name` with role `webmcp`; `--text` is its JSON-object arguments).
+    /// `activate`, `submit`, `enter_text`, `navigate`, `wait_for`, `inspect` or `tool` (a WebMCP page
+    /// tool: role `webmcp`, `--name` the tool, `--text` its JSON arguments).
     #[arg(long)]
     pub kind: String,
     #[arg(long)]

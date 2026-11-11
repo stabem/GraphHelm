@@ -396,7 +396,7 @@
       "name": "journey_open"
     },
     {
-      "description": "Send one act to an open live journey session (POST /v1/journeys/sessions/{sessionId}/act; exactly `graphhelm journey act`) and report the screen it lands on and that screen's state. Destructive-looking names are refused unless the approved flow has that act. Kind `tool`: role `webmcp`, name a WebMCP page tool, text its JSON arguments. Owner credential only.",
+      "description": "Send one act to an open live journey session (POST /v1/journeys/sessions/{sessionId}/act; exactly `graphhelm journey act`) and report the screen it lands on and that screen's state. Destructive-looking names are refused unless the approved flow has that act. Owner credential only.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -424,6 +424,7 @@
             "type": "string"
           },
           "text": {
+            "description": "enter_text value, or the JSON arguments of a tool act",
             "type": "string"
           }
         },

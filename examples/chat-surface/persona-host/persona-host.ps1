@@ -140,6 +140,8 @@ function Invoke-Engine([string] $prompt) {
     $psi.FileName = "cmd.exe"
     $psi.Arguments = "/c $ClaudeCommand -p"
     $psi.UseShellExecute = $false
+    # The engine is a child with redirected streams; it must not open a console window when the host has none.
+    $psi.CreateNoWindow = $true
     $psi.RedirectStandardInput = $true
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -356,7 +358,11 @@ Write-Host "[host] watching $RuntimeUrl every ${IntervalSeconds}s (budget $Reply
 while ($true) {
     try {
         $executions = Read-AllExecutions
-        foreach ($execution in $executions) { Step-Execution $execution.executionId }
+        foreach ($execution in $executions) {
+            # One failing execution is reported and the rest of the cycle is still served.
+            try { Step-Execution $execution.executionId }
+            catch { Write-Host "[host] execution $($execution.executionId) failed: $($_.Exception.Message)" }
+        }
     } catch {
         Write-Host "[host] cycle failed: $($_.Exception.Message)"
     }

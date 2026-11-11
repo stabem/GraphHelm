@@ -970,10 +970,6 @@
             "description": "The route id callers name. Unique in the manifest: an existing id needs replace.",
             "type": "string"
           },
-          "manifest": {
-            "description": "Manifest path override; absent, the Runtime's own.",
-            "type": "string"
-          },
           "model": {
             "type": "string"
           },

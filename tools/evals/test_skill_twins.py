@@ -52,7 +52,7 @@ class SkillTwinsTest(unittest.TestCase):
                 self.assertEqual([e["proposedLabel"] for e in examples], labels)
                 self.assertEqual([e["completionStatus"] for e in examples], statuses)
                 for example in examples:
-                    # #184: two blind judges voted; the label is judge-reviewed, not human-approved.
+                    # #184: two blind judges voted; the label is judge-reviewed (agent validation, no human approver).
                     self.assertEqual(example["reviewStatus"], "judge-reviewed")
                     self.assertEqual([v["vote"] for v in example["judgeVotes"]], ["agree", "agree"])
                     self.assertNotIn("reviewer", example)

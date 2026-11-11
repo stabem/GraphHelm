@@ -2116,10 +2116,13 @@ impl MutationDecisionKind {
             }
             (Self::CompletionCleared, EventKind::CompletionCleared(payload)) => {
                 payload.execution_id.as_str() == execution
+                    // `claimSeq` is optional (it defaults to the one open claim, #1284): left out,
+                    // the clearance of this execution is the one the request meant; named, it must
+                    // be the claim the event judged.
                     && request_body
                         .get("claimSeq")
                         .and_then(serde_json::Value::as_u64)
-                        == Some(payload.claim_seq)
+                        .is_none_or(|claim_seq| claim_seq == payload.claim_seq)
             }
             (Self::NodeAssigned, EventKind::NodeAssigned(payload)) => {
                 payload.execution_id.as_str() == execution
@@ -4691,6 +4694,27 @@ mod tests {
             cleared(5),
             cleared(6),
         );
+        // #2820: `claimSeq` is optional on the request (it defaults to the one open claim), so a
+        // retry that left it out must still recognize the clearance it committed.
+        let without_claim_seq = serde_json::json!({"file": "graph.yaml"});
+        assert!(MutationDecisionKind::CompletionCleared.matches(
+            &cleared(5),
+            execution,
+            &without_claim_seq,
+            ""
+        ));
+        assert!(MutationDecisionKind::CompletionCleared.matches(
+            &cleared(5),
+            execution,
+            &serde_json::json!({"file": "graph.yaml", "claimSeq": null}),
+            ""
+        ));
+        assert!(!MutationDecisionKind::CompletionCleared.matches(
+            &cleared(5),
+            "exec-other",
+            &without_claim_seq,
+            ""
+        ));
     }
 
     #[tokio::test]

@@ -1729,9 +1729,9 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
             super::architect::build_model(&super::journey_explore::model_source(&args.model)?)
                 .map_err(|error| (error.code, error.pointer, 3))?;
         let mut private: Vec<String> = secrets.values().cloned().collect();
-        if let Ok(key) = std::env::var("GRAPHHELM_GATEWAY_KEY") {
-            private.push(key);
-        }
+        private.extend(super::journey_explore::environment_secrets(|key| {
+            std::env::var(key).ok()
+        }));
         data["healed"] = json!([]);
         Some(Healer {
             model,

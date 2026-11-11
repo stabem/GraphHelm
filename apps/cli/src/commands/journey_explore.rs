@@ -216,6 +216,17 @@ fn preflight(args: &JourneyExploreArgs) -> Result<()> {
     Ok(())
 }
 
+/// The process secrets a model prompt must never carry, read through `read` so a test supplies
+/// them. Journey explore and `journey replay --heal` both redact exactly this list; an empty
+/// value is left out because it names nothing to redact.
+pub(super) fn environment_secrets(read: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    ["GRAPHHELM_GATEWAY_KEY", "GRAPHHELM_EVENTS_KEY"]
+        .into_iter()
+        .filter_map(read)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 pub(super) fn contains_secret(text: &str, values: &[String]) -> bool {
     values.iter().any(|value| {
         !value.is_empty() && {
@@ -578,11 +589,7 @@ fn explore(args: &JourneyExploreArgs, data: &mut Value) -> Result<()> {
     }
     let named = secrets(args)?;
     let mut private: Vec<_> = named.values().cloned().collect();
-    for key in ["GRAPHHELM_GATEWAY_KEY", "GRAPHHELM_EVENTS_KEY"] {
-        if let Ok(value) = std::env::var(key) {
-            private.push(value);
-        }
-    }
+    private.extend(environment_secrets(|key| std::env::var(key).ok()));
     let allow = permissions(&args.allow_act)?;
     let model = architect::build_model(&model_source(&args.model)?)
         .map_err(|error| (error.code, error.pointer, 3))?;
@@ -1129,6 +1136,22 @@ pub(crate) fn run(args: &JourneyExploreArgs) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Heal and explore share one list of process secrets; a key missing here reaches the model.
+    // No production seam beyond the reader argument; microseconds, no process environment.
+    #[test]
+    fn environment_secrets_names_the_gateway_key_and_the_events_key() {
+        let both = |key: &str| match key {
+            "GRAPHHELM_GATEWAY_KEY" => Some("gw".to_owned()),
+            "GRAPHHELM_EVENTS_KEY" => Some("ev".to_owned()),
+            _ => None,
+        };
+        assert_eq!(environment_secrets(both), ["gw", "ev"]);
+        let events_only = |key: &str| (key == "GRAPHHELM_EVENTS_KEY").then(|| "ev".to_owned());
+        assert_eq!(environment_secrets(events_only), ["ev"]);
+        let empty = |_: &str| Some(String::new());
+        assert!(environment_secrets(empty).is_empty());
+    }
 
     // Observable proposal/permission contract; catches permissive deserialization
     // or model-invented authority. Existing driver tests do not reach model input.

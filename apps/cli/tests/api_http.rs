@@ -8429,6 +8429,53 @@ fn a_null_wake_cursor_retries_the_server_derived_arming() {
     assert_eq!(head_sequence(&base, &token, execution), first_head);
 }
 
+/// A `cursor` that is present but not a non-negative integer used to read as "no cursor" and arm
+/// the lease from the head. It is now refused at the door, and nothing is appended.
+#[test]
+fn a_mistyped_wake_cursor_is_refused_and_arms_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let events = directory.path().join("events");
+    let execution = "exec-http-wake-bad-cursor";
+    let fixtures = all_success_fixtures(directory.path());
+    cli_start(&events, &fixtures, execution);
+
+    let (_guard, base, token) = serve(&events);
+    let url = format!("{base}/v1/executions/{execution}/wake-lease");
+    let head_before = head_sequence(&base, &token, execution);
+
+    let cases = [
+        serde_json::json!("5"),
+        serde_json::json!(-1),
+        serde_json::json!(true),
+        serde_json::json!(1.5),
+        serde_json::json!({"n": 1}),
+    ];
+    for (index, cursor) in cases.iter().enumerate() {
+        let key = format!("wake-bad-cursor-{index}");
+        let headers = [
+            ("Idempotency-Key", key.as_str()),
+            ("X-GraphHelm-Actor", "agent-sleeper"),
+            ("X-GraphHelm-Actor-Type", "agent"),
+        ];
+        let body = serde_json::json!({
+            "sessionId": "session-bad-cursor",
+            "rendezvousId": "rendezvous-bad-cursor",
+            "cursor": cursor
+        });
+        let (status, reply) = post_json(&url, &token, &headers, &body);
+        assert_eq!(status, 400, "cursor {cursor} must be refused: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/cursor",
+            "cursor {cursor}: {reply}"
+        );
+        assert_eq!(
+            head_sequence(&base, &token, execution),
+            head_before,
+            "a refused cursor {cursor} must append nothing"
+        );
+    }
+}
+
 /// `--sweep-interval` makes the server sweep on its own, and the record says the TICK asked.
 ///
 /// TWO CLAIMS, AND THE SECOND IS WHY `SweepCaller` HAS TWO VARIANTS AT ALL. That the sweep

@@ -1168,8 +1168,8 @@ impl ProjectionGeneration {
         if events.len() > crate::limits::MAX_READ_PAGE {
             return Err(ReplayError::LimitExceeded);
         }
-        let schemas =
-            graphhelm_schema::repository_schema_set().map_err(|_| ReplayError::Corrupt)?;
+        // Kept so an unloadable schema set is refused whether or not the page has events.
+        graphhelm_schema::repository_schema_set().map_err(|_| ReplayError::Corrupt)?;
         for event in events {
             let event_bytes = serialized_len_bounded(event, MAX_EVENT_BYTES)
                 .map_err(|_| ReplayError::LimitExceeded)?;
@@ -1186,14 +1186,14 @@ impl ProjectionGeneration {
             {
                 return Err(ReplayError::LimitExceeded);
             }
-            let value = serde_json::to_value(event).map_err(|_| ReplayError::Corrupt)?;
             let expected_previous = self
                 .watermark
                 .last_event_hash
                 .as_ref()
                 .map_or(GENESIS_HASH, EventHash::as_str);
-            if !schemas.validate_event(&value).is_empty()
-                || crate::integrity::validate_envelope(event).is_err()
+            // The envelope check serializes and schema-validates the event; doing it here as
+            // well validated every replayed event twice.
+            if crate::integrity::validate_envelope(event).is_err()
                 || event.scope != self.watermark.scope
                 || event.stream_id.as_str() != self.watermark.stream_id
                 || event.kind.is_project_level() == event.scope.execution_id().is_some()
@@ -2479,7 +2479,8 @@ pub fn replay_within(
     if events.len() > MAX_READ_ALL {
         return Err(ReplayError::LimitExceeded);
     }
-    let schemas = graphhelm_schema::repository_schema_set().map_err(|_| ReplayError::Corrupt)?;
+    // Kept so an unloadable schema set is refused whether or not the read has events.
+    graphhelm_schema::repository_schema_set().map_err(|_| ReplayError::Corrupt)?;
     let mut projection = ExecutionProjection::default();
     let mut seen = BTreeSet::new();
     let mut previous_hash = GENESIS_HASH;
@@ -2509,9 +2510,9 @@ pub fn replay_within(
         if aggregate_bytes > MAX_JOURNAL_BYTES || aggregate_references > MAX_READ_ALL {
             return Err(ReplayError::LimitExceeded);
         }
-        let value = serde_json::to_value(event).map_err(|_| ReplayError::Corrupt)?;
-        if !schemas.validate_event(&value).is_empty()
-            || crate::integrity::validate_envelope(event).is_err()
+        // The envelope check serializes and schema-validates the event; doing it here as well
+        // validated every replayed event twice.
+        if crate::integrity::validate_envelope(event).is_err()
             || &event.scope != expected_scope
             || event.stream_id.as_str() != expected_stream_id
             || scope

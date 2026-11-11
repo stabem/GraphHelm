@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::Path;
 
 use graphhelm_events::LocalEventRepository;
@@ -42,18 +43,40 @@ pub fn run(base_file: &Path, draft_file: &Path, _actor_id: &str, events: &Path) 
     .with_warnings(warnings)
 }
 
+/// The graph loader's input bound (`MAX_DOCUMENT_BYTES` in `graphhelm_schema`, which does not export it).
+const MAX_DRAFT_BYTES: u64 = 4 * 1024 * 1024;
+
 fn load_draft(
     path: &Path,
 ) -> Result<graphhelm_protocols::GraphDraft, graphhelm_protocols::Diagnostic> {
     let source = "graph-draft";
-    let text = std::fs::read_to_string(path).map_err(|_| {
+    let unreadable = || {
         graphhelm_protocols::Diagnostic::error(
             "GHS001_PARSE",
             "cannot read graph draft",
             "/",
             source,
         )
-    })?;
+    };
+    let oversized = || {
+        graphhelm_protocols::Diagnostic::error(
+            "GHS001_PARSE",
+            "graph draft exceeds the size bound",
+            "/",
+            source,
+        )
+    };
+    if std::fs::metadata(path).map_err(|_| unreadable())?.len() > MAX_DRAFT_BYTES {
+        return Err(oversized());
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_DRAFT_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > MAX_DRAFT_BYTES {
+        return Err(oversized());
+    }
+    let text = String::from_utf8(bytes).map_err(|_| unreadable())?;
     let parsed = if path.extension().and_then(|value| value.to_str()) == Some("json") {
         serde_json::from_str(&text).map_err(|_| ())
     } else {
@@ -62,4 +85,27 @@ fn load_draft(
     parsed.map_err(|()| {
         graphhelm_protocols::Diagnostic::error("GHS001_PARSE", "invalid graph draft", "/", source)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Observable input bound: an oversized draft must be refused before it is parsed, while a
+    // small one still loads. Sparse file, milliseconds, no production seam.
+    #[test]
+    fn an_oversized_draft_is_refused_before_parsing() {
+        let directory = tempfile::tempdir().unwrap();
+        let small = directory.path().join("small.json");
+        std::fs::write(&small, r#"{"id":"d1","expectedVersion":1,"operations":[]}"#).unwrap();
+        assert!(load_draft(&small).is_ok());
+
+        let big = directory.path().join("big.json");
+        let file = std::fs::File::create(&big).unwrap();
+        file.set_len(MAX_DRAFT_BYTES + 1).unwrap();
+        drop(file);
+        let error = load_draft(&big).unwrap_err();
+        assert_eq!(error.code, "GHS001_PARSE");
+        assert!(error.message.contains("size bound"), "{}", error.message);
+    }
 }

@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::path::Path;
 
 use graphhelm_protocols::{ActorId, OpaqueId, PersistedActor, PersistedActorType};
@@ -79,16 +80,37 @@ pub fn run(file: &Path, events: &Path, fixtures: Option<&Path>) -> Outcome {
     }
 }
 
+/// The graph loader's input bound (`MAX_DOCUMENT_BYTES` in `graphhelm_schema`, which does not export it).
+const MAX_FIXTURES_BYTES: u64 = 4 * 1024 * 1024;
+
 fn load_fixtures(path: &Path) -> Result<SimulationFixtures, graphhelm_protocols::Diagnostic> {
     let source = path.to_string_lossy().into_owned();
-    let bytes = std::fs::read(path).map_err(|_| {
+    let unreadable = || {
         graphhelm_protocols::Diagnostic::error(
             "GHS001_PARSE",
             "cannot read simulation fixtures",
             "/",
             &source,
         )
-    })?;
+    };
+    let oversized = || {
+        graphhelm_protocols::Diagnostic::error(
+            "GHS001_PARSE",
+            "simulation fixtures exceed the size bound",
+            "/",
+            &source,
+        )
+    };
+    if std::fs::metadata(path).map_err(|_| unreadable())?.len() > MAX_FIXTURES_BYTES {
+        return Err(oversized());
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_FIXTURES_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > MAX_FIXTURES_BYTES {
+        return Err(oversized());
+    }
     serde_json::from_slice(&bytes).map_err(|_| {
         graphhelm_protocols::Diagnostic::error(
             "GHS001_PARSE",
@@ -97,4 +119,27 @@ fn load_fixtures(path: &Path) -> Result<SimulationFixtures, graphhelm_protocols:
             source,
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Observable input bound: an oversized fixtures file must be refused before it is parsed,
+    // while a small one still loads. Sparse file, milliseconds, no production seam.
+    #[test]
+    fn oversized_fixtures_are_refused_before_parsing() {
+        let directory = tempfile::tempdir().unwrap();
+        let small = directory.path().join("small.json");
+        std::fs::write(&small, "{}").unwrap();
+        assert!(load_fixtures(&small).is_ok());
+
+        let big = directory.path().join("big.json");
+        let file = std::fs::File::create(&big).unwrap();
+        file.set_len(MAX_FIXTURES_BYTES + 1).unwrap();
+        drop(file);
+        let error = load_fixtures(&big).unwrap_err();
+        assert_eq!(error.code, "GHS001_PARSE");
+        assert!(error.message.contains("size bound"), "{}", error.message);
+    }
 }

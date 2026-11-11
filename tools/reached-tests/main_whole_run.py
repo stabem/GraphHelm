@@ -24,6 +24,18 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect is never followed: it would carry the bearer token to wherever the answer points."""
+
+    def redirect_request(self, *_):
+        return None
+
+
+def _urlopen(request, timeout):
+    return urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout)
+
+
 # Owner rule: children run hidden in the calling terminal, never in a new console window.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 HERE = Path(__file__).resolve().parent
@@ -511,7 +523,7 @@ def post(args, body):
                "X-GraphHelm-Actor": args.lane, "X-GraphHelm-Actor-Type": "agent", "Authorization": f"Bearer {token}"}
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with _urlopen(request, timeout=30) as response:
             return json.load(response).get("ok") is True
     except urllib.error.HTTPError as error:
         return error.code == 409  # the same receipt already recorded

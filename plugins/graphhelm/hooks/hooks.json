@@ -106,6 +106,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$(command -v python3 || command -v python || echo python3)\" \"${CLAUDE_PLUGIN_ROOT}/hooks/skill_record_hook.py\"",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

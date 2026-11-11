@@ -304,11 +304,16 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
     if (isLive()) onStarted(flow.id);
     return run;
   };
+  // #2841: `busy` is state, so a second call in the same tick still reads null. This ref is set before the
+  // run starts and cleared where `busy` is cleared, so the button and the page tool share one single-flight.
+  const starting = useRef(false);
   const runSingle = (flow: JourneyFlow) => {
+    if (starting.current) return;
+    starting.current = true;
     setRefusal(null);
     setBusy(`Starting ${nameOf(flow)}`);
     onPick(flow.id);
-    runOne(flow).catch((cause: unknown) => setRefusal(actionErrorDetails("Journey run failed", cause, "The Runtime refused the run.", "Check the Runtime response, then try Run again."))).finally(() => setBusy(null));
+    runOne(flow).catch((cause: unknown) => setRefusal(actionErrorDetails("Journey run failed", cause, "The Runtime refused the run.", "Check the Runtime response, then try Run again."))).finally(() => { starting.current = false; setBusy(null); });
   };
   // #2839: the function behind the Journeys column's `Run <journey name>` button (`runSingle`: it
   // selects the journey and starts its run), offered to a WebMCP agent. It is not the run panel's
@@ -320,7 +325,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
     handler: ({ journey }) => {
       const flow = typeof journey === "string" ? journeys.find((candidate) => candidate.id === journey) : undefined;
       if (flow === undefined) return { ok: false, reason: "journey must be the id of a journey listed in Proof." };
-      if (busy !== null) return { ok: false, reason: "Run is disabled while the journeys column is busy." };
+      if (busy !== null || starting.current) return { ok: false, reason: "Run is disabled while the journeys column is busy." };
       runSingle(flow);
       return { ok: true };
     },

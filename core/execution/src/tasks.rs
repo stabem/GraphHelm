@@ -1972,7 +1972,7 @@ pub enum StrayVerdict {
 ///
 /// #1211: the wire shape is the Studio's `TaskState` contract (`apps/studio/src/runtime/team-tasks.ts`).
 /// Fields that type declares `| null` serialise `null` when absent; fields it declares optional
-/// (`?:`) and never writes as `null` — `pendingReviewer`, `approvedWithRisk`, `completionRecorded`,
+/// (`?:`) and never writes as `null` — `pendingReviewer`, `approvedWithRisk`, `approvedBy`, `completionRecorded`,
 /// `claimSequence`, `releasedBy` — are OMITTED when absent, because the views read
 /// `releasedBy === undefined` as "the claim is live"; a `null` there emptied the Lanes kanban.
 /// A reviewer statement bound to one current review generation; no lease or verdict semantics.
@@ -2023,6 +2023,12 @@ pub struct TaskState {
     pub blocked_by: Option<Blocker>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved_with_risk: Option<RiskApproval>,
+    /// #2829: the reviewer whose APPROVE or APPROVE-WITH-RISK on the current head left no block
+    /// (the newest, when several approved). Cleared by a new head and by a BLOCK. Omitted while
+    /// absent. The fold records who approved whatever the assignment says, and accepts an author's
+    /// own verdict; whether that approval may merge is not decided here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
     /// Sequence of the current unanswered BLOCK.
     pub blocked_sequence: Option<u64>,
     /// Most recent task record written by this slice's author.
@@ -2197,6 +2203,7 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         },
         blocked_by: None,
         approved_with_risk: None,
+        approved_by: None,
         blocked_sequence: None,
         author_last_sequence: None,
         last_heartbeat_at: None,
@@ -2313,6 +2320,11 @@ fn apply_verdict(
         comment_url: blocker.comment_url.clone(),
     });
     state.blocked_sequence = oldest.map(|blocker| blocker.sequence);
+    state.approved_by = if state.blocked_by.is_none() && event.verdict != Some(Verdict::Block) {
+        event.reviewer.clone()
+    } else {
+        None
+    };
     state.step = if state.blocked_by.is_none() {
         TaskStep::Merge
     } else {
@@ -2945,6 +2957,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 if !same_opt_head(event.head_sha.as_ref(), state.head_sha.as_ref()) {
                     state.current_reviewer = None;
                     state.approved_with_risk = None;
+                    state.approved_by = None;
                     blockers.clear();
                     state.blocked_by = None;
                     state.blocked_sequence = None;

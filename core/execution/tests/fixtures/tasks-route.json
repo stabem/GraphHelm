@@ -290,6 +290,7 @@
       "ended": false,
       "id": 1,
       "state": {
+        "approvedBy": "rev-1",
         "assignedBy": null,
         "assignedReviewers": [],
         "authorLastSequence": 7,
@@ -510,6 +511,7 @@
       "title": null
     },
     {
+      "approvedBy": "rev-1",
       "assignedBy": null,
       "assignedReviewers": [],
       "authorLastSequence": 7,

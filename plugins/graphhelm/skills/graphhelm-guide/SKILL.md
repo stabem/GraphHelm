@@ -31,14 +31,27 @@ Installing this plugin exposes guidance. It does not install the CLI, start the 
 
 ## The whole flow, in order
 
-Planned, not shipped (#2582). The plan: one entry skill, `graphhelm-work`, drives every task. A session handed a task would load it, ask GraphHelm for `next`, load the skill it names, do that step, record it, and ask again. Until the Runtime ships `next`, `graphhelm-work` reports `OBSERVER_MISSING` and stops. The planned `next` would be derived from the task's records (`claimed`, `pr_opened`, `review_verdict`, `merged`, `blocked`).
+Shipped (#2829): one entry skill, `graphhelm-work`, drives every task. A session handed a task loads it, reads `next` from that task in the `tasks` answer (the MCP `tasks` tool, `GET /v1/executions/{id}/tasks`, `execution status --tasks`), loads the skill `next` names, does that step, records it, and asks again. `next` is computed from the folded task alone: no clock, no network, no model.
 
-The planned `next` has four fields: `step` (one of `claim`, `implement`, `review`, `merge`, `cleanup`, `done`, `diagnose`), `skill` (the skill to load, or null), `actor` (`{id, role}`; the role is `author`, `reviewer`, `approver`, `merger` or `owner`) and `because` (a fixed reason code plus the record it came from). A null skill would be reported as `OBSERVER_MISSING`, never as success: the session would stop and name the missing skill.
+`next` is on every task object and has four fields: `step`, `skill` (the skill to load, or null), `actor` (`{id, role}` or null; the role is `author`, `reviewer` or `approver`) and `because` (a fixed phrase plus at most one name; never a path, a URL or free text). `step` is one of `plan`, `critic`, `implement`, `review`, `merge` or `done`. A null skill on any step but `done` is reported as `OBSERVER_MISSING`, never as success: the session stops and names the missing skill.
+
+| Task state | `step` | Actor | `because` |
+|---|---|---|---|
+| released and not merged | `done` | none | `released by <who>` |
+| merged | `done` | none | `merged` |
+| claimed, no plan recorded | `plan` | the lane, `author` | `claimed, no plan recorded` |
+| design plan, critic has not passed | `critic` | none | `design plan waits for its critic` |
+| planned, no PR open on a head | `implement` | the lane, `author` | `planned, no PR open on a head` |
+| BLOCK on the head | `implement` | the lane, `author` | `BLOCK on head by <reviewer>` |
+| PR open, no verdict | `review` | the reviewer assigned on the head, `reviewer`; none if unassigned or if the assigned reviewer is the author | `PR open on head, no verdict`, `PR open on head, no reviewer assigned` or `reviewer assigned is the author; another reviewer must be assigned` |
+| approved on the head | `merge` | the reviewer who approved the current head, `approver`; none if that is the author | `approved on head`, `approved with risk on head` or `approval is the author's own; another reviewer must approve` |
+
+Not shipped: the answers `claim`, `cleanup` and `diagnose` (no task record says when a cleanup finished or that no unblocker resolves a block, so they cannot be derived from records; the diagram below still draws them); the turn-start hook that hands a session its `next` (#2639); and the end-to-end demo.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> claim: task opened
-    claim --> implement: claimed, no PR yet
+    [*] --> plan: task opened
+    plan --> implement: plan recorded, no PR yet
     implement --> review: PR opened on head
     review --> implement: BLOCK on head (same branch)
     review --> merge: APPROVE on head
@@ -50,18 +63,20 @@ stateDiagram-v2
     done --> [*]
 ```
 
-Read the diagram as the plan: each arrow is a planned `next` answer, and its label is the record that would cause it. Ids are meant to match the `step` enum and the journey edge ids; the conformance test in `apps/cli/tests/skill_transitions.rs` checks the step skills' transition tables against this diagram and the declared detours below.
+Read the diagram as the flow: each arrow is a transition between two `next` answers, and its label is the record that causes it. State ids match the `step` names above, except `cleanup` and `diagnose`, which `next` does not answer yet; the conformance test in `apps/cli/tests/skill_transitions.rs` checks the step skills' transition tables against this diagram and the declared detours below.
 
-Who acts at each state, as planned (the author never reviews or merges their own work). The skill names are planned; only the ones in the plugin folder exist as files, the rest live in extension folders or are still to write:
+Who acts at each state (the author never reviews or merges their own work). `plan`, `critic`, `implement`, `review`, `merge` and `done` are what `next` answers today; the conformance test checks each against the skill `next` names. The skills live in the plugin and extension folders:
 
 | State | Acts | Skill |
 |---|---|---|
-| `claim` | the author takes the task | `task-plan` |
+| `plan` | the author plans the claimed task | `task-plan` |
+| `critic` | the design critic grades the design plan | none; waits for the critic |
 | `implement` | the author writes and pushes the change | `implement` |
 | `review` | one blind reviewer on the pinned head | `blind-review` |
 | `merge` | the approving reviewer merges the pinned head | `merge` |
 | `cleanup` | the merger removes the PR's worktrees and local branch | `merge` |
 | `diagnose` | the owner decides why the task is stuck | none; owner decides |
+| `done` | the task is finished or was released | none; stop and report |
 
 Declared detours: skill-to-skill rows of the step skills' transition tables that the diagram does not draw.
 
@@ -78,7 +93,7 @@ A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owne
 
 Every step skill ends with its own transition table (what its record leads to, and who acts next) and sends the session back to `graphhelm-work`. If a session is unsure, it reads the "If in doubt" index at the end of its skill, which is the same in every skill.
 
-The planned proof (not run) is a demo task run end to end by agents that received only `graphhelm-work`: claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup. The conformance test (`apps/cli/tests/skill_transitions.rs`) fails when a transition names a skill that does not exist, or when a transition table and this diagram disagree (a row that is neither an arrow nor a declared detour, or an arrow with no row). The demo does not exist yet.
+The conformance test (`apps/cli/tests/skill_transitions.rs`) fails when a transition names a skill that does not exist, when a transition table and this diagram disagree (a row that is neither an arrow nor a declared detour, or an arrow with no row), or when a `(step, skill)` pair the Runtime can answer is missing from, or differs in, the State table above. The planned proof is not run: a demo task taken end to end by agents that received only `graphhelm-work` (claim, PR, review, BLOCK, fix, APPROVE, merge, cleanup).
 
 ## Prefer the GraphHelm MCP tools
 

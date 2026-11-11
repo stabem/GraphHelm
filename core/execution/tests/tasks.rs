@@ -187,6 +187,65 @@ fn planned(sequence: u64, lane: &str, task: &str, mode: &str, summary: &str) -> 
     )
 }
 
+/// #2829: the fold records who approved the current head, whatever the assignment says: the newest
+/// approval with no block left, cleared by a new head and by a BLOCK, and a risk approval counts.
+#[test]
+fn approved_by_follows_the_approval_on_the_current_head_2829() {
+    let url = "https://github.com/stabem/GraphHelm/pull/70#c1";
+    let base = |extra: Vec<TaskEventRecord>| {
+        let mut records = vec![
+            claimed(1, "lane-a", "issue-7", 7, "issue-7-x"),
+            opened(2, "lane-a", "issue-7", 70, "aaaaaaa1"),
+        ];
+        records.extend(extra);
+        fold_task_events(&records).remove(0)
+    };
+    let approve = |sequence: u64, reviewer: &str, head: &str, word: &str| {
+        verdict(sequence, reviewer, "issue-7", 70, head, word, url)
+    };
+    assert_eq!(base(vec![]).approved_by, None, "no verdict, no approver");
+    let one = base(vec![approve(3, "rev-x", "aaaaaaa1", "APPROVE")]);
+    assert_eq!(one.approved_by.as_deref(), Some("rev-x"));
+    assert_eq!(step_of(&one), TaskStep::Merge);
+    let newest = base(vec![
+        approve(3, "rev-x", "aaaaaaa1", "APPROVE"),
+        approve(4, "rev-y", "aaaaaaa1", "APPROVE-WITH-RISK"),
+    ]);
+    assert_eq!(newest.approved_by.as_deref(), Some("rev-y"), "newest wins");
+    // A new head answers the approval: nobody has approved it.
+    let moved = base(vec![
+        approve(3, "rev-x", "aaaaaaa1", "APPROVE"),
+        opened(4, "lane-a", "issue-7", 70, "bbbbbbb2"),
+    ]);
+    assert_eq!(moved.approved_by, None);
+    assert_eq!(step_of(&moved), TaskStep::Review);
+    // A BLOCK by another reviewer on the same head takes the step back and clears the approver.
+    let blocked = base(vec![
+        approve(3, "rev-x", "aaaaaaa1", "APPROVE"),
+        approve(4, "rev-y", "aaaaaaa1", "BLOCK"),
+    ]);
+    assert_eq!(blocked.approved_by, None);
+    assert_eq!(step_of(&blocked), TaskStep::Review);
+    // The blocker later approves: no block left, so the blocker is the approver.
+    let unblocked = base(vec![
+        approve(3, "rev-x", "aaaaaaa1", "APPROVE"),
+        approve(4, "rev-y", "aaaaaaa1", "BLOCK"),
+        approve(5, "rev-y", "aaaaaaa1", "APPROVE"),
+    ]);
+    assert_eq!(unblocked.approved_by.as_deref(), Some("rev-y"));
+    // An approval while another reviewer's BLOCK stands approves nothing yet.
+    let still_blocked = base(vec![
+        approve(3, "rev-y", "aaaaaaa1", "BLOCK"),
+        approve(4, "rev-x", "aaaaaaa1", "APPROVE"),
+    ]);
+    assert_eq!(still_blocked.approved_by, None);
+    assert_eq!(step_of(&still_blocked), TaskStep::Review);
+    // Wherever the fold reaches Merge, it has recorded an approver.
+    for task in [&one, &newest, &unblocked] {
+        assert!(step_of(task) != TaskStep::Merge || task.approved_by.is_some());
+    }
+}
+
 #[test]
 fn heartbeats_mark_activity_without_changing_the_step_or_starting_a_blocked_fix() {
     let task = "issue-1024";

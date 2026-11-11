@@ -15,6 +15,7 @@ mod briefing;
 mod customs;
 mod dispatch;
 pub mod journeys;
+pub mod next;
 mod progress;
 mod ready;
 mod recovery;

@@ -361,6 +361,41 @@ fn the_flowchart_and_the_transition_tables_agree() {
     }
 }
 
+/// #2829: the Runtime's `next` answer and the guide's State table name one skill per step. Every
+/// `(step, skill)` pair `next_step` can emit has a State row of that name; its skill exists on
+/// disk and is the one the row carries, and a step with no skill has a row that names none.
+#[test]
+fn the_runtimes_next_table_and_the_guides_state_table_agree() {
+    use graphhelm_execution::next::NEXT_TABLE;
+    let guide = read(GUIDE);
+    let state_rows = table_with_header(&guide, &["State", "Acts", "Skill"])
+        .expect("guide has a '| State | Acts | Skill |' table");
+    for (step, skill) in NEXT_TABLE {
+        let row = state_rows
+            .iter()
+            .find(|row| unticked(&row[0]) == *step)
+            .unwrap_or_else(|| panic!("the guide's State table has no row for step '{step}'"));
+        match skill {
+            Some(skill) => {
+                assert!(
+                    skill_exists_on_disk(skill),
+                    "step '{step}': skill '{skill}' has no <tree>/{skill}/SKILL.md"
+                );
+                assert_eq!(
+                    unticked(&row[2]),
+                    *skill,
+                    "step '{step}': the State table names a different skill than the Runtime"
+                );
+            }
+            None => assert!(
+                !row[2].starts_with('`'),
+                "step '{step}': the Runtime names no skill but the State table names {}",
+                row[2]
+            ),
+        }
+    }
+}
+
 #[test]
 fn the_reading_map_names_only_skills_that_exist() {
     let agents = read("AGENTS.md");

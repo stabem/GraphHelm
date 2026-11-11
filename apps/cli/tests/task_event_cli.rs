@@ -470,6 +470,85 @@ fn status_with_tasks_folds_the_recorded_task_events() {
     assert!(!refused.status.success());
 }
 
+/// #2829: every served task carries `next`, at both depths of the reply. A claimed task is the
+/// author's to plan; once its PR is open on a head with a reviewer assigned it is that reviewer's to
+/// review. Cost: one held fixture run, three sealed signals and three reads in a tempdir.
+#[test]
+fn served_tasks_carry_the_next_step_and_skill() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let read_tasks = |full: bool| -> Value {
+        let mut read = command();
+        read.args(["execution", "status", "--events"])
+            .arg(&events)
+            .args(["--execution", RUN, "--tasks"]);
+        if full {
+            read.arg("--full-tasks");
+        }
+        let output = read
+            .arg("--keyring")
+            .arg(scratch.path().join("keyring"))
+            .args(["--key-id", "owner-key"])
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["ok"], json!(true), "{reply}");
+        reply["data"]["tasks"]["tasks"][0].clone()
+    };
+    let claimed = signal(
+        scratch.path(),
+        &events,
+        "next-claim",
+        "task.claimed",
+        ACTOR,
+        &as_actor(package_fixture("claimed")),
+    );
+    assert_eq!(claimed["ok"], json!(true), "{claimed}");
+    for full in [false, true] {
+        assert_eq!(
+            read_tasks(full)["next"],
+            json!({"step": "plan", "skill": "task-plan",
+                "actor": {"id": ACTOR, "role": "author"},
+                "because": "claimed, no plan recorded"}),
+            "claimed, full={full}"
+        );
+    }
+
+    let mut opened = as_actor(package_fixture("pr-opened"));
+    opened["taskId"] = as_actor(package_fixture("claimed"))["taskId"].clone();
+    let opened_reply = signal(
+        scratch.path(),
+        &events,
+        "next-pr",
+        "task.pr_opened",
+        ACTOR,
+        &opened,
+    );
+    assert_eq!(opened_reply["ok"], json!(true), "{opened_reply}");
+    let mut assign = package_fixture("review-assigned");
+    assign["taskId"] = opened["taskId"].clone();
+    let assigned = signal(
+        scratch.path(),
+        &events,
+        "next-assign",
+        "task.review_assigned",
+        ACTOR,
+        &assign,
+    );
+    assert_eq!(assigned["ok"], json!(true), "{assigned}");
+    for full in [false, true] {
+        let task = read_tasks(full);
+        assert_eq!(
+            task["next"],
+            json!({"step": "review", "skill": "blind-review",
+                "actor": {"id": assign["reviewer"], "role": "reviewer"},
+                "because": "PR open on head, no verdict"}),
+            "PR opened, full={full}: {task}"
+        );
+        assert_eq!(task["step"], "review", "no existing field changed: {task}");
+    }
+}
+
 /// A heartbeat is admitted through the real sealed signal door only while this lane owns a claim.
 #[test]
 fn heartbeat_on_an_open_claim_is_recorded_without_changing_the_claim() {

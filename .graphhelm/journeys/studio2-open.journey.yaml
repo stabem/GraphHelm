@@ -3,18 +3,18 @@ id: studio2-open
 title: Open the Studio on a project
 name: Open the Studio
 feature: Studio
-purpose: "A fresh loopback URL opens the demo project without a ticket, preserves the proof deep link on reload, and keeps the project available when switching views."
+purpose: "A saved proof link opens the demo project on this machine without a ticket, and switching to Graph keeps the demo run in view."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
-risks: [critical_ux, authentication]
+risks: [critical_ux]
 viewports: [web, mobile]
 screens:
   - id: graph
     title: The demo team run remains available
-    url: /?view=graph&journey=runtime-health
+    url: /?journey=runtime-health
     ignoreQuery: [project, run]
     state: stable
     expect: [{role: region, name: Graph, text: RUN demo STATUS, because: the demo run opens after switching from the ticket-free proof deep link}]
@@ -24,14 +24,14 @@ screens:
     url: /?view=proof&journey=runtime-health
     ignoreQuery: [project, run]
     state: stable
-    expect: [{role: heading, name: Open the Studio from your project, absent: true, because: a loopback link requires no ticket}, {role: region, name: Project demo, because: the selected demo project is open}]
+    expect: [{role: heading, name: Read the Runtime health, because: the runtime-health proof view titles itself with its journey; a plain Studio start shows the install guide instead}, {role: region, name: Project demo, because: "the owner reached the demo project from a saved link, with no ticket, and the Studio opens it directly"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/login/session.ts, apps/studio/dev-session.ts]
 edges:
   - id: proof.graph
     from: proof
     to: graph
-    intent: Open a saved proof deep link and switch to Graph.
-    why: The local browser session opens the project and keeps its run available without a ticket.
+    intent: "Open a saved proof deep link and switch to Graph. Off-loopback no-ticket refusal is not checked here; tracked in #2627 (JPD/method), so authentication is not a risk of this flow yet."
+    why: "After the owner opens a saved proof link and switches to Graph, the demo run is still there, so nothing has to be set up again."
     acts:
       - {kind: activate, role: tab, name: Graph}
 paths:

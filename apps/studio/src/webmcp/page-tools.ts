@@ -37,6 +37,15 @@ interface ModelContextLike {
 
 const FAILED: PageToolResult = { ok: false, reason: "The Studio could not run this action." };
 
+/** A registration the host refuses is not the page's failure: a mount that was aborted again (StrictMode's
+ * first mount) is expected and silent; any other refusal (a name already taken, a host that errs) is said once. */
+function refused(name: string): (cause: unknown) => void {
+  return (cause) => {
+    if (cause instanceof Error && cause.name === "AbortError") return;
+    console.warn(`The browser refused the page tool ${name}.`, cause);
+  };
+}
+
 function findHost(): ModelContextLike | null {
   const candidate = (typeof document === "undefined" ? undefined : (document as unknown as { modelContext?: unknown }).modelContext)
     ?? (typeof navigator === "undefined" ? undefined : (navigator as unknown as { modelContext?: unknown }).modelContext);
@@ -66,9 +75,8 @@ export function usePageTools(tools: PageTool[]): void {
         catch { return FAILED; }
       };
       try {
-        // A registration the host refuses (an aborted mount, a name already taken) is not the page's failure.
-        Promise.resolve(host.registerTool({ name, description, inputSchema, execute }, { signal: controller.signal })).catch(() => undefined);
-      } catch { /* a host that throws instead of rejecting is treated the same way */ }
+        Promise.resolve(host.registerTool({ name, description, inputSchema, execute }, { signal: controller.signal })).catch(refused(name));
+      } catch (cause) { refused(name)(cause); }
     }
     return () => controller.abort();
   }, [names]);

@@ -306,3 +306,68 @@ class CardPathChangedCard(unittest.TestCase):
             keel_pretool_hook.decide(self.repo, target, {"content": "x = 1\n"})
         lookups = [c for c in spy.call_args_list if ".graphhelm/cards/" in c.args]
         self.assertEqual(len(lookups), 1, spy.call_args_list)
+
+
+class UntrackedReadLimit(unittest.TestCase):
+    """#2807: an untracked file above UNTRACKED_READ_LIMIT is never read whole."""
+
+    LIMIT = 100
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-q", "-b", "main")
+        git(self.repo, "config", "user.email", "t@t")
+        git(self.repo, "config", "user.name", "t")
+        (self.repo / "README.md").write_text("x\n")
+        git(self.repo, "add", ".")
+        git(self.repo, "commit", "-qm", "base")
+        self.cli = Path(self.tmp.name) / "graphhelm"
+        self.cli.write_text("cli")
+        self.card = Path(self.tmp.name) / "card.json"
+        self.card.write_text("{}")
+        patch = mock.patch.object(keel_stop_hook, "UNTRACKED_READ_LIMIT", self.LIMIT, create=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def fingerprint(self):
+        return keel_stop_hook._fingerprint(self.repo, "main", self.card, str(self.cli), {})
+
+    def test_over_limit_file_without_newline_is_a_non_trivial_change(self):
+        (self.repo / "big.bin").write_bytes(b"a" * (self.LIMIT + 1))
+        self.assertGreater(keel_stop_hook.code_lines_changed(self.repo, "main"), keel_stop_hook.TRIVIAL_LINES)
+
+    def test_file_at_the_limit_still_counts_its_real_lines(self):
+        (self.repo / "edge.txt.py").write_bytes(b"a\n" * (self.LIMIT // 2))
+        self.assertEqual(keel_stop_hook.code_lines_changed(self.repo, "main"), self.LIMIT // 2)
+        (self.repo / "edge.txt.py").write_bytes(b"a\n" * 3)
+        self.assertEqual(keel_stop_hook.code_lines_changed(self.repo, "main"), 3)
+
+    def test_fingerprint_does_not_read_an_over_limit_file(self):
+        big = self.repo / "big.bin"
+        big.write_bytes(b"a" * (self.LIMIT + 1))
+        read, real = [], Path.read_bytes
+
+        def spy(path):
+            read.append(path.name)
+            return real(path)
+
+        with mock.patch.object(Path, "read_bytes", spy):
+            first = self.fingerprint()
+            second = self.fingerprint()
+        self.assertNotIn("big.bin", read)
+        self.assertIsInstance(first, str)
+        self.assertEqual(first, second)
+        big.write_bytes(b"a" * (self.LIMIT + 50))
+        self.assertNotEqual(self.fingerprint(), first)
+
+    def test_fingerprint_of_a_small_file_follows_its_bytes(self):
+        small = self.repo / "small.py"
+        small.write_bytes(b"abc\n")
+        stamp = os.stat(small).st_mtime_ns
+        first = self.fingerprint()
+        small.write_bytes(b"abd\n")  # same size; the bytes are what changed
+        os.utime(small, ns=(stamp, stamp))
+        self.assertNotEqual(self.fingerprint(), first)

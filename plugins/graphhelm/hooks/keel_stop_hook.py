@@ -31,6 +31,7 @@ CARD = Path(".graphhelm") / "keel-card.json"
 # #1548: a branch issue-<N>-... that has .graphhelm/cards/issue-<N>.json uses that card.
 ISSUE_BRANCH = re.compile(r"^issue-(\d+)(?:-|$)")
 TRIVIAL_LINES = 5
+UNTRACKED_READ_LIMIT = 1024 * 1024  # an untracked file above this many bytes is never read whole (#2807)
 DOC_SUFFIXES = (".md", ".txt", ".rst")
 BASES = ("origin/main", "main", "origin/master", "master")
 
@@ -226,6 +227,9 @@ def code_lines_changed(repo: Path, base: str, others: str | None = None) -> int:
     for path in (untracked(repo) if others is None else others).splitlines():
         if not _is_doc(path):
             try:
+                if (repo / path).stat().st_size > UNTRACKED_READ_LIMIT:  # like a binary file
+                    total += TRIVIAL_LINES + 1
+                    continue
                 total += len((repo / path).read_bytes().splitlines())
             except OSError:
                 continue
@@ -271,7 +275,11 @@ def _fingerprint(repo: Path, base: str, card: Path, cli: str, payload: dict,
         for part in (base, _head(repo), _git(repo, "diff", "--binary", base), others):
             digest.update(part.encode() + b"\0")
         for path in others.splitlines():
-            digest.update((repo / path).read_bytes() + b"\0")
+            stat = (repo / path).stat()
+            if stat.st_size > UNTRACKED_READ_LIMIT:  # a stamp stands in for the bytes
+                digest.update(f"{path}:{stat.st_size}:{stat.st_mtime_ns}".encode() + b"\0")
+            else:
+                digest.update((repo / path).read_bytes() + b"\0")
         digest.update(card.read_bytes())
         return digest.hexdigest()
     except (subprocess.SubprocessError, OSError, ValueError):

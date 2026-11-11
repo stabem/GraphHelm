@@ -176,10 +176,6 @@ class KeelStopHook(unittest.TestCase):
             self.assertIsNone(self.run_hook(cwd=other))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CardPath(unittest.TestCase):
     """#1548: the hooks read .graphhelm/cards/issue-<N>.json on an issue-<N> branch, and the legacy
     keel-card.json everywhere else. Defect: the hooks read only keel-card.json, so a PR with the
@@ -371,3 +367,7 @@ class UntrackedReadLimit(unittest.TestCase):
         small.write_bytes(b"abd\n")  # same size; the bytes are what changed
         os.utime(small, ns=(stamp, stamp))
         self.assertNotEqual(self.fingerprint(), first)
+
+
+if __name__ == "__main__":
+    unittest.main()

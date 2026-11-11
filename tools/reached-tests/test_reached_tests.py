@@ -1749,10 +1749,6 @@ class RootFiles(unittest.TestCase):
         self.assertEqual([], unmapped)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class CoreModules(unittest.TestCase):
     """#1875: a change to one module of a core crate reaches only the CLI modules that use it, and
     falls back to the whole CLI package whenever that cannot be proved from the source."""
@@ -1928,3 +1924,7 @@ class CoreModules(unittest.TestCase):
                     self.assertLessEqual(rt.cli_module(packages, cli, path, repo), single)
         self.assertTrue("graphhelm-cli" in whole or
                         ("graphhelm-cli", "bin:graphhelm", "commands::execution::collisions") in single)
+
+
+if __name__ == "__main__":
+    unittest.main()

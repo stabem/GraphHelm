@@ -101,10 +101,6 @@ class ReviewStopHook(unittest.TestCase):
         self.assertIsNone(self.stop({}))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ReviewStopHookCardPath(unittest.TestCase):
     """#1548: the review gate reads .graphhelm/cards/issue-<N>.json on an issue-<N> branch."""
 
@@ -140,3 +136,7 @@ class ReviewStopHookCardPath(unittest.TestCase):
         path = self.repo / f".graphhelm/cards/issue-{number}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("{}", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    unittest.main()

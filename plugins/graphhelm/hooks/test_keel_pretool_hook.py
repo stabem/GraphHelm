@@ -156,10 +156,6 @@ class KeelPreToolHook(unittest.TestCase):
             self.assertEqual(out.strip(), "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class KeelPreToolCardPath(unittest.TestCase):
     """#1548: on an issue-<N> branch the pretool hook reads .graphhelm/cards/issue-<N>.json. Defect:
     it read only keel-card.json, so a PR with the right per-issue card was refused every edit."""
@@ -208,3 +204,7 @@ class KeelPreToolCardPath(unittest.TestCase):
         result = self.edit()
         self.assertEqual(result["permissionDecision"], "deny")
         self.assertIn(".graphhelm/cards/issue-1548.json", result["permissionDecisionReason"])
+
+
+if __name__ == "__main__":
+    unittest.main()

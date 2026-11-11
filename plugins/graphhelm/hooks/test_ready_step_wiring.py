@@ -21,10 +21,6 @@ class ReadyStepWiring(unittest.TestCase):
         self.assertIsNone(hook.ready_step_reason(guard.new_state(), []))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class EvaluateDrivesTheReadyStep(unittest.TestCase):
     """#2643: evaluate() is the stop path; a ready step reaches it, once per turn state."""
 
@@ -44,3 +40,7 @@ class EvaluateDrivesTheReadyStep(unittest.TestCase):
         self.assertIn("assigned review", hook.evaluate(payload, ready=ready, turn_state=hook.new_turn_state()))
         self.assertIn("assigned review", hook.evaluate(payload, ready=ready, turn_state=hook.new_turn_state()),
                       "a new turn starts with no injected steps")
+
+
+if __name__ == "__main__":
+    unittest.main()

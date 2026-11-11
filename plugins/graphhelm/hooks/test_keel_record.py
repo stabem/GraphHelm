@@ -116,10 +116,6 @@ class RecordBlockTest(unittest.TestCase):
                 self.assertFalse(keel_record.record_block("stop", "no card", {}))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LockFailsClosedTest(unittest.TestCase):
     """A broken recorder must never turn a lock's refusal into a silent pass."""
 
@@ -150,3 +146,7 @@ class LockFailsClosedTest(unittest.TestCase):
         result = self._run("keel_pretool_hook.py", {"tool_name": "Write", "tool_input": {"file_path": "src/b.py", "content": "y\n" * 10}})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+
+if __name__ == "__main__":
+    unittest.main()

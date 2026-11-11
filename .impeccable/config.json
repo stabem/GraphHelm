@@ -1,0 +1,23 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "space grotesk",
+        "createdAt": "2026-11-11T10:16:17.242Z",
+        "reason": "owner confirmed 2026-11-11: Space Grotesk is approved Studio design"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "apps/studio/src/styles.css"
+        ],
+        "createdAt": "2026-11-11T10:16:17.971Z",
+        "reason": "owner confirmed 2026-11-11: side-tab borders are approved Studio design"
+      }
+    ]
+  }
+}

@@ -1105,6 +1105,7 @@ impl TasksView {
         let value = match depth {
             TasksDepth::Full => serde_json::to_value(&self).map(|mut value| {
                 value["durations"] = serde_json::to_value(&durations).expect("durations serialize");
+                attach_next(&mut value, &next_of(&self.tasks));
                 value
             }),
             TasksDepth::Open => {
@@ -1115,6 +1116,7 @@ impl TasksView {
                     .into_iter()
                     .filter(|task| task.step != TaskStep::Merged)
                     .collect();
+                let nexts = next_of(&tasks);
                 serde_json::to_value(OpenTasksView {
                     view: "open",
                     execution_id: self.execution_id,
@@ -1132,9 +1134,36 @@ impl TasksView {
                     waiting: self.waiting,
                     owner_notes: self.owner_notes,
                 })
+                .map(|mut value| {
+                    attach_next(&mut value, &nexts);
+                    value
+                })
             }
         };
         value.expect("a view of serializable fold types")
+    }
+}
+
+/// #2829: the `next` answer of each task, in order.
+fn next_of(tasks: &[TaskState]) -> Vec<graphhelm_execution::next::NextStep> {
+    tasks
+        .iter()
+        .map(graphhelm_execution::next::next_step)
+        .collect()
+}
+
+/// #2829: every task object of the reply's `tasks` array gains `next` (see
+/// [`graphhelm_execution::next`]), attached here, once, for the one reply both depths share. It is
+/// derived from the folded task alone, so it adds nothing to the fold or its stored fixtures.
+fn attach_next(value: &mut serde_json::Value, nexts: &[graphhelm_execution::next::NextStep]) {
+    let Some(served) = value
+        .get_mut("tasks")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for (object, next) in served.iter_mut().zip(nexts) {
+        object["next"] = serde_json::to_value(next).expect("next serializes");
     }
 }
 

@@ -9,9 +9,9 @@ This is the one entry skill. Do not work from memory of the flow.
 
 ## Loop
 
-1. Read the task's state with the GraphHelm MCP `tasks` tool (or `status` and `briefing` when `tasks` is not connected). The `next` field (`step`, `skill`, `actor`, `because`) is planned in #2582 and is not shipped yet: until it is, report `OBSERVER_MISSING` for `next` and stop; do not infer the next step from memory.
-2. Read `step`, `skill`, `actor` and `because` from the answer.
-3. If `actor.id` is not you, stop and report to the orchestrator; do not act for someone else.
+1. Read the task's state with the GraphHelm MCP `tasks` tool (or `status` with its tasks block when `tasks` is not connected) and find the task in the `tasks` array. Its `next` field is `{step, skill, actor, because}`. If the task has no `next`, the Runtime is older than this skill: report `OBSERVER_MISSING` for `next` and stop; do not infer the next step from memory.
+2. If `step` is `done`, the task is finished (merged, or released): stop and report done.
+3. If `actor` is null or `actor.id` is not you, stop and report to the orchestrator; do not act for someone else.
 4. If `skill` is null, report `OBSERVER_MISSING` and stop. Never treat a missing skill as success.
 5. Load the skill named in `skill`, do that step, and record it (claim, PR, verdict, merge) with the task record tools.
 6. Go back to step 1.

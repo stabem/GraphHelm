@@ -34,3 +34,7 @@ target/
 # copy made run_reached.py refuse the worktree as not clean (#1538).
 /.claude/settings.local.json
 !tools/evals/fixtures/selection/*.jsonl
+
+# impeccable design hook: per-machine state (the shared config.json is committed)
+.impeccable/hook.cache.json
+.impeccable/config.local.json

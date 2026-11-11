@@ -1920,7 +1920,8 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
                 .as_str()
                 .is_some_and(|text| !super::journey_flow::tool_arguments_valid(text)))
     {
-        return (refuse("live.request_invalid"), true);
+        let still_serving = true;
+        return (refuse("live.request_invalid"), still_serving);
     }
     let lower = name.to_lowercase();
     if DESTRUCTIVE.iter().any(|word| lower.contains(word)) {

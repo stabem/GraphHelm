@@ -117,7 +117,7 @@ function expectation(v) {
 }
 // #2837: the arguments of a tool act, a JSON object written as text; null when `text` is not one.
 function toolArguments(text) {
-  if (!string(text,4096,true)) return null;
+  if (typeof text !== 'string' || Buffer.byteLength(text) > 4096) return null;
   try { const value = JSON.parse(text); return plain(value) ? value : null; } catch { return null; }
 }
 function validate(r) {

@@ -7325,7 +7325,21 @@ pub(super) async fn wake_lease(
             "/rendezvousId",
         );
     };
-    let cursor = payload.get("cursor").and_then(serde_json::Value::as_u64);
+    // Absent or null means "no cursor" (the arming starts from the stream head). Anything else
+    // must be a non-negative integer: a mistyped cursor is refused here, never read as absent.
+    let cursor = match payload.get("cursor") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => match value.as_u64() {
+            Some(cursor) => Some(cursor),
+            None => {
+                return bad_request(
+                    WAKE_LEASE_COMMAND,
+                    "\"cursor\" must be a non-negative integer",
+                    "/cursor",
+                );
+            }
+        },
+    };
     // M09 decision B: how long the sleeper's quiet may last. Absent means absent — no horizon
     // is invented for a lease that declared none.
     let matures_in_seconds = payload

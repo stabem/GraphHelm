@@ -54,6 +54,12 @@ pub(crate) fn would_destroy(act: &Value) -> Option<&'static str> {
     ) {
         return None;
     }
+    // #2837: a page tool is the page's own code with the page's privileges: nothing here can say it
+    // only reads, so it is guarded like any act that may commit something. The owner's `safe` mark
+    // or an app the run started itself lets it play, as for a click on "Delete".
+    if act["kind"] == "tool" {
+        return Some("call");
+    }
     // #927: a request that is not a read mutates, whatever its path says; an unknown method too.
     if act["kind"] == "http"
         && !matches!(
@@ -87,13 +93,14 @@ pub(crate) fn would_destroy(act: &Value) -> Option<&'static str> {
         })
 }
 
-const ACT_KINDS: [&str; 6] = [
+const ACT_KINDS: [&str; 7] = [
     "activate",
     "submit",
     "enter_text",
     "navigate",
     "wait_for",
     "inspect",
+    "tool",
 ];
 
 fn report(command: &'static str, data: Value, failed: Option<Failure>) -> Outcome {
@@ -1600,6 +1607,7 @@ fn act_caption(act: &Value) -> String {
         "enter_text" => "Types into",
         "navigate" => "Opens",
         "wait_for" => "Waits for",
+        "tool" => "Calls",
         _ => "Checks",
     };
     format!("{verb} \"{name}\"")
@@ -1903,6 +1911,17 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
     if !ACT_KINDS.contains(&kind) || role.is_empty() || name.is_empty() || name.len() > 256 {
         return (refuse("driver.unsupported_act"), true);
     }
+    // #2837: a tool act is addressed by `webmcp` and a tool name, takes its arguments as a JSON
+    // object in `text`, and never a secret (it would land in the page).
+    if kind == "tool"
+        && (role != "webmcp"
+            || !request["secret"].is_null()
+            || request["text"]
+                .as_str()
+                .is_some_and(|text| !super::journey_flow::tool_arguments_valid(text)))
+    {
+        return (refuse("live.request_invalid"), true);
+    }
     let lower = name.to_lowercase();
     if DESTRUCTIVE.iter().any(|word| lower.contains(word)) {
         let approved = session.current.as_deref().is_some_and(|current| {
@@ -2197,6 +2216,8 @@ mod watch_guard_tests {
         assert_eq!(would("activate", "Resend invoice"), Some("send"));
         assert_eq!(would("activate", "Drop table"), Some("drop"));
         assert_eq!(would("activate", "Open dropdown"), None);
+        // #2837: a page tool is the page's own code, guarded whatever its name says.
+        assert_eq!(would("tool", "rename_heading"), Some("call"));
         assert_eq!(would("activate", "Checkout"), None);
         assert_eq!(would("enter_text", "Send to"), None);
         assert_eq!(would("wait_for", "Order sent"), None);

@@ -129,8 +129,8 @@ const TOOLS: [ToolSpec; 46] = [
         description: "Send one act to an open live journey session (POST \
                       /v1/journeys/sessions/{sessionId}/act; exactly `graphhelm journey act`) and \
                       report the screen it lands on and that screen's state. Destructive-looking \
-                      names are refused unless the approved flow has that act. Owner credential \
-                      only.",
+                      names are refused unless the approved flow has that act. Kind `tool`: role `webmcp`, name a WebMCP page tool, text its \
+                      JSON arguments. Owner credential only.",
         schema: journey_act_schema,
     },
     ToolSpec {
@@ -565,7 +565,7 @@ fn journey_act_schema() -> serde_json::Value {
     object_schema(
         serde_json::json!({
             "sessionId": {"type": "string"},
-            "kind": {"enum": ["activate", "submit", "enter_text", "navigate", "wait_for", "inspect"]},
+            "kind": {"enum": ["activate", "submit", "enter_text", "navigate", "wait_for", "inspect", "tool"]},
             "role": {"type": "string"},
             "name": {"type": "string"},
             "text": {"type": "string"},

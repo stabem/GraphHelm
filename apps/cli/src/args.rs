@@ -433,7 +433,8 @@ pub struct JourneyWatchArgs {
 pub struct JourneyActArgs {
     /// The session id `journey open` printed.
     pub session: String,
-    /// `activate`, `submit`, `enter_text`, `navigate`, `wait_for` or `inspect`.
+    /// `activate`, `submit`, `enter_text`, `navigate`, `wait_for`, `inspect` or `tool` (#2837: calls
+    /// the WebMCP page tool named `--name` with role `webmcp`; `--text` is its JSON-object arguments).
     #[arg(long)]
     pub kind: String,
     #[arg(long)]
@@ -441,7 +442,7 @@ pub struct JourneyActArgs {
     /// The control's exact accessible name.
     #[arg(long)]
     pub name: String,
-    /// Literal text for `enter_text`.
+    /// Literal text for `enter_text`, or the JSON-object arguments of a `tool` act.
     #[arg(long, conflicts_with = "secret")]
     pub text: Option<String>,
     /// A flow secret name for `enter_text`; its value was supplied to `journey open`.

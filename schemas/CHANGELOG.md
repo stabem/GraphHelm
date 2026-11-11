@@ -1,5 +1,21 @@
 # Schema Changelog
 
+## journey-flow 1.16.0 - a step can call a WebMCP page tool (#2837)
+
+The act `kind` enum gains `tool`: `{kind: tool, role: webmcp, name: <the page tool's registered
+name>, text: <a JSON object written as text>}`. For `kind: tool` the schema requires `role` to be
+exactly `webmcp` and refuses `secret` (a secret would land in the page); `headers` was already
+refused for every kind but `http`, and `text`, which was only allowed for `enter_text` and `http`,
+is now allowed for `tool` too. That `text` parses to a JSON object (absent means `{}`) is checked by
+the flow validator (`flow.tool_arguments_invalid`), not the schema, since a JSON schema cannot say
+it. A tool act is a browser act: a flow that also has an `http` or `cli` act is refused by the
+existing mixing rule (`flow.observer_mixed`). The screen the edge reaches still judges the step; the
+tool's result is recorded and never decides. Additive: every 1.15.0 flow stays valid with the same
+bytes and digest, and the canonical writer and approval digest need no change (`text` is already
+written). A reader older than 1.16.0 refuses a flow that contains a `tool` act as
+`flow.schema_invalid` (the kind enum is closed); no existing flow changes meaning. The catalog
+digest is updated from canonical JSON (`graphhelm schema digest --file`).
+
 ## journey-flow 1.15.0 - the states a flow is seen in (#1784)
 
 A flow may declare a top-level `states`: 1 to 8 distinct state ids (the flow id pattern), the

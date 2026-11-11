@@ -75,8 +75,18 @@ drift: []
   a token in `headers`: the flow file is committed.
 - **`cli`**: `{kind: cli, role: exec, name: sh hello.sh}` runs the argv in `name`, split on
   whitespace with no shell, in the project directory.
+- **`tool`** (#2837): `{kind: tool, role: webmcp, name: rename_heading, text: '{"title": "Hi"}'}`
+  calls the WebMCP page tool registered under `name` in the page (the browser is launched with the
+  WebMCP feature only for a flow that has one). `text` is the tool's arguments, a JSON object
+  written as text (`flow.tool_arguments_invalid` when it is not; absent means `{}`); a `secret` is
+  refused, since it would land in the page. The tool is the hands and the screen is the proof: the
+  screen the edge reaches is judged by what is rendered, and what the tool returned is recorded
+  for the reader and never decides. No such tool reads as a missing locator, two with one name as
+  an ambiguous one, a tool that throws as a failed act, and a browser without WebMCP as a missing
+  observer. A draft that calls a tool is guarded like a destructive-looking act: held unless the
+  owner marked the edge safe or the preview started the app itself.
 
-A flow is either a browser flow or a backend (`http`/`cli`) flow, never both. Backend `expect`
+A flow is either a browser flow (a `tool` act is a browser act) or a backend (`http`/`cli`) flow, never both. Backend `expect`
 roles are `status` (HTTP status, exact), `json` (`a.b.0=value` compares a field, `a.b` asserts it
 exists), `text` (body contains), `exit` (exit code, exact) and `stdout` (stdout contains). Each act
 is bounded at 30 seconds. An act that cannot run is `fail`; an unmet expectation is `drift`.

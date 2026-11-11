@@ -187,6 +187,13 @@ pub(crate) fn declared_states(flow: &Value) -> Vec<String> {
         .collect()
 }
 
+/// #2837: the arguments of a `tool` act are a JSON object written as text (absent means `{}`).
+/// A JSON schema cannot say "a string that parses to an object", so the flow validator, the live
+/// act and the driver each check it with this one rule.
+pub(crate) fn tool_arguments_valid(text: &str) -> bool {
+    serde_json::from_str::<Value>(text).is_ok_and(|value| value.is_object())
+}
+
 /// #1782: an instant the driver can install as the page's now.
 fn clock_is_valid(clock: &str) -> bool {
     chrono::DateTime::parse_from_rfc3339(clock).is_ok_and(|instant| {
@@ -311,6 +318,17 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             }
         }
         for (a, act) in edge["acts"].as_array().unwrap().iter().enumerate() {
+            if act["kind"] == "tool"
+                && act["text"]
+                    .as_str()
+                    .is_some_and(|text| !tool_arguments_valid(text))
+            {
+                findings.push(Finding::new(
+                    "flow.tool_arguments_invalid",
+                    format!("/edges/{i}/acts/{a}/text"),
+                    "a tool act's text must be a JSON object, the arguments the page tool is called with",
+                ));
+            }
             if let Some(secret) = act["secret"].as_str()
                 && !secrets.contains(secret)
             {
@@ -1198,6 +1216,11 @@ fn compile(flow: &Value) -> Result<Vec<(String, Value)>, Finding> {
                     // a command activated, each named by its own label.
                     Some(kind @ ("http" | "cli")) => {
                         json!({"kind":if kind == "http" {"submit"} else {"activate"},"target":{"strategy":"label","value":act["name"],"role":act["role"],"geometryClaim":false}})
+                    }
+                    // #2837: the frozen contract has no page-tool kind either; a tool is called the
+                    // way a control is activated, named by its own label (the tool's name).
+                    Some("tool") => {
+                        json!({"kind":"activate","target":{"strategy":"label","value":act["name"],"role":act["role"],"geometryClaim":false}})
                     }
                     _ => {
                         json!({"kind":act["kind"],"target":{"strategy":"accessible_name","value":act["name"],"role":act["role"],"geometryClaim":false}})
@@ -3243,6 +3266,115 @@ viewports: [web]
                 "{impossible}"
             );
         }
+    }
+
+    /// #2837: a `tool` act calls a WebMCP page tool. Defects named: the closed schema refuses the
+    /// kind, or takes any role, a secret or headers on it; its arguments are any text (found out only
+    /// in a browser); a tool act in a backend flow passes the mixing rule; the canonical writer drops
+    /// its `text` (so `--fmt` silently calls the tool with no arguments); the frozen contract gets a
+    /// kind it has no word for; adding the kind moves the digest of a flow that never uses it.
+    /// Cost: in memory only.
+    #[test]
+    fn a_tool_act_is_validated_written_compiled_and_never_mixed_with_a_backend_act() {
+        let plain: Value = serde_yaml_ng::from_str(include_str!(
+            "../../tests/fixtures/journey_flow/checkout.journey.yaml"
+        ))
+        .unwrap();
+        let schemas = flow_schemas().unwrap();
+        let file = Path::new("checkout.journey.yaml");
+        let tool = json!({"kind":"tool","role":"webmcp","name":"rename_heading","text":"{\"title\":\"Hi\"}"});
+        let mut with = plain.clone();
+        with["edges"][0]["acts"] = json!([tool]);
+        let schema_findings = |flow: &Value| {
+            schemas
+                .validate(FLOW_SCHEMA_ID, flow, "journey-flow")
+                .into_iter()
+                .map(|d| d.path)
+                .collect::<Vec<_>>()
+        };
+        assert!(schema_findings(&with).is_empty());
+        let semantic_codes = |flow: &Value| -> Vec<(&'static str, String)> {
+            semantic(file, flow, Path::new("."))
+                .iter()
+                .map(|f| (f.code, f.pointer.clone()))
+                .collect()
+        };
+        assert!(
+            !semantic_codes(&with)
+                .iter()
+                .any(|(code, _)| code.starts_with("flow.tool")),
+            "{:?}",
+            semantic_codes(&with)
+        );
+        // No text: the tool is called with `{}`.
+        let mut bare = with.clone();
+        bare["edges"][0]["acts"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("text");
+        assert!(schema_findings(&bare).is_empty());
+        // Written whole, and read back as it was: the arguments survive `--fmt`.
+        let written = canonical(&with, false);
+        assert!(
+            written.contains("kind: tool, role: webmcp, name: rename_heading"),
+            "{written}"
+        );
+        let reread: Value = serde_yaml_ng::from_str(&written).unwrap();
+        assert_eq!(reread["edges"], with["edges"]);
+        let mut other = with.clone();
+        other["edges"][0]["acts"][0]["text"] = json!("{\"title\":\"Bye\"}");
+        assert_ne!(approval_digest(&other), approval_digest(&with));
+        // The role, a secret and headers are the schema's refusals, each at the act's own pointer.
+        for (field, value) in [
+            ("role", json!("button")),
+            ("secret", json!("shopper_password")),
+            ("headers", json!({"x-tenant":"t1"})),
+        ] {
+            let mut bad = with.clone();
+            bad["edges"][0]["acts"][0][field] = value;
+            assert!(
+                schema_findings(&bad)
+                    .iter()
+                    .any(|path| path.starts_with("/edges/0/acts/0")),
+                "{field}: {:?}",
+                schema_findings(&bad)
+            );
+        }
+        // Text must parse to a JSON object: shape is the schema's, this is the validator's.
+        for text in ["[1]", "\"x\"", "null", "7", "not json", "{\"title\":"] {
+            let mut bad = with.clone();
+            bad["edges"][0]["acts"][0]["text"] = json!(text);
+            assert!(schema_findings(&bad).is_empty(), "{text}");
+            assert!(
+                semantic_codes(&bad).contains(&(
+                    "flow.tool_arguments_invalid",
+                    "/edges/0/acts/0/text".to_owned()
+                )),
+                "{text}"
+            );
+        }
+        // A browser act: a flow that also sends a request or runs a command is refused.
+        let mut mixed = with.clone();
+        mixed["edges"][1]["acts"] = json!([{"kind":"http","role":"GET","name":"/items"}]);
+        assert!(
+            crate::commands::journey_backend::findings(&mixed)
+                .iter()
+                .any(|(code, pointer, _)| *code == "flow.observer_mixed"
+                    && pointer == "/edges/0/acts/0")
+        );
+        // The frozen contract has no page-tool kind: the tool is activated by its own name.
+        let Ok(contracts) = compile(&with) else {
+            panic!("a flow with a tool act compiles");
+        };
+        assert_eq!(
+            contracts[0].1["steps"][1]["semanticAction"],
+            json!({"kind":"activate","target":{"strategy":"label","value":"rename_heading","role":"webmcp","geometryClaim":false}})
+        );
+        // A flow that never uses the kind keeps its bytes and digest.
+        assert_eq!(
+            approval_digest(&plain),
+            "sha256:aace853dc94a68d337b4485ce74cc878b13f5d291d2dff3e40d2ec5004fc7072"
+        );
     }
 
     /// #1781: "the screen says X" is an expectation. Defects named: the canonical writer drops

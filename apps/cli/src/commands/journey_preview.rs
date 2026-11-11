@@ -2604,7 +2604,18 @@ fn play_path(
                     request["secretEnv"] = format!("GRAPHHELM_SECRET_{secret}").into();
                 }
                 match driver.call("act", request, &format!("/edges/{id}")) {
-                    Ok(_) => {}
+                    // #2837: what a page tool returned is kept for the reader beside the step. It
+                    // judges nothing: the screen the edge reaches is observed next, as after a click.
+                    Ok(done) => {
+                        if let Some(text) = done["toolResult"].as_str() {
+                            let mut results = run.state["toolResults"][id]
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default();
+                            results.push(json!({"tool":act["name"],"result":text}));
+                            run.state["toolResults"][id] = Value::Array(results);
+                        }
+                    }
                     Err((code, _, _)) if SURVIVABLE.contains(&code) => {
                         let reason = step_reason(code);
                         run.edge(id, "fail", Some(reason));
@@ -3020,6 +3031,7 @@ fn history_entry(run: String, state: Value, secrets: &[String]) -> Value {
         "viewportsPlanned",
         "viewports",
         "outputs",
+        "toolResults",
     ] {
         if !state[key].is_null() {
             entry[key] = state[key].clone();
@@ -4894,6 +4906,38 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         };
         assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
         assert_eq!(draft(true).stops_before(&pay), None);
+    }
+
+    /// #2837: a page tool is the page's own code with the page's privileges, so it is guarded like
+    /// a destructive act whatever its name says: a draft plays it only on an app the preview started,
+    /// an approved flow holds it for the owner's click. Defect named: a tool act that reads as a
+    /// harmless click because its name holds no deny-list word. Cost: microseconds.
+    #[test]
+    fn a_page_tool_is_guarded_like_a_destructive_act() {
+        let tool = json!({"kind":"tool","role":"webmcp","name":"rename_heading"});
+        assert_eq!(super::would_destroy(&tool), Some("call"));
+        let draft = |launched| Guard {
+            approved: false,
+            launched,
+            confirmed: false,
+            cli_confirmed: false,
+            cli_reviewed: false,
+        };
+        assert_eq!(draft(false).stops_before(&tool), Some("guard_refused"));
+        assert_eq!(draft(true).stops_before(&tool), None);
+        let approved = Guard {
+            approved: true,
+            launched: true,
+            confirmed: false,
+            cli_confirmed: false,
+            cli_reviewed: false,
+        };
+        assert_eq!(approved.stops_before(&tool), Some("confirm_needed"));
+        let clicked = Guard {
+            confirmed: true,
+            ..approved
+        };
+        assert_eq!(clicked.stops_before(&tool), None);
     }
 
     /// #927 review: backend acts must not bypass the guard. Defects named: a DELETE or POST read

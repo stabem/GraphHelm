@@ -876,3 +876,195 @@ process.stdin.on('end',()=>{
     assert_eq!(result["data"]["modelCalls"], 0);
     assert_eq!(app.control("reset")["reset"], true);
 }
+
+/// #2837: a `tool` act replays for real. A page tool renames the heading; the reached screen is
+/// judged by what is rendered, and the run records the same captures and walked pair a click edge
+/// does. With the app's tool gone the replay stops as the locator drift a missing control is, and
+/// publishes nothing. Real CLI, driver and Chromium launched with WebMCP; an independent static app.
+/// Cost: ~25s plus build; Node/Playwright/Chromium explicitly installed; local ports/Git.
+#[test]
+#[ignore = "requires an explicitly observer-enabled validation project"]
+fn a_tool_act_replays_green_records_like_a_click_and_a_missing_tool_is_locator_drift() {
+    let toolchain = PathBuf::from(
+        std::env::var_os("GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT")
+            .expect("OBSERVER_MISSING: GRAPHHELM_JOURNEY_TOOLCHAIN_PROJECT"),
+    );
+    let scratch = tempfile::tempdir().unwrap();
+    let project = scratch.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("fixture-server.mjs"), FIXTURE).unwrap();
+    let linked=graphhelm_process::command("node").args(["-e","require('node:fs').symlinkSync(process.argv[1],process.argv[2],process.platform==='win32'?'junction':'dir')"])
+        .arg(toolchain.join("node_modules")).arg(project.join("node_modules")).status().unwrap();
+    assert!(linked.success(), "OBSERVER_MISSING: toolchain link");
+    let mut command = graphhelm_process::command("node");
+    command.arg(project.join("fixture-server.mjs"));
+    let mut app = Server::start(command);
+    let base = app.started["base"].as_str().unwrap().to_owned();
+    let source = project.join(".graphhelm/journeys");
+    std::fs::create_dir_all(&source).unwrap();
+    let flow = json!({"schema":"graphhelm.journey-flow/1","id":"tools","title":"A page tool renames the heading",
+        "purpose":"A page tool renames the page heading and the reader sees the new heading.",
+        "status":"draft","approved":null,"base":base,"actors":["shopper"],"secrets":[],"risks":[],
+        "screens":[
+            {"id":"start","title":"The page before the tool runs","url":"/webmcp","state":"stable","expect":[{"role":"heading","name":"Original"}],"scope":["fixture-server.mjs"]},
+            {"id":"renamed","title":"The page after the tool renamed its heading","url":"/webmcp","state":"success","expect":[{"role":"heading","name":"Renamed by a tool"}],"scope":["fixture-server.mjs"]}],
+        "edges":[{"id":"start.rename","from":"start","to":"renamed","why":"Calling the rename tool changes the heading the reader sees",
+            "acts":[{"kind":"tool","role":"webmcp","name":"rename_heading","text":"{\"title\":\"Renamed by a tool\"}"}]}],
+        "paths":{"main":["start.rename"]},"drift":[]});
+    std::fs::write(
+        source.join("tools.journey.yaml"),
+        serde_yaml_ng::to_string(&flow).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join(".gitignore"),
+        "node_modules/\n.graphhelm/observers/\n.graphhelm/journey-cache/\n",
+    )
+    .unwrap();
+    let observer = project.join(".graphhelm/observers");
+    std::fs::create_dir(&observer).unwrap();
+    std::fs::write(observer.join("journey_driver.mjs"), DRIVER).unwrap();
+    std::fs::write(
+        observer.join("judge.mjs"),
+        include_bytes!("../../../tools/journey-driver/judge.mjs"),
+    )
+    .unwrap();
+    std::fs::write(
+        observer.join("../hidden-node-children.mjs"),
+        include_bytes!("../../../tools/hidden-node-children.mjs"),
+    )
+    .unwrap();
+    let (code, value) = reply(
+        cli()
+            .args([
+                "journey",
+                "compile",
+                "tools",
+                "--fmt",
+                "--include-draft",
+                "--project",
+            ])
+            .arg(&project),
+    );
+    assert_eq!(code, 0, "{value}");
+    git(&project, &["init", "--quiet", "--object-format=sha1"]);
+    git(&project, &["add", "."]);
+    git(
+        &project,
+        &["commit", "--quiet", "--no-verify", "-m", "fixture"],
+    );
+    support::passing_preview(&project, "tools");
+    let (code, value) = reply(
+        cli()
+            .args([
+                "journey",
+                "approve",
+                "tools",
+                "--token-file",
+                &owner_token(&project),
+                "--project",
+            ])
+            .arg(&project),
+    );
+    assert_eq!(code, 0, "{value}");
+    git(&project, &["add", "."]);
+    git(
+        &project,
+        &[
+            "commit",
+            "--quiet",
+            "--no-verify",
+            "-m",
+            "approved flow and projections",
+        ],
+    );
+    let events = scratch.path().join("events");
+    let keys = scratch.path().join("keys");
+    std::fs::create_dir(&keys).unwrap();
+    graphhelm_sealed_key_provider::SealedKeyProvider::create(
+        &keys,
+        "owner-key",
+        graphhelm_events::SecretBytes::new(vec![1; 32]),
+    )
+    .unwrap();
+    let graph =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/graphs/software-feature.yaml");
+    let fixtures = scratch.path().join("fixtures.json");
+    std::fs::write(&fixtures, br#"{"nodeOutcomes":{}}"#).unwrap();
+    let (code, value) = reply(
+        cli()
+            .args(["execution", "start", "--file"])
+            .arg(&graph)
+            .arg("--events")
+            .arg(&events)
+            .args(["--execution", RUN, "--fixtures"])
+            .arg(&fixtures)
+            .args(["--mode", "manual", "--held"]),
+    );
+    assert_eq!(code, 0, "{value}");
+    let play = || {
+        let mut command = cli();
+        command
+            .args(["journey", "replay", "tools", "--project"])
+            .arg(&project)
+            .env("NODE_OPTIONS", "")
+            .arg("--events")
+            .arg(&events)
+            .args(["--execution", RUN, "--keyring"])
+            .arg(&keys)
+            .args(["--key-id", "owner-key"]);
+        reply(&mut command)
+    };
+    // The tool ran in the page, and the heading it renamed is what the reached screen was judged by.
+    let (code, result) = play();
+    assert_eq!(code, 0, "{result}");
+    let path = &result["data"]["paths"][0];
+    assert_eq!(path["outcome"], "passed", "{result}");
+    assert_eq!(path["observedScreens"].as_array().unwrap().len(), 2);
+    assert_eq!(path["capturedSignalIds"].as_array().unwrap().len(), 2);
+    assert_eq!(path["walkedPairs"].as_array().unwrap().len(), 1);
+    let cache = project.join(".graphhelm/journey-cache/tools.json");
+    let cached: Value = serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+    assert_eq!(
+        cached["edges"]["start.rename"],
+        json!([{"role":"webmcp","name":"rename_heading","exact":true,"testId":null,"context":null,"nth":null}])
+    );
+    let readback = read_journeys(&project, &events, &keys);
+    let journey = &readback["journeys"][0];
+    assert_eq!(journey["contractId"], "tools");
+    assert!(
+        journey["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step["capture"]["freshness"] == "fresh"),
+        "{readback}"
+    );
+    assert!(
+        journey["arrows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|arrow| arrow["state"] == "walked"),
+        "{readback}"
+    );
+    // The page no longer registers the tool: the act is a missing locator, never a pass.
+    let before = std::fs::read(&cache).unwrap();
+    assert_eq!(
+        app.control(&json!({"kind":"no-tools"}).to_string())["armed"],
+        true
+    );
+    let (code, result) = play();
+    assert_eq!(code, 1, "{result}");
+    assert!(
+        result["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["code"] == "drift.locator_missing"
+                && d["path"] == "/edges/start.rename/acts/0"),
+        "{result}"
+    );
+    assert_eq!(result["data"]["paths"][0]["walkedPairs"], json!([]));
+    assert_eq!(std::fs::read(&cache).unwrap(), before);
+}

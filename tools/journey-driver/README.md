@@ -23,9 +23,9 @@ only replies. No raw exception, input, stack, or secret is logged to stderr.
 
 | `op` | Additional request fields | `result` on success |
 |---|---|---|
-| `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false), `coverage: boolean` (default false) | `url` |
+| `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false), `coverage: boolean` (default false), `webmcp: boolean` (default false; launches the browser with the WebMCP feature, #2837) | `url` |
 | `snapshot` | `expect: [{role,name}]` (0–8) | `url`, `ariaYaml`, `fingerprint`, `controls` |
-| `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; optional `locator` | `url`, `locator` |
+| `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; for `tool`, `role: webmcp` and optional `text` (a JSON object, never a secret); optional `locator` | `url`, `locator`; a `tool` act also `toolResult` |
 | `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` |
 | `coverage` | none; only after `open`, once per session | `path: "coverage.json"`, `schema: "graphhelm-js-coverage/1"` |
 | `close` | none | `closed: true` |
@@ -43,7 +43,8 @@ Codes include `driver.protocol_invalid`, `driver.frame_too_large`, `driver.obser
 `driver.secret_missing`, `driver.secret_literal`, `driver.redaction_failed`,
 `driver.locator_missing`, `driver.locator_ambiguous`, `driver.expectation_failed`,
 `driver.host_refused`, `driver.unsupported_act`, `driver.snapshot_too_large`,
-`driver.capture_refused`, `driver.timeout`, and `driver.action_failed`.
+`driver.capture_refused`, `driver.timeout`, `driver.action_failed`, and, for the `tool` act (#2837),
+`driver.tool_missing`, `driver.tool_ambiguous`, `driver.tool_failed` and `driver.webmcp_unavailable`.
 
 When `open` includes `coverage: true`, the Chromium JavaScript coverage observer starts before
 the initial navigation. `coverage` stops it once and writes an exclusively-created,
@@ -77,6 +78,18 @@ All matches use exact accessible names and must be unique and visible. Cache tie
 ID, unique nearest-landmark context (`role "name"`), then global role/name. Only absence may
 fall back; ambiguity and a mismatched test-ID hit fail. `exact` must be true and `nth` null.
 There is no first-match selection or generic JavaScript-evaluation request.
+
+A `tool` act calls a page tool: in the page, from `document.modelContext` (or `navigator.modelContext`),
+it keeps the tools whose `name` equals the act's name exactly and calls the one that is left with
+the arguments in `text` (`{}` when absent). No such tool is `driver.tool_missing`, more than one is
+`driver.tool_ambiguous` (no first match, as for locators), a handler that throws is
+`driver.tool_failed`, and a browser without WebMCP is `driver.webmcp_unavailable` (the observer
+cannot do this act; the replay maps it to a missing observer, never a pass). The reply's `locator`
+is `{role: "webmcp", name, ...}`, so the cache keeps one entry per act, and `toolResult` is what the
+tool returned as text, masked and cut to 512 bytes, for the reader only: it never judges a step, the
+snapshot of the reached screen does. A page tool runs the page's own code; the browser has
+`--enable-features=WebMCP` only in a session opened with `webmcp: true`, which the Rust callers send
+only for a flow that has a `tool` act.
 
 `activate`, `submit`, and edge `navigate` click the named control. `enter_text` fills its
 explicit text or named secret. `wait_for` waits for its exact control to become visible; `inspect` observes it immediately. `select`,

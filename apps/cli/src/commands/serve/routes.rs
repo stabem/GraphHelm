@@ -2888,6 +2888,11 @@ pub(super) async fn act_journey(
         );
     };
     let (literal, secret) = (text("text"), text("secret"));
+    // #2837: a tool act's arguments travel as the JSON object they are; `journey act` bounds them.
+    let arguments = payload
+        .get("arguments")
+        .filter(|value| !value.is_null())
+        .map(serde_json::Value::to_string);
     flow_command(state, COMMAND, move |project| {
         crate::commands::journey_live::act(&crate::args::JourneyActArgs {
             session,
@@ -2896,6 +2901,7 @@ pub(super) async fn act_journey(
             name,
             text: literal,
             secret,
+            arguments,
             project: Some(project),
         })
     })

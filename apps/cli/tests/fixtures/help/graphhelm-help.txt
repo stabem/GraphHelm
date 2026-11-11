@@ -3024,7 +3024,7 @@ Arguments:
 
 Options:
       --kind <KIND>
-          `activate`, `submit`, `enter_text`, `navigate`, `wait_for`, `inspect` or `tool` (a WebMCP page tool: role `webmcp`, `--name` the tool, `--text` its JSON arguments)
+          `activate`, `submit`, `enter_text`, `navigate`, `wait_for`, `inspect` or `tool` (a WebMCP page tool: role `webmcp`, `--name` the tool, `--arguments` its JSON-object arguments)
 
       --pretty
           
@@ -3039,10 +3039,13 @@ Options:
           The control's exact accessible name
 
       --text <TEXT>
-          Literal text for `enter_text`, or the JSON-object arguments of a `tool` act
+          Literal text for `enter_text`
 
       --secret <SECRET>
           A flow secret name for `enter_text`; its value was supplied to `journey open`
+
+      --arguments <ARGUMENTS>
+          The arguments of a `tool` act: one JSON object, for example `{"title":"Hi"}`
 
       --project <PROJECT>
           

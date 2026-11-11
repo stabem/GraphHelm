@@ -1902,6 +1902,9 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
                     if let Some(text) = act.get("text") {
                         request["text"] = text.clone();
                     }
+                    if let Some(arguments) = act.get("arguments") {
+                        request["arguments"] = arguments.clone();
+                    }
                     if let Some(secret) = act["secret"].as_str() {
                         request["secretEnv"] = format!("GRAPHHELM_SECRET_{secret}").into();
                     }

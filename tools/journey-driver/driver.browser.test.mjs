@@ -640,13 +640,13 @@ const toolLocator=name=>({role:'webmcp',name,exact:true,testId:null,context:null
 test('a tool act runs the page tool and the reached screen is judged by what is rendered',async t=>{
   const f=await startFixture();t.after(()=>f.close());
   const c=await client(t);await open(c,f.base+'/webmcp',[],{webmcp:true});
-  const r=await act(c,'tool','webmcp','rename_heading',{text:'{"title":"Renamed by a tool"}'});
+  const r=await act(c,'tool','webmcp','rename_heading',{arguments:{title:'Renamed by a tool'}});
   assert.equal(r.ok,true,JSON.stringify(r));
   assert.equal(r.result.toolResult,'ok');
   assert.deepEqual(r.result.locator,toolLocator('rename_heading'));
   const seen=await c.send('snapshot',{expect:[{role:'heading',name:'Renamed by a tool'}]});
   assert.equal(seen.ok,true,JSON.stringify(seen));
-  // No text means no arguments: the tool still runs and its default applies.
+  // No arguments means `{}`: the tool still runs and its default applies.
   const bare=await act(c,'tool','webmcp','rename_heading');assert.equal(bare.ok,true,JSON.stringify(bare));
   assert.equal((await c.send('snapshot',{expect:[{role:'heading',name:'Renamed'}]})).ok,true);
 });
@@ -692,19 +692,22 @@ test('a tool result is recorded masked and cut, and a secret never reaches the r
   assert.equal(long.ok,true,JSON.stringify(long));
   assert.ok(Buffer.byteLength(long.result.toolResult)<=512,String(long.result.toolResult.length));
   // A secret named in the act's own arguments is refused before the page sees it.
-  const leaked=await act(c,'tool','webmcp','rename_heading',{text:JSON.stringify({title:secret})});
+  const leaked=await act(c,'tool','webmcp','rename_heading',{arguments:{title:secret}});
   assert.equal(leaked.code,'driver.secret_literal');
 });
 
 // #2837: with a session open, a malformed tool act is refused before the page sees it. Without a
 // session every one of these would read protocol_invalid for the wrong reason, so each is sent to
 // a live one.
-test('a tool act needs role webmcp, no secret, and arguments that are a JSON object',async t=>{
+test('a tool act needs role webmcp, no text or secret, and arguments that are a bounded JSON object',async t=>{
   const f=await startFixture();t.after(()=>f.close());
-  for(const extra of [{role:'button'},{secretEnv:'GRAPHHELM_SECRET_X'},{text:'[1]'},{text:'"x"'},{text:'not json'},{text:'null'}]) {
+  let deep='leaf';for(let i=0;i<9;i++)deep={k:deep};
+  for(const extra of [{role:'button'},{secretEnv:'GRAPHHELM_SECRET_X'},{text:'{}'},{arguments:[1]},{arguments:'x'},{arguments:null},{arguments:{big:'x'.repeat(5000)}},{arguments:deep}]) {
     const c=await client(t,{GRAPHHELM_SECRET_X:'CANARY_tool_secret_2837'});await open(c,f.base+'/webmcp',[],{webmcp:true});
-    const request={kind:'tool',role:'webmcp',name:'says_ok',...extra};
-    const r=await c.send('act',request);
-    assert.equal(r.code,'driver.protocol_invalid',JSON.stringify(extra));
+    const r=await c.send('act',{kind:'tool',role:'webmcp',name:'says_ok',...extra});
+    assert.equal(r.code,'driver.protocol_invalid',JSON.stringify(extra).slice(0,80));
   }
+  // `arguments` belongs to the tool kind alone.
+  const c=await client(t);await open(c,f.base+'/webmcp',[],{webmcp:true});
+  assert.equal((await c.send('act',{kind:'activate',role:'button',name:'Save',arguments:{}})).code,'driver.protocol_invalid');
 });

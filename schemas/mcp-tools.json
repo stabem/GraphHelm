@@ -400,6 +400,9 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "arguments": {
+            "type": "object"
+          },
           "kind": {
             "enum": [
               "activate",
@@ -424,7 +427,6 @@
             "type": "string"
           },
           "text": {
-            "description": "enter_text value, or the JSON arguments of a tool act",
             "type": "string"
           }
         },

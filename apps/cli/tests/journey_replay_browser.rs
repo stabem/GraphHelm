@@ -909,7 +909,7 @@ fn a_tool_act_replays_green_records_like_a_click_and_a_missing_tool_is_locator_d
             {"id":"start","title":"The page before the tool runs","url":"/webmcp","state":"stable","expect":[{"role":"heading","name":"Original"}],"scope":["fixture-server.mjs"]},
             {"id":"renamed","title":"The page after the tool renamed its heading","url":"/webmcp","state":"success","expect":[{"role":"heading","name":"Renamed by a tool"}],"scope":["fixture-server.mjs"]}],
         "edges":[{"id":"start.rename","from":"start","to":"renamed","why":"Calling the rename tool changes the heading the reader sees",
-            "acts":[{"kind":"tool","role":"webmcp","name":"rename_heading","text":"{\"title\":\"Renamed by a tool\"}"}]}],
+            "acts":[{"kind":"tool","role":"webmcp","name":"rename_heading","arguments":{"title":"Renamed by a tool"}}]}],
         "paths":{"main":["start.rename"]},"drift":[]});
     std::fs::write(
         source.join("tools.journey.yaml"),

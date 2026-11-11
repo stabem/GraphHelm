@@ -568,8 +568,9 @@ fn journey_act_schema() -> serde_json::Value {
             "kind": {"enum": ["activate", "submit", "enter_text", "navigate", "wait_for", "inspect", "tool"]},
             "role": {"type": "string"},
             "name": {"type": "string"},
-            "text": {"type": "string", "description": "enter_text value, or the JSON arguments of a tool act"},
-            "secret": {"type": "string"}
+            "text": {"type": "string"},
+            "secret": {"type": "string"},
+            "arguments": {"type": "object"}
         }),
         &["sessionId", "kind", "role", "name"],
     )
@@ -1901,6 +1902,10 @@ pub(crate) fn call(
                 if let Some(value) = arguments.get(key).and_then(serde_json::Value::as_str) {
                     body[key] = value.into();
                 }
+            }
+            // #2837: a tool act's arguments are an object; the host bounds and checks them.
+            if let Some(value) = arguments.get("arguments").filter(|value| !value.is_null()) {
+                body["arguments"] = value.clone();
             }
             api.request(
                 "POST",

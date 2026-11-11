@@ -140,7 +140,7 @@ test('closed protocol refuses malformed, secret, sequence and oversized frames',
     // refused only because no session is open.
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], webmcp: true }, 'driver.observer_missing'],
     [{ protocol, requestId: 1, op: 'open', base: 'http://localhost/cart', viewport: {width:1280,height:720}, allowOrigins: [], webmcp: 'yes' }, 'driver.protocol_invalid'],
-    [{ protocol, requestId: 1, op: 'act', kind: 'tool', role: 'webmcp', name: 'rename_heading', text: '{"title":"x"}' }, 'driver.protocol_invalid'],
+    [{ protocol, requestId: 1, op: 'act', kind: 'tool', role: 'webmcp', name: 'rename_heading', arguments: {title:'x'} }, 'driver.protocol_invalid'],
     ['x'.repeat(65537), 'driver.frame_too_large'],
     ['{"protocol":', 'driver.protocol_invalid'],
   ];

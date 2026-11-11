@@ -28,7 +28,7 @@ const MOBILE = Object.freeze({
 const fields = {
   open: ['base', 'viewport', 'allowOrigins', 'headed', 'survive', 'show', 'screencast', 'storage', 'coverage', 'clock', 'device', 'webmcp'], snapshot: ['expect','discover'],
   show: ['caption', 'role', 'name'],
-  act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator'],
+  act: ['kind', 'role', 'name', 'text', 'secretEnv', 'locator', 'arguments'],
   capture: ['path', 'maskSecrets'], coverage: [], close: [],
 };
 const roles = new Set(['dialog','alertdialog','banner','complementary','contentinfo','form','main','navigation','region','search','heading','button','checkbox','combobox','link','menuitem','menuitemcheckbox','menuitemradio','option','radio','searchbox','slider','spinbutton','switch','tab','textbox','treeitem']);
@@ -115,10 +115,11 @@ function expectation(v) {
   if (Object.hasOwn(v ?? {},'text')) return exactKeys(v,['role','name','text']) && string(v.text,256) && string(v.role,64) && string(v.name,256);
   return pair(v);
 }
-// #2837: the arguments of a tool act, a JSON object written as text; null when `text` is not one.
-function toolArguments(text) {
-  if (typeof text !== 'string' || Buffer.byteLength(text) > 4096) return null;
-  try { const value = JSON.parse(text); return plain(value) ? value : null; } catch { return null; }
+// #2837: the arguments of a tool act are a JSON object of at most 4096 bytes and 8 levels (the
+// bounds the flow validator applies too); false for anything else.
+function toolArguments(value) {
+  const depth = v => v !== null && typeof v === 'object' ? 1 + Math.max(0, ...Object.values(v).map(depth)) : 0;
+  return plain(value) && depth(value) <= 8 && Buffer.byteLength(JSON.stringify(value)) <= 4096;
 }
 function validate(r) {
   if (!plain(r) || r.protocol !== PROTOCOL || !Number.isSafeInteger(r.requestId) || r.requestId !== requestId + 1 || !Object.hasOwn(fields,r.op)) fail('driver.protocol_invalid');
@@ -153,8 +154,11 @@ function validate(r) {
     if (!['activate','submit','enter_text','navigate','wait_for','inspect','tool'].includes(r.kind)) fail('driver.unsupported_act');
     if (r.kind === 'tool') {
       // #2837: a page tool is addressed by its registered name under role `webmcp`; its arguments
-      // are a JSON object in `text`, never a secret (a secret would land in the page).
-      if (r.role !== 'webmcp' || Object.hasOwn(r,'secretEnv') || (Object.hasOwn(r,'text') && toolArguments(r.text) === null)) fail('driver.protocol_invalid');
+      // are a bounded JSON object in `arguments`, never `text` or a secret (a secret would land in
+      // the page).
+      if (r.role !== 'webmcp' || Object.hasOwn(r,'secretEnv') || Object.hasOwn(r,'text') || (Object.hasOwn(r,'arguments') && !toolArguments(r.arguments))) fail('driver.protocol_invalid');
+    } else if (Object.hasOwn(r,'arguments')) {
+      fail('driver.protocol_invalid');
     } else if (r.kind === 'enter_text') {
       if (Object.hasOwn(r,'text') === Object.hasOwn(r,'secretEnv') || (Object.hasOwn(r,'text') && !string(r.text,2048,true)) || (Object.hasOwn(r,'secretEnv') && (typeof r.secretEnv !== 'string' || !/^GRAPHHELM_SECRET_[A-Za-z0-9_]+$/.test(r.secretEnv)))) fail('driver.protocol_invalid');
       if (Object.hasOwn(r,'secretEnv') && !process.env[r.secretEnv]) fail('driver.secret_missing');
@@ -464,7 +468,7 @@ function requestMetadata(request,parsed) {
 // never what judges the step: the snapshot that follows does, as after a click.
 const TOOL_RESULT = 512;
 async function toolAct(r) {
-  const args = r.text === undefined ? {} : toolArguments(r.text);
+  const args = r.arguments ?? {};
   let timer;
   const outcome = await Promise.race([
     page.evaluate(async ({name, args}) => {

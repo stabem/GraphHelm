@@ -75,11 +75,13 @@ drift: []
   a token in `headers`: the flow file is committed.
 - **`cli`**: `{kind: cli, role: exec, name: sh hello.sh}` runs the argv in `name`, split on
   whitespace with no shell, in the project directory.
-- **`tool`** (#2837): `{kind: tool, role: webmcp, name: rename_heading, text: '{"title": "Hi"}'}`
+- **`tool`** (#2837): `{kind: tool, role: webmcp, name: rename_heading, arguments: {title: Hi}}`
   calls the WebMCP page tool registered under `name` in the page (the browser is launched with the
-  WebMCP feature only for a flow that has one). `text` is the tool's arguments, a JSON object
-  written as text (`flow.tool_arguments_invalid` when it is not; absent means `{}`); a `secret` is
-  refused, since it would land in the page. The tool is the hands and the screen is the proof: the
+  WebMCP feature only for a flow that has one). `arguments` is the tool's arguments, an
+  object (absent means `{}`; at most 4096 bytes and 8 levels, else `flow.tool_arguments_too_large`);
+  `role` must be `webmcp` (`flow.tool_role_invalid`), `arguments` belongs to a tool act only
+  (`flow.act_arguments_unexpected`), and `text`, `secret` and `headers` are refused, since a secret
+  would land in the page. The tool is the hands and the screen is the proof: the
   screen the edge reaches is judged by what is rendered, and what the tool returned is recorded
   for the reader and never decides. No such tool reads as a missing locator, two with one name as
   an ambiguous one, a tool that throws as a failed act, and a browser without WebMCP as a missing

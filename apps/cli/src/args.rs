@@ -434,7 +434,7 @@ pub struct JourneyActArgs {
     /// The session id `journey open` printed.
     pub session: String,
     /// `activate`, `submit`, `enter_text`, `navigate`, `wait_for`, `inspect` or `tool` (a WebMCP page
-    /// tool: role `webmcp`, `--name` the tool, `--text` its JSON arguments).
+    /// tool: role `webmcp`, `--name` the tool, `--arguments` its JSON-object arguments).
     #[arg(long)]
     pub kind: String,
     #[arg(long)]
@@ -442,12 +442,15 @@ pub struct JourneyActArgs {
     /// The control's exact accessible name.
     #[arg(long)]
     pub name: String,
-    /// Literal text for `enter_text`, or the JSON-object arguments of a `tool` act.
+    /// Literal text for `enter_text`.
     #[arg(long, conflicts_with = "secret")]
     pub text: Option<String>,
     /// A flow secret name for `enter_text`; its value was supplied to `journey open`.
     #[arg(long)]
     pub secret: Option<String>,
+    /// The arguments of a `tool` act: one JSON object, for example `{"title":"Hi"}`.
+    #[arg(long, conflicts_with_all = ["text", "secret"])]
+    pub arguments: Option<String>,
     #[arg(long)]
     pub project: Option<PathBuf>,
 }

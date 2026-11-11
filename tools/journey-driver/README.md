@@ -25,7 +25,7 @@ only replies. No raw exception, input, stack, or secret is logged to stderr.
 |---|---|---|
 | `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false), `coverage: boolean` (default false), `webmcp: boolean` (default false; launches the browser with the WebMCP feature, #2837) | `url` |
 | `snapshot` | `expect: [{role,name}]` (0–8) | `url`, `ariaYaml`, `fingerprint`, `controls` |
-| `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; for `tool`, `role: webmcp` and optional `text` (a JSON object, never a secret); optional `locator` | `url`, `locator`; a `tool` act also `toolResult` |
+| `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; for `tool`, `role: webmcp` and optional `arguments` (a JSON object of at most 4096 bytes and 8 levels; never `text` or a secret); optional `locator` | `url`, `locator`; a `tool` act also `toolResult` |
 | `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` |
 | `coverage` | none; only after `open`, once per session | `path: "coverage.json"`, `schema: "graphhelm-js-coverage/1"` |
 | `close` | none | `closed: true` |
@@ -81,7 +81,7 @@ There is no first-match selection or generic JavaScript-evaluation request.
 
 A `tool` act calls a page tool: in the page, from `document.modelContext` (or `navigator.modelContext`),
 it keeps the tools whose `name` equals the act's name exactly and calls the one that is left with
-the arguments in `text` (`{}` when absent). No such tool is `driver.tool_missing`, more than one is
+the object in `arguments` (`{}` when absent). No such tool is `driver.tool_missing`, more than one is
 `driver.tool_ambiguous` (no first match, as for locators), a handler that throws is
 `driver.tool_failed`, and a browser without WebMCP is `driver.webmcp_unavailable` (the observer
 cannot do this act; the replay maps it to a missing observer, never a pass). The reply's `locator`

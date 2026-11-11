@@ -926,6 +926,9 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
                 if let Some(text) = act.get("text") {
                     request["text"] = text.clone();
                 }
+                if let Some(arguments) = act.get("arguments") {
+                    request["arguments"] = arguments.clone();
+                }
                 if let Some(secret) = act["secret"].as_str() {
                     request["secretEnv"] = format!("GRAPHHELM_SECRET_{secret}").into();
                 }
@@ -1911,17 +1914,47 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
     if !ACT_KINDS.contains(&kind) || role.is_empty() || name.is_empty() || name.len() > 256 {
         return (refuse("driver.unsupported_act"), true);
     }
-    // #2837: a tool act is addressed by `webmcp` and a tool name, takes its arguments as a JSON
-    // object in `text`, and never a secret (it would land in the page).
-    if kind == "tool"
-        && (role != "webmcp"
+    // #2837: a tool act is addressed by `webmcp` and a tool name, takes its arguments as a bounded
+    // JSON object in `arguments`, and never a secret or `text` (a secret would land in the page);
+    // `arguments` belongs to no other kind.
+    let arguments = request.get("arguments").filter(|value| !value.is_null());
+    let malformed = if kind == "tool" {
+        role != "webmcp"
             || !request["secret"].is_null()
-            || request["text"]
-                .as_str()
-                .is_some_and(|text| !super::journey_flow::tool_arguments_valid(text)))
-    {
+            || !request["text"].is_null()
+            || arguments
+                .is_some_and(|value| !super::journey_flow::tool_arguments_within_bounds(value))
+    } else {
+        arguments.is_some()
+    };
+    if malformed {
         let still_serving = true;
         return (refuse("live.request_invalid"), still_serving);
+    }
+    // A page tool is the page's own code: on a draft the owner's `safe` mark for an edge that leaves
+    // this screen and has this very act lets it run, unless this host started the app itself, as in a
+    // preview. An approved flow carries the owner's approval of every act.
+    if kind == "tool" && session.flow["status"] != "approved" && session.launched.is_none() {
+        let marked = session.current.as_deref().is_some_and(|current| {
+            session.flow["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|edge| {
+                    edge["from"] == current
+                        && edge["acts"].as_array().unwrap().iter().any(|act| {
+                            act["kind"] == "tool" && act["role"] == role && act["name"] == name
+                        })
+                        && super::journey_flow::edge_marked_safe_by_owner(
+                            &session.flow,
+                            edge,
+                            &session.project,
+                        )
+                })
+        });
+        if !marked {
+            return (refuse("live.act_refused_destructive"), true);
+        }
     }
     let lower = name.to_lowercase();
     if DESTRUCTIVE.iter().any(|word| lower.contains(word)) {
@@ -1944,6 +1977,9 @@ fn act_on(session: &mut Session, request: &Value) -> (Value, bool) {
     let mut driver_request = json!({"kind":kind,"role":role,"name":name});
     if let Some(text) = request["text"].as_str() {
         driver_request["text"] = text.into();
+    }
+    if let Some(arguments) = arguments {
+        driver_request["arguments"] = arguments.clone();
     }
     if let Some(secret) = request["secret"].as_str() {
         let known = session.flow["secrets"]
@@ -2186,6 +2222,22 @@ pub(super) fn act(args: &JourneyActArgs) -> Outcome {
     }
     if let Some(secret) = &args.secret {
         body["secret"] = secret.as_str().into();
+    }
+    // #2837: a tool act's arguments are one JSON object; anything else is refused before a session
+    // is contacted, and the host bounds them again.
+    if let Some(arguments) = &args.arguments {
+        match serde_json::from_str::<Value>(arguments) {
+            Ok(value) if super::journey_flow::tool_arguments_within_bounds(&value) => {
+                body["arguments"] = value;
+            }
+            _ => {
+                return report(
+                    ACT,
+                    json!({}),
+                    Some(failure("live.request_invalid", "/arguments", 1)),
+                );
+            }
+        }
     }
     request(ACT, &args.session, args.project.as_deref(), body)
 }

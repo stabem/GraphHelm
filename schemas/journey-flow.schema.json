@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/journey-flow.schema.json",
-  "x-graphhelm-schema-version": "2.0.0",
+  "x-graphhelm-schema-version": "1.16.0",
   "title": "GraphHelm Journey Flow",
   "type": "object",
   "properties": {
@@ -305,6 +305,11 @@
         "secret": {
           "$ref": "#/$defs/id"
         },
+        "arguments": {
+          "description": "The arguments a `tool` act calls its page tool with (#2837): a JSON object, absent meaning {}. Only a tool act carries it and its size is bounded by the flow validator.",
+          "type": "object",
+          "maxProperties": 32
+        },
         "headers": {
           "type": "object",
           "maxProperties": 16,
@@ -338,8 +343,7 @@
                 "kind": {
                   "enum": [
                     "enter_text",
-                    "http",
-                    "tool"
+                    "http"
                   ]
                 }
               }
@@ -380,27 +384,6 @@
         },
         {
           "if": {
-            "properties": {
-              "kind": {
-                "const": "tool"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "role": {
-                "const": "webmcp"
-              }
-            },
-            "not": {
-              "required": [
-                "secret"
-              ]
-            }
-          }
-        },
-        {
-          "if": {
             "not": {
               "properties": {
                 "kind": {
@@ -418,7 +401,7 @@
           }
         }
       ],
-      "description": "Browser acts address an accessible role and name. Backend acts (#927): `http` sends method `role` to path `name` on `base` with optional body `text` and optional fixed, non-secret request `headers` (1.4.0); `cli` (`role: exec`) runs argv `name` in the project. A page tool (2.0.0): `tool` (`role: webmcp`) calls the WebMCP tool named `name` in the page, with `text` as its arguments (a JSON object written as text, checked by the flow validator; absent means `{}`) and never a `secret` or `headers`; the screen the edge reaches is what judges the step, not the tool's result."
+      "description": "Browser acts address an accessible role and name. Backend acts (#927): `http` sends method `role` to path `name` on `base` with optional body `text` and optional fixed, non-secret request `headers` (1.4.0); `cli` (`role: exec`) runs argv `name` in the project. A page tool (1.16.0): `tool` (`role: webmcp`, enforced by the flow validator) calls the WebMCP tool named `name` in the page with `arguments`; the screen the edge reaches judges the step, never the tool's result."
     },
     "screen": {
       "type": "object",

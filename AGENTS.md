@@ -100,8 +100,11 @@ stop retries when they add no evidence or reach the approved budget boundary.
 ### Keel: how code is written here
 
 Keel is the construction pattern for every change an agent makes here. Read
-[KEEL.md](KEEL.md) before any code work, then the file for your step in [keel/](keel/): plan,
-execute, review or merge. Rules the machine measures block the merge; the rest are checked by the
+[KEEL.md](KEEL.md) before any code work, then load the skill for your role (the reading map below
+names it): `implement` for an author with a claimed task, `blind-review` for an assigned reviewer,
+`merge` for the approving reviewer, `graphhelm-work` when you are handed a task by id. The skill
+says which file in [keel/](keel/) to read; with no skill installed, read the `keel/` file for your
+step (plan, execute, review or merge) directly. Rules the machine measures block the merge; the rest are checked by the
 reviewer. The reasons are in [docs/keel/KEEL_SPEC.md](docs/keel/KEEL_SPEC.md). No Keel rule is
 written outside those files.
 
@@ -138,7 +141,9 @@ and nothing else; a session working as a lane beside others on one machine also 
 
 Read the sections your step names, not whole files. When GraphHelm or your coordinator names a
 skill for your step, or the row names one, load that skill first: it tells you which of these
-sections to read. `graphhelm-work` is the entry when you are handed a task by id.
+sections to read. `graphhelm-work` is the entry when you are handed a task by id. Start at your
+role's row: an author who has claimed a task at "Write and prove", a reviewer at "Review"; the
+earlier rows are for the step they name, not a sequence every session walks.
 
 | Step | Read | Skill |
 |---|---|---|

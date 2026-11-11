@@ -1,4 +1,4 @@
-import type { BoardTask, JourneyFlow, TasksBoard } from "../runtime/client";
+import { journeyName, type BoardTask, type JourneyFlow, type TasksBoard } from "../runtime/client";
 import { minutesInStep } from "../lanes/board";
 import { when } from "../time/when";
 import { cards, kanbanColumn, KANBAN_NAME, type KanbanColumn, type OwnerRequest, arrangeRequests, requestActivity, requestProgress, type Arranged, type RequestProgress } from "./requests";
@@ -59,7 +59,7 @@ export function journeyCards(board: TasksBoard, flows: readonly JourneyFlow[]): 
     const flow = flows.find((row) => row.id === id);
     return {
       id,
-      title: flow?.title ?? flow?.name ?? id,
+      title: flow ? journeyName(flow) : id,
       color: JOURNEY_COLORS[index % JOURNEY_COLORS.length],
       issues: new Set(mine.map((task) => task.issue ?? task.key)).size,
       prs: new Set(mine.filter((task) => task.pr !== null).map((task) => task.pr)).size,

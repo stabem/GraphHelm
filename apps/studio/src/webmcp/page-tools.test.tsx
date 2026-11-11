@@ -188,6 +188,55 @@ describe("studio_proof_run", () => {
     expect((await host.run("studio_proof_run", { journey: "b" })).ok).toBe(false);
     expect(startJourneyRun).toHaveBeenCalledTimes(1);
   });
+
+  // `busy` is React state, so two calls in one tick both read null; the column also holds a synchronous guard.
+  it("starts one run when two calls arrive in the same tick, and refuses the second", async () => {
+    host = fakeHost(); install(host);
+    const { runtime, startJourneyRun } = runtimeStub();
+    await render(proof(runtime));
+    const [first, second] = await Promise.all([host.run("studio_proof_run", { journey: "a" }), host.run("studio_proof_run", { journey: "b" })]);
+    expect(first).toEqual({ ok: true });
+    expect(second.ok).toBe(false);
+    expect(second.ok === false && second.reason.length > 0).toBe(true);
+    await settle();
+    expect(startJourneyRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a run again once the first start has settled", async () => {
+    host = fakeHost(); install(host);
+    const { runtime, startJourneyRun } = runtimeStub();
+    await render(proof(runtime));
+    expect(await host.run("studio_proof_run", { journey: "a" })).toEqual({ ok: true });
+    await settle();
+    expect(await host.run("studio_proof_run", { journey: "b" })).toEqual({ ok: true });
+    await settle();
+    expect(startJourneyRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the guard when a start rejects, so a later call can start a run", async () => {
+    host = fakeHost(); install(host);
+    const { runtime, startJourneyRun } = runtimeStub({ startJourneyRun: vi.fn().mockRejectedValueOnce(new Error("refused")).mockResolvedValue(running) });
+    await render(proof(runtime));
+    expect(await host.run("studio_proof_run", { journey: "a" })).toEqual({ ok: true });
+    await settle();
+    expect(await host.run("studio_proof_run", { journey: "a" })).toEqual({ ok: true });
+    await settle();
+    expect(startJourneyRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts one run when a Run button click is followed in the same tick by a call", async () => {
+    host = fakeHost(); install(host);
+    const { runtime, startJourneyRun } = runtimeStub();
+    await render(proof(runtime));
+    let result: PageToolResult | undefined;
+    await act(async () => {
+      button("Run Journey a")!.click();
+      result = await host.run("studio_proof_run", { journey: "b" });
+    });
+    await settle();
+    expect(result?.ok).toBe(false);
+    expect(startJourneyRun.mock.calls).toEqual([["a", "exec-1"]]);
+  });
 });
 
 describe("studio_proof_set_log", () => {

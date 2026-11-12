@@ -43,7 +43,8 @@ class KeelPlugin(unittest.TestCase):
                 body = text(PLUGIN / "skills" / skill / "SKILL.md")
                 marker = sync.marker(source)
                 self.assertEqual(body.count(marker), 1, f"{skill}: the source marker for {source} must appear once")
-                self.assertEqual(body.split(marker, 1)[1], sync.github_links(text(ROOT / source), source),
+                carried = sync.github_links(text(ROOT / source), source)
+                self.assertEqual(body.split(marker, 1)[1], carried + sync.tail(skill),
                                  f"{skill} differs from {source}: run python tools/keel-plugin/sync_keel_plugin.py")
 
     def test_each_skill_file_is_exactly_what_the_sync_writes(self):

@@ -4,8 +4,8 @@ title: Run a journey in Proof through the page tools
 name: Run a journey by tool
 feature: Studio
 purpose: "Through the Studio's page tools, an agent runs the fixture's studio-home journey and opens its log, and the same screens as the click flow studio2-proof-run show Preparing the browser with a readable log, then the step card's frame and a pass verdict for web and for mobile."
-status: draft
-approved: null
+status: approved
+approved: {revision: e62d57ab1854728f586ac6f0025b1eb4bb931127, digest: sha256:1616600083f4ec8b91e430d6516204d39920eea2d633fe57e5926c71f4ac4e88}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

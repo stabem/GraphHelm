@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows searchbox \"Search journeys\", listitem \"Reply to an agent\", listitem \"Compare a step\", no status \"Journeys shown\"",
+      "statement": "shows searchbox \"Search journeys\", listitem \"Install GraphHelm from INSTALL.md and run the first commands\", listitem \"Studio auth refusal\", no status \"Journeys shown\"",
       "statesToObserve": [
         "stable"
       ],
@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows listitem \"Reply to an agent\", no listitem \"Compare a step\", status \"Journeys shown\" saying \"1 of\", button \"Clear search\"",
+      "statement": "shows listitem \"Reply to an agent\", no listitem \"Compare a step\", status \"Journeys shown\" saying \"1 of 29 journeys\", no listitem \"Open the Studio\", no listitem \"Start from no run\", button \"Clear search\"",
       "statesToObserve": [
         "stable"
       ],
@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Journeys shown\" saying \"No journey matches\", status \"Journeys shown\" saying \"0 of\", no listitem \"Reply to an agent\"",
+      "statement": "shows status \"Journeys shown\" saying \"0 of 29 journeys No journey matches “zzz-no-such-journey”.\", no listitem \"Reply to an agent\"",
       "statesToObserve": [
         "empty"
       ],
@@ -60,7 +60,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows listitem \"Compare a step\", listitem \"Reply to an agent\", no status \"Journeys shown\", no button \"Clear search\"",
+      "statement": "shows searchbox \"Search journeys\", listitem \"Install GraphHelm from INSTALL.md and run the first commands\", listitem \"Studio auth refusal\", no status \"Journeys shown\", no button \"Clear search\"",
       "statesToObserve": [
         "stable"
       ],

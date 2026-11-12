@@ -424,7 +424,10 @@ visible expectation, and opens a fresh context for main and each sorted named pa
 are activate, submit, navigate, enter_text, wait_for, inspect and tool (#2837: a WebMCP page tool
 called by name; the reached screen still decides, never the tool's result). Resource selection, upload,
 download, recovery, approval, fuzzy selection and healing remain unsupported. Secret values come
-only from named environment entries and are redacted from text and masked before PNG creation.
+only from named environment entries and are redacted from text and painted over before PNG creation.
+A capture paints only secrets (password and credential fields, fields filled from a secret, visible
+secret echoes, frames) and outlines every other editable field, so a value typed into a plain field is
+visible in the frame (#2848); a flow that handles something sensitive names it a `secret`.
 
 The closed digest-bound cache lives under `.graphhelm/journey-cache/`. Invalid/unreadable/link
 artifacts refuse without replacement; valid stale digests are re-derived. Cooperating writers take

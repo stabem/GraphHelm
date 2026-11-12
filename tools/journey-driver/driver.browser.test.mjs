@@ -711,3 +711,79 @@ test('a tool act needs role webmcp, no text or secret, and arguments that are a 
   const c=await client(t);await open(c,f.base+'/webmcp',[],{webmcp:true});
   assert.equal((await c.send('act',{kind:'activate',role:'button',name:'Save',arguments:{}})).code,'driver.protocol_invalid');
 });
+
+// #2848: a capture paints only secrets and outlines every other editable field.
+// Contract: what a plain field holds stays readable in the frame, a secret never does.
+// Gap: no earlier cell decoded a plain field's pixels; they were all painted. Cost: ~10 seconds.
+const MAGENTA=[255,0,255,255];
+async function pixelOracle(t,base) {
+  const {chromium}=createRequire(join(project,'package.json'))('@playwright/test');
+  const browser=await chromium.launch({headless:true});t.after(()=>browser.close());
+  const page=await browser.newPage({viewport});await page.goto(base);
+  const box=async name=>{const b=await page.getByLabel(name,{exact:true}).boundingBox();assert.ok(b,name);return b;};
+  const decode=async bytes=>{
+    const shot=await browser.newPage({viewport});
+    await shot.setContent('<canvas id="c"></canvas>');
+    await shot.evaluate(async data=>{const image=new Image();image.src='data:image/png;base64,'+data;await image.decode();const c=document.getElementById('c');c.width=image.width;c.height=image.height;window.ctx=c.getContext('2d');window.ctx.drawImage(image,0,0);},bytes.toString('base64'));
+    return {
+      /** Inside the box (inset 4px, clear of its border and outline): dark ink and magenta pixel counts and the total. */
+      inside:b=>shot.evaluate(({x,y,width,height})=>{const d=window.ctx.getImageData(Math.round(x)+4,Math.round(y)+4,Math.round(width)-8,Math.round(height)-8).data;let ink=0,magenta=0;for(let i=0;i<d.length;i+=4){if(d[i]<100&&d[i+1]<100&&d[i+2]<100)ink++;if(d[i]===255&&d[i+1]===0&&d[i+2]===255&&d[i+3]===255)magenta++;}return {ink,magenta,total:d.length/4};},b),
+      /** The pixel 2px outside the box's left, right, top and bottom edge midpoints (the outline is 1px off, 2px wide). */
+      ring:b=>shot.evaluate(({x,y,width,height})=>{const at=(px,py)=>Array.from(window.ctx.getImageData(Math.round(px),Math.round(py),1,1).data);const mx=x+width/2,my=y+height/2;return [at(x-2,my),at(x+width+1,my),at(mx,y-2),at(mx,y+height+1)];},b),
+    };
+  };
+  return {box,decode};
+}
+async function fingerprint(c) {
+  assert.equal((await act(c,'activate','button','Fingerprint')).ok,true);
+  const s=await c.send('snapshot',{expect:[]});assert.equal(s.ok,true);
+  const m=/fp (\d+) (\d+)/.exec(s.result.ariaYaml);assert.ok(m,s.result.ariaYaml);return m[0];
+}
+
+test('a capture shows what a plain field holds with a magenta outline and paints only secrets',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const secret='CANARY_fields_secret_2848';
+  const oracle=await pixelOracle(t,f.base+'/fields');
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:secret});await open(c,f.base+'/fields');
+  for(const [role,name,text] of [['textbox','Email','owner@example.test'],['searchbox','Find','review'],['textbox','Note','Use the slot'],['textbox','Notes box','Edited note'],['textbox','Password','plain-pass-1']]) assert.equal((await act(c,'enter_text',role,name,{text})).ok,true,name);
+  assert.equal((await act(c,'enter_text','textbox','API key',{secretEnv:'GRAPHHELM_SECRET_KEY'})).ok,true);
+  const before=await fingerprint(c);
+  const boxes={};for(const name of ['Email','Find','Note','Notes box','Password','API key'])boxes[name]=await oracle.box(name);
+  const capture=await c.send('capture',{path:'fields.png',maskSecrets:true});assert.equal(capture.ok,true,JSON.stringify(capture));assert.equal(capture.result.masked,true);
+  const image=await oracle.decode(await readFile(join(c.output,'fields.png')));
+  // (a) plain fields: content visible, outline around the box.
+  for(const name of ['Email','Find','Note','Notes box']) {
+    const inside=await image.inside(boxes[name]);
+    assert.ok(inside.ink>20,`${name} content is readable`);assert.equal(inside.magenta,0,`${name} is not painted`);
+    for(const pixel of await image.ring(boxes[name])) assert.deepEqual(pixel,MAGENTA,`${name} has the outline`);
+  }
+  // (b), (c) a password field and a field filled from a secret are painted whole.
+  for(const name of ['Password','API key']) {const inside=await image.inside(boxes[name]);assert.equal(inside.magenta,inside.total,`${name} is painted`);}
+  // (c) the visible echo of the secret is painted too.
+  const echoBox={x:40,y:boxes['API key'].y+boxes['API key'].height+6,width:300,height:30};
+  const echoInside=await image.inside(echoBox);assert.equal(echoInside.magenta,echoInside.total,'the echo is painted');
+  // (f) the page is as it was: DOM, inline styles, stylesheets and every field's box.
+  assert.equal(await fingerprint(c),before);
+  // (g) the secret field is still painted after the page rebuilt it under another name.
+  assert.equal((await act(c,'activate','button','Re-render')).ok,true);
+  assert.equal((await c.send('capture',{path:'rebuilt.png',maskSecrets:true})).ok,true);
+  const rebuilt=await oracle.decode(await readFile(join(c.output,'rebuilt.png')));
+  const inside=await rebuilt.inside(boxes['API key']);assert.equal(inside.magenta,inside.total,'the rebuilt secret field is painted');
+  assert.equal((await c.send('close')).ok,true);
+});
+
+test('a credential autocomplete paints a text field and an ordinary one does not',async t=>{
+  const f=await startFixture();t.after(()=>f.close());
+  const oracle=await pixelOracle(t,f.base+'/autocomplete');
+  const c=await client(t);await open(c,f.base+'/autocomplete');
+  const names=['current-password','new-password','one-time-code','cc-number','cc-csc','cc-exp','cc-exp-month','cc-exp-year','email'];
+  for(const v of names) assert.equal((await act(c,'enter_text','textbox','Auto '+v,{text:'abcd1234'})).ok,true,v);
+  assert.equal((await c.send('capture',{path:'auto.png',maskSecrets:true})).ok,true);
+  const image=await oracle.decode(await readFile(join(c.output,'auto.png')));
+  for(const v of names) {
+    const inside=await image.inside(await oracle.box('Auto '+v));
+    if(v==='email'){assert.equal(inside.magenta,0,'an ordinary autocomplete is not painted');assert.ok(inside.ink>20);}
+    else assert.equal(inside.magenta,inside.total,`${v} is painted`);
+  }
+  assert.equal((await c.send('close')).ok,true);
+});

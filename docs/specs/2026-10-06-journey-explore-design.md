@@ -279,11 +279,14 @@ coming from `journeys` for the compiled contracts, unchanged.
   requests to other origins are aborted unless named with `--allow-origin` (fonts/CDNs).
 - **Secrets by name.** The flow and cache hold names; values come from `GRAPHHELM_SECRET_<NAME>` in
   the driver's environment, typed by the driver. Before any snapshot leaves the driver, every secret
-  value is replaced with `«secret:NAME»` and every filled input's value is masked; the CLI re-scans
+  value is replaced with `«secret:NAME»` and every field filled from a secret is painted in captures; the CLI re-scans
   for raw values and refuses the turn if one survives. Model replies cannot contain `text` for a
   field that has a secret.
 - **Sealed screenshots.** Captures go through the existing sealed-signal path (keyring required);
-  secret-filled locators are masked with Playwright's `mask` option.
+  secret-filled locators, password and credential fields, visible secret echoes and frames are
+  painted with Playwright's `mask` option; every other editable field is outlined, not covered,
+  so its typed content stays readable (#2848, accepted trade: a value typed as plain `text` is
+  visible in the frame, so a sensitive value must be a `secret`).
 - **No destructive exploration by default.** Acts whose accessible name matches the deny list
   (`delete|remove|pay|purchase|transfer|send`, case-insensitive) are refused during *explore* unless
   `--allow-act <regex>` names them; the flow above needed `--allow-act "Pay now"`. Replay runs what

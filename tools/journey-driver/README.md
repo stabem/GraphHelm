@@ -26,7 +26,7 @@ only replies. No raw exception, input, stack, or secret is logged to stderr.
 | `open` | `base`, `viewport: {width,height}`, `allowOrigins: []`; optional `headed: boolean` (default false), `coverage: boolean` (default false), `webmcp: boolean` (default false; launches the browser with the WebMCP feature, #2837) | `url` |
 | `snapshot` | `expect: [{role,name}]` (0–8) | `url`, `ariaYaml`, `fingerprint`, `controls` |
 | `act` | `kind`, `role`, `name`; `text` or `secretEnv` for `enter_text`; for `tool`, `role: webmcp` and optional `arguments` (a JSON object of at most 4096 bytes of compact `JSON.stringify` and 8 levels (the flow validator measures its own, longer text form, so a flow it passes fits here); never `text` or a secret); optional `locator` | `url`, `locator`; a `tool` act also `toolResult` |
-| `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` |
+| `capture` | relative `.png` `path`, `maskSecrets: true` | relative `path`, `width`, `height`, `masked: true` (secrets are masked; see Privacy) |
 | `coverage` | none; only after `open`, once per session | `path: "coverage.json"`, `schema: "graphhelm-js-coverage/1"` |
 | `close` | none | `closed: true` |
 
@@ -102,8 +102,19 @@ Only referenced `GRAPHHELM_SECRET_<NAME>` values belong in the driver's environm
 supervisor filters inherited environment; browser requests never receive event/provider keys.
 Missing/empty named secrets and literals equal to supplied secrets fail before action.
 Known values are redacted from URLs/ARIA/cache before serialization, and outputs are rescanned.
-Capture masks all editable inputs, filled controls, and visible secret echoes with opaque
-magenta before PNG creation. Entire rendered iframe/frame elements are also covered, including
+Capture paints only secrets, in opaque magenta (`#FF00FF`) before PNG creation: password
+fields (`input[type=password]`), fields the flow filled from a `secret`, fields whose
+`autocomplete` names a credential or payment value (`current-password`, `new-password`,
+`one-time-code`, `cc-number`, `cc-csc`, `cc-exp`, `cc-exp-month`, `cc-exp-year`; a guard for a
+secret typed into a `type=text` field), any editable field that currently holds a known secret
+value (a page may rebuild the field the flow filled), and any visible text equal to a known
+secret. Every editable field (`input`, `textarea`, `[contenteditable="true"]`), painted or not,
+gets a 2px solid magenta outline with 1px offset instead of a cover, so a frame shows what a
+plain field holds (a search box, an e-mail address). The outline is set inline for the
+screenshot only and put back exactly as it was; it takes no space and moves nothing. Accepted
+trade (#2848): a value typed into a plain field is visible in the kept frame; a flow that
+handles something sensitive must name it a `secret`. `masked: true` means secrets are masked,
+not that every input is. Entire rendered iframe/frame elements are also covered, including
 isolated/cross-origin frames; their contents are intentionally unobserved in
 the image. Main-document locators cannot establish privacy inside a frame. Images are temporary inputs to sealing, not a public screenshot
 output. Output directories/targets reject symlinks and existing files.
@@ -128,5 +139,5 @@ node --test tools/journey-driver/driver.browser.test.mjs
 
 The first command needs only Node and runs no browser. The second fails explicitly if its
 declared validation toolchain is missing. It observes real exact-name controls, text/PNG secret
-masking, a live network canary, redirect-chain refusal, and loopback alias resolution. No test
+masking (painted secrets, outlined plain fields), a live network canary, redirect-chain refusal, and loopback alias resolution. No test
 downloads a browser or calls a provider. An unavailable browser is `OBSERVER_MISSING`.

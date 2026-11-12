@@ -106,7 +106,10 @@ graphhelm --json journey preview <id> --force --project <fixture dir>/project
 
 (`graphhelm journey preview --help` names the Runtime flags your fixture needs.) `--force` is
 required: a kept result is not your run. The run plays every viewport the flow declares
-(`viewports`, or the fixed `viewport`; both `web` and `mobile` when it declares none). Read the
+(`viewports`, or the fixed `viewport`; both `web` and `mobile` when it declares none). A draft flow
+with a `tool` act runs it only on an app the preview launched itself (`guard_refused` otherwise), so
+preview it with `--project <checkout>` and let `.graphhelm/journey-fixture.json` start the isolated
+fixture, not one you started by hand. Read the
 JSON reply and the state it writes, per viewport. `REJECT` unless **all** of these hold:
 
 - the run finished (`ok: true`; no `preview.incomplete`, timeout, `*.observer_missing`, lost

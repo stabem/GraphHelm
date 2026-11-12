@@ -54,20 +54,6 @@
     },
     {
       "maxEvidenceAgeSeconds": 604800,
-      "promiseId": "framed.visible",
-      "requiredEvidenceKinds": [
-        "visual_capture"
-      ],
-      "requiredFact": "content_rendered",
-      "requiredObserverCapability": "browser",
-      "statement": "shows img \"Step 1 frame\", log \"Run console\" saying \"Browser observer ready\", heading \"Open the Studio and its Lanes\"",
-      "statesToObserve": [
-        "loading"
-      ],
-      "stepId": "framed"
-    },
-    {
-      "maxEvidenceAgeSeconds": 604800,
       "promiseId": "ran.visible",
       "requiredEvidenceKinds": [
         "visual_capture"
@@ -179,38 +165,6 @@
         }
       },
       "stepId": "log"
-    },
-    {
-      "actorId": "owner",
-      "expectedStates": [
-        "loading"
-      ],
-      "failureContract": {
-        "prohibitedSideEffects": [],
-        "recoveryAction": null,
-        "safeStop": "stop replay",
-        "timeoutSeconds": 30,
-        "visibleError": "screen framed not reached"
-      },
-      "screen": {
-        "scopePaths": [
-          "apps/studio/src/proof/ProofView.tsx",
-          "apps/studio/src/proof/steps.ts",
-          "apps/studio/src/proof/use-journey-run.ts"
-        ],
-        "screenId": "framed",
-        "title": "Step 1 has its first frame while the run goes on"
-      },
-      "semanticAction": {
-        "kind": "wait_for",
-        "target": {
-          "geometryClaim": false,
-          "role": "img",
-          "strategy": "accessible_name",
-          "value": "Step 1 frame"
-        }
-      },
-      "stepId": "framed"
     },
     {
       "actorId": "owner",

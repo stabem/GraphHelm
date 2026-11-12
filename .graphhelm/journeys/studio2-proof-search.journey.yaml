@@ -4,8 +4,8 @@ title: Find a journey in Proof by searching
 name: Search the journeys
 feature: Studio
 purpose: "In Proof, typing in Search journeys narrows the list to the journeys whose name, id or group holds the text and says how many of all journeys are shown; a text that matches none says so, and clearing the field brings every journey back."
-status: draft
-approved: null
+status: approved
+approved: {revision: 055a133a58b50c96c92c5df3ca108628137d0e19, digest: sha256:9b14c3b1dce1fc3c9db8aa612ddf945efd9e53d50f2ad0f126faf000ec4dc28a}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

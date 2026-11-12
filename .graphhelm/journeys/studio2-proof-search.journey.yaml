@@ -1,0 +1,64 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-search
+title: Find a journey in Proof by searching
+name: Search the journeys
+feature: Studio
+purpose: "In Proof, typing in Search journeys narrows the list to the journeys whose name, id or group holds the text and says how many of all journeys are shown; a text that matches none says so, and clearing the field brings every journey back."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux, accessibility]
+viewports: [web, mobile]
+screens:
+  - id: all
+    title: Every journey is listed and the search field is empty
+    url: /?session=studio-fixture&run=demo&view=proof
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: searchbox, name: Search journeys, because: "the journeys column offers a search field above the list, so the owner can find one journey among many"}, {role: listitem, name: Reply to an agent, because: "with nothing typed the list shows every journey, among them the Studio flow that replies to an agent"}, {role: listitem, name: Compare a step, because: "with nothing typed the list shows every journey, among them the Studio flow that compares a step"}, {role: status, name: Journeys shown, absent: true, because: the count of shown journeys appears only while a search is typed}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
+  - id: cleared
+    title: Clearing the search brings every journey back
+    url: /?session=studio-fixture&run=demo&view=proof
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: listitem, name: Compare a step, because: "the field is empty again, so the list shows the journey the search had hidden"}, {role: listitem, name: Reply to an agent, because: the list shows every journey again}, {role: status, name: Journeys shown, absent: true, because: with the field empty the count of shown journeys is gone}, {role: button, name: Clear search, absent: true, because: there is nothing left to clear}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
+  - id: found
+    title: The list is narrowed to the journeys that match
+    url: /?session=studio-fixture&run=demo&view=proof
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: listitem, name: Reply to an agent, because: "its id studio2-lanes-reply holds the typed text reply, so its card stays in the list"}, {role: listitem, name: Compare a step, absent: true, because: "neither its name, its id nor its group holds the typed text, so the search hides its card"}, {role: status, name: Journeys shown, text: 1 of, because: "exactly one journey matches, and the line says how many of all journeys are shown"}, {role: button, name: Clear search, because: "a search is typed, so the field offers to clear it"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
+  - id: none
+    title: Nothing matches the typed text
+    url: /?session=studio-fixture&run=demo&view=proof
+    ignoreQuery: [session, project]
+    state: empty
+    expect: [{role: status, name: Journeys shown, text: No journey matches, because: "no journey holds the typed text, so the same status region that counts the shown journeys says so instead of showing an empty list"}, {role: status, name: Journeys shown, text: 0 of, because: the count line reads zero shown of all journeys}, {role: listitem, name: Reply to an agent, absent: true, because: "the typed text no longer matches it, so no card is listed"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
+edges:
+  - id: all.found
+    from: all
+    to: found
+    why: "Typing reply into Search journeys narrows the list to the journeys that hold that text, so the owner finds one without scrolling."
+    acts:
+      - {kind: enter_text, role: searchbox, name: Search journeys, text: reply}
+  - id: found.none
+    from: found
+    to: none
+    why: "Typing a text no journey holds shows that nothing matches, so the owner is told instead of seeing a blank list."
+    acts:
+      - {kind: enter_text, role: searchbox, name: Search journeys, text: zzz-no-such-journey}
+  - id: none.cleared
+    from: none
+    to: cleared
+    why: "Clear search empties the field and the whole list returns, so one press ends the search."
+    acts:
+      - {kind: activate, role: button, name: Clear search}
+paths:
+  main: [all.found, found.none, none.cleared]
+drift: []

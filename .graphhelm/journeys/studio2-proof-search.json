@@ -1,0 +1,206 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "Find a journey in Proof by searching",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-search",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "all.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows searchbox \"Search journeys\", listitem \"Reply to an agent\", listitem \"Compare a step\", no status \"Journeys shown\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "all"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "found.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Reply to an agent\", no listitem \"Compare a step\", status \"Journeys shown\" saying \"1 of\", button \"Clear search\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "found"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "none.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Journeys shown\" saying \"No journey matches\", status \"Journeys shown\" saying \"0 of\", no listitem \"Reply to an agent\"",
+      "statesToObserve": [
+        "empty"
+      ],
+      "stepId": "none"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "cleared.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows listitem \"Compare a step\", listitem \"Reply to an agent\", no status \"Journeys shown\", no button \"Clear search\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "cleared"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux",
+    "accessibility"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen all not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/journey-search.ts",
+          "apps/studio/src/styles.css"
+        ],
+        "screenId": "all",
+        "title": "Every journey is listed and the search field is empty"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof"
+        }
+      },
+      "stepId": "all"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen found not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/journey-search.ts",
+          "apps/studio/src/styles.css"
+        ],
+        "screenId": "found",
+        "title": "The list is narrowed to the journeys that match"
+      },
+      "semanticAction": {
+        "kind": "enter_text",
+        "target": {
+          "geometryClaim": false,
+          "role": "searchbox",
+          "strategy": "accessible_name",
+          "value": "Search journeys"
+        }
+      },
+      "stepId": "found"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "empty"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen none not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/journey-search.ts",
+          "apps/studio/src/styles.css"
+        ],
+        "screenId": "none",
+        "title": "Nothing matches the typed text"
+      },
+      "semanticAction": {
+        "kind": "enter_text",
+        "target": {
+          "geometryClaim": false,
+          "role": "searchbox",
+          "strategy": "accessible_name",
+          "value": "Search journeys"
+        }
+      },
+      "stepId": "none"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen cleared not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/journey-search.ts",
+          "apps/studio/src/styles.css"
+        ],
+        "screenId": "cleared",
+        "title": "Clearing the search brings every journey back"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Clear search"
+        }
+      },
+      "stepId": "cleared"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-search path main",
+  "title": "Find a journey in Proof by searching",
+  "version": 1
+}

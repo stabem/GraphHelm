@@ -176,6 +176,22 @@ describe("studio_proof_run", () => {
     expect(button("Select Journey b")?.getAttribute("aria-pressed")).toBe("true");
   });
 
+  // #2845: the Journeys column's search hides cards, not journeys; the tool looks up the whole list.
+  it("runs a journey that the column's search currently hides", async () => {
+    host = fakeHost(); install(host);
+    const { runtime, startJourneyRun } = runtimeStub();
+    await render(proof(runtime));
+    const search = document.querySelector<HTMLInputElement>('input[type="search"][aria-label="Search journeys"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "Journey a");
+      search.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    expect(button("Run Journey b")).toBeUndefined();
+    expect(await host.run("studio_proof_run", { journey: "b" })).toEqual({ ok: true });
+    await settle();
+    expect(startJourneyRun.mock.calls).toEqual([["b", "exec-1"]]);
+  });
+
   it("refuses while Run is disabled, and for a journey that does not exist", async () => {
     host = fakeHost(); install(host);
     const { runtime, startJourneyRun } = runtimeStub({ startJourneyRun: vi.fn(() => new Promise(() => {})) });

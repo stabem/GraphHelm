@@ -151,6 +151,18 @@ button { font: inherit; }
 .proof-counts { font: var(--fs-meta) var(--mono); color: var(--faint); }
 .journeys-actions { display: flex; gap: var(--s2); }
 .journeys-actions .b[disabled], .journey-run[disabled] { opacity: .5; cursor: default; }
+/* #2845 (docs/design/studio/2845-journey-search/): the search field above the journey list; the input is the project-folder input's. */
+.journey-search { position: relative; display: flex; align-items: center; margin: var(--s2) 0 var(--s1); }
+.journey-search input { flex: 1; min-width: 0; box-sizing: border-box; background: var(--card); color: inherit;
+  border: 1px solid var(--edge-strong); border-radius: 6px; padding: 4px 24px 4px 6px;
+  font-family: inherit; font-size: var(--fs-meta); }
+.journey-search input::placeholder { color: var(--faint); }
+.journey-search input::-webkit-search-cancel-button { display: none; }
+.journey-search .clear { all: unset; cursor: pointer; position: absolute; right: 4px; width: 18px; height: 18px;
+  line-height: 18px; text-align: center; border-radius: 4px; color: var(--muted); font-size: 13px; }
+.journey-search .clear:focus-visible { outline: 2px solid var(--accent); }
+.journey-search-status { display: flex; flex-direction: column; gap: var(--s3); }
+.journey-search-none { margin: var(--s2) 0; font-size: var(--fs-card); color: var(--muted); }
 .journey-list, .journey-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .journey-feature { display: flex; align-items: center; gap: var(--s2); margin: 4px 0 0; font-size: 12px; color: var(--text); }
 .journey-feature > span:first-child { color: var(--faint); }

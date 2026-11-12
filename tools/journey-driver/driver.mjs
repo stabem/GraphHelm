@@ -56,25 +56,30 @@ const PAINT_ATTRIBUTE = 'data-graphhelm-paint';
 // min(4, folded secret length) characters. One rule covers exact copies, other case, spacing,
 // separators, an ellipsis at either end and a label plus a cut. Over-painting is the accepted
 // direction (a 4-character coincidence paints). A field whose whole text is a piece of a secret paints
-// too (a secret split across boxes). Field text is compared up to FIELD_CAP characters; a
+// too (a secret split across boxes). The same two conditions are also tried on text folded only by
+// lowercasing and removing whitespace, so a secret made of symbols, or the symbol-only part of one
+// shown alone, is painted; a field of punctuation that is no piece of the secret is not. Field text is compared up to FIELD_CAP characters; a
 // longer field is painted, not skipped. Known limit: a page that overrides the value getter to lie
 // can hide a value from this check.
 const FIELD_CAP = 4096;
 const fold = text => String(text).toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+// The raw fold keeps symbols: lowercase, whitespace removed. A secret made only of symbols folds to
+// nothing above, so the same two conditions are also tried on this text.
+const rawFold = text => String(text).toLowerCase().replace(/\s/gu,'');
+// One comparison: the drawn text is a contiguous part of the secret, or shares a run of at least
+// min(4, secret length) characters with it. An empty secret never matches.
+function overlaps(drawn, secret) {
+  const run = Math.min(4, secret.length);
+  if (run === 0 || !drawn) return false;
+  if (secret.includes(drawn)) return true;
+  for (let start = 0; start + run <= secret.length; start++) if (drawn.includes(secret.slice(start, start + run))) return true;
+  return false;
+}
 function showsSecret({value,placeholder,long}) {
   if (long) return true;
-  const drawn = fold(value !== '' ? value : placeholder);
-  if (!drawn) return false;
-  return secrets.some(([,known]) => {
-    const secret = known ? fold(known) : '';
-    const run = Math.min(4, secret.length);
-    if (run === 0) return false;
-    // A field whose whole drawn text is a piece of the secret is one box of a split secret (a
-    // one-time-code widget, pairs): painted at any length, without looking at its neighbours.
-    if (secret.includes(drawn)) return true;
-    for (let start = 0; start + run <= secret.length; start++) if (drawn.includes(secret.slice(start, start + run))) return true;
-    return false;
-  });
+  const text = value !== '' ? value : placeholder;
+  const drawn = fold(text), raw = rawFold(text);
+  return secrets.some(([,known]) => known && (overlaps(drawn, fold(known)) || overlaps(raw, rawFold(known))));
 }
 const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;

@@ -826,6 +826,43 @@ test('a secret shown in an editable field is painted whatever its placeholder, c
   assert.equal((await c.send('close')).ok,true);
 });
 
+// A secret made of symbols folds to nothing in the letters-and-digits comparison; the raw comparison
+// (lowercase, whitespace removed) paints it, and a punctuation-only field that is no piece stays readable.
+async function symbolCells(t,secret,fields) {
+  const base=await echoServer(t,()=>fields.map(([,html])=>html).join(''));
+  const oracle=await pixelOracle(t,base);
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:secret});await open(c,base);
+  const capture=await c.send('capture',{path:'symbols.png',maskSecrets:true});assert.equal(capture.ok,true,JSON.stringify(capture));
+  const image=await oracle.decode(await readFile(join(c.output,'symbols.png')));
+  for(const [name,,painted] of fields) {
+    const inside=await image.inside(await oracle.box(name));
+    if(painted) assert.equal(inside.magenta,inside.total,`${name} is painted`);
+    else {assert.equal(inside.magenta,0,`${name} is not painted`);assert.ok(inside.ink>(name==='Dashes'?3:20),`${name} stays readable`);}
+    if(!painted) for(const pixel of await image.ring(await oracle.box(name))) assert.deepEqual(pixel,MAGENTA,`${name} has the outline`);
+  }
+  assert.equal((await c.send('close')).ok,true);
+}
+const plainField=(name,value)=>[name,`<input class="f" aria-label="${name}" value="${value}">`,false];
+test('a secret made only of symbols is painted when copied into a plain field',async t=>{
+  await symbolCells(t,'!@#$%^&*',[
+    ['Copy',`<input class="f" aria-label="Copy" value="!@#$%^&amp;*">`,true],
+    ['Spaced copy',`<input class="f" aria-label="Spaced copy" value="!@# $%^ &amp;*">`,true],
+    plainField('Dashes','--'),plainField('Plain','plain note'),
+  ]);
+});
+test('the symbol-only tail of a mixed secret shown alone is painted',async t=>{
+  await symbolCells(t,'Tr0ub4dor&!#$%',[
+    ['Tail',`<input class="f" aria-label="Tail" value="&amp;!#$%">`,true],
+    ['Part of tail',`<input class="f" aria-label="Part of tail" value="!#">`,true],
+    plainField('Dashes','--'),plainField('Plain','plain note'),
+  ]);
+});
+test('a symbol-only secret split into single-character boxes paints every box',async t=>{
+  const secret='!@#$%^&*';
+  const boxes=[...secret].map((ch,i)=>[`Box ${i+1}`,`<input class="f" aria-label="Box ${i+1}" value="${ch==='&'?'&amp;':ch}">`,true]);
+  await symbolCells(t,secret,[...boxes,plainField('Dashes','--')]);
+});
+
 test('a field whose value cannot be read is painted, not skipped',async t=>{
   const base=await echoServer(t,()=>`<input class="f" aria-label="Throwing" value="x"><script>Object.defineProperty(document.querySelector('[aria-label=Throwing]'),'value',{get(){throw new Error('no')}})</script>`);
   const oracle=await pixelOracle(t,base);

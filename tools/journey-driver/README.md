@@ -115,23 +115,7 @@ trade (#2848): a value typed into a plain field is visible in the kept frame; a 
 handles something sensitive must name it a `secret`. `masked: true` means secrets are masked,
 not that every input is.
 
-Author decisions on top of the approved rule (#2848 review, labelled as such). An editable field
-(`input`, `textarea`, `[contenteditable="true"]`) shows a known secret when, with case folded and all
-whitespace removed on both sides, the secret is inside what the field draws (its `value`, or its
-`placeholder` while the value is empty, since a placeholder is drawn only then; the text for a
-contenteditable), or what the field draws minus a trailing `…` or `...` is at least 4 characters and
-inside the secret (a truncated echo). Such a field is painted. The paint is computed for the editable
-fields read in one pass and applied to those very elements (a temporary `data-graphhelm-paint`
-attribute, removed with the outline), never by re-resolving a position. A field whose value cannot be
-read is painted. The editable-field list is taken again right before and right after the screenshot;
-if it differs from the one read (a field appeared, disappeared or moved), the whole read-and-capture
-is repeated once on the new DOM, and a second difference refuses with `driver.capture_refused` and
-keeps no image: a bounded retry (a page that keeps changing cannot be given a mask that is known to
-fit it, and an endless retry would hang a flow), and a refusal is the safe failure because the flow
-fails loudly where an unpainted secret would pass silently. Known limits, stated and not solved: a
-page that overrides the value getter to lie can hide a value from this check; and a transformed echo
-(upper-cased, truncated) in a non-editable element is matched only as `getByText` matches it, as it
-was before this change. Entire rendered iframe/frame elements are also covered, including
+Author decisions on top of the approved rule (#2848 review, labelled as such). An editable field (`input`, `textarea`, `[contenteditable="true"]`) shows a known secret when what it draws (its `value`; its `placeholder` while the value is empty, since a placeholder is drawn only then; the text for a contenteditable) and a declared secret, each folded to lowercase letters and digits only (every other character dropped), share a contiguous run of at least min(4, folded secret length) characters. That one rule covers an exact copy, other case, spacing, separators (`4242-4242-4242-4242`, `sk_PROBE_123456`), an ellipsis at either end and a label plus a cut (`key: sk-PROBE-12…`). A folded secret of length 0 never matches. Over-painting is the accepted direction: a plain value that shares 4 letters or digits with a secret is painted too (for example the value `be 2848` for a secret ending `probe-2848`). Field text is compared up to 4096 characters; a longer field is painted, not skipped. Such a field is painted. The paint is computed for the editable fields read in one pass and applied to those very elements (a temporary `data-graphhelm-paint` attribute, removed with the outline), never by re-resolving a position. A field whose value cannot be read is painted. Around the screenshot the editable-field list is taken again, and the same read is repeated: if the list differs, or any field that was outlined now shows a secret (a page wrote it in after the read), the whole read-and-capture is repeated once on the new DOM, and a second difference refuses with `driver.capture_refused` and keeps no image. One retry is the bound: a page that keeps changing cannot be given a mask known to fit it, and an endless retry could hang a flow; a refusal is the safe failure because the flow fails loudly where an unpainted secret would pass silently. Known limits, stated and not solved: a page that overrides the value getter to lie can hide a value from this check; a transformed echo (upper-cased, truncated) in a non-editable element is matched only as `getByText` matches it, as before this change; and a value the page draws that is not what the field holds (a masked or formatted overlay) is outside what this reads. Entire rendered iframe/frame elements are also covered, including
 isolated/cross-origin frames; their contents are intentionally unobserved in
 the image. Main-document locators cannot establish privacy inside a frame. Images are temporary inputs to sealing, not a public screenshot
 output. Output directories/targets reject symlinks and existing files.

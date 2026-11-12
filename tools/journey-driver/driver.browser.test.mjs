@@ -805,6 +805,8 @@ const echoFields=[
   ['Spaced',`<input class="f" aria-label="Spaced" value="${spaced}">`,true],
   ['Truncated',`<input class="f" aria-label="Truncated" value="${ECHO_SECRET.slice(0,8)}…">`,true],
   ['Coincidence',`<input class="f" aria-label="Coincidence" value="${ECHO_SECRET.slice(0,3)}">`,false],
+  // Accepted over-painting: a plain value that shares 4 letters or digits with the secret is painted.
+  ['Four-character coincidence',`<input class="f" aria-label="Four-character coincidence" value="be 2848">`,true],
   ['Editable echo',`<div class="f" role="textbox" aria-label="Editable echo" contenteditable="true">${ECHO_SECRET}</div>`,true],
   ['Plain',`<input class="f" aria-label="Plain" value="plain note">`,false],
 ];
@@ -845,4 +847,43 @@ test('a field added between the read and the screenshot never leaves a secret un
   const always=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET});await open(always,base+'/?mode=always');
   assert.equal((await always.send('capture',{path:'always.png',maskSecrets:true})).code,'driver.capture_refused');
   await assert.rejects(readFile(join(always.output,'always.png')),{code:'ENOENT'});
+});
+
+// #2848 second review: a declared secret reformatted inside another editable field (separators, a leading
+// ellipsis, a label plus a cut) is painted; an unrelated plain field stays readable and outlined.
+const CARD_SECRET='4242424242424242';
+const reformatted=[
+  ['Dashed copy','4242-4242-4242-4242',true],
+  ['Separated every character','a-1-b-2-c-3-d-4-e-5',true],
+  ['Leading ellipsis','…'+ECHO_SECRET.slice(-10),true],
+  ['Underscored','sk_ECHO_Probe_2848_zz',true],
+  ['Label and cut','key: '+ECHO_SECRET.slice(0,12)+'…',true],
+  ['Unrelated','plain note',false],
+];
+test('a secret reformatted inside an editable field is painted and an unrelated field is not',async t=>{
+  const base=await echoServer(t,()=>reformatted.map(([name,value])=>`<input class="f" aria-label="${name}" value="${value}">`).join(''));
+  const oracle=await pixelOracle(t,base);
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET,GRAPHHELM_SECRET_CARD:CARD_SECRET,GRAPHHELM_SECRET_CODE:'a1b2c3d4e5'});await open(c,base);
+  const capture=await c.send('capture',{path:'reformatted.png',maskSecrets:true});assert.equal(capture.ok,true,JSON.stringify(capture));
+  const image=await oracle.decode(await readFile(join(c.output,'reformatted.png')));
+  const unpainted=[];
+  for(const [name,,painted] of reformatted) {
+    const inside=await image.inside(await oracle.box(name));
+    if(painted) {if(inside.magenta!==inside.total)unpainted.push(name);}
+    else {assert.equal(inside.magenta,0,`${name} is not painted`);assert.ok(inside.ink>20,`${name} stays readable`);for(const pixel of await image.ring(await oracle.box(name))) assert.deepEqual(pixel,MAGENTA,`${name} keeps its outline`);}
+  }
+  assert.deepEqual(unpainted,[],'every reformatted copy of a secret is painted');
+});
+
+// A page that writes the secret into an existing plain field after the read and before the screenshot:
+// the paint decision is read again after the screenshot, so the capture is repeated and the field painted.
+test('a secret written into an existing field between the read and the screenshot is painted after a retry',async t=>{
+  const base=await echoServer(t,()=>`<input class="f" aria-label="Late" value="plain note"><script>let done=false;new MutationObserver(list=>{if(done||!list.some(m=>m.target.style&&m.target.style.outline))return;done=true;document.querySelector('[aria-label=Late]').value=${JSON.stringify(ECHO_SECRET)}}).observe(document.body,{attributes:true,subtree:true,attributeFilter:['style']})</script>`);
+  const oracle=await pixelOracle(t,base);
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET});await open(c,base);
+  const capture=await c.send('capture',{path:'late.png',maskSecrets:true});
+  if(capture.ok) {
+    const inside=await (await oracle.decode(await readFile(join(c.output,'late.png')))).inside(await oracle.box('Late'));
+    assert.equal(inside.magenta,inside.total,'the late secret is painted, never kept readable');
+  } else assert.equal(capture.code,'driver.capture_refused');
 });

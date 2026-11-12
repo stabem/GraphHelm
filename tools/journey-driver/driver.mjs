@@ -50,17 +50,27 @@ const CREDENTIAL_AUTOCOMPLETE = ['current-password','new-password','one-time-cod
 const PAINTED = ['input[type="password" i]',...CREDENTIAL_AUTOCOMPLETE.flatMap(token=>[`input[autocomplete~="${token}" i]`,`textarea[autocomplete~="${token}" i]`])].join(',');
 const MASK_COLOR = '#FF00FF';
 const PAINT_ATTRIBUTE = 'data-graphhelm-paint';
-// #2848 (author decision on the approved rule): an editable field shows a known secret when, with case
-// and all whitespace removed, the secret is inside what the field draws (its value, or its placeholder
-// while the value is empty), or what the field draws, minus a trailing ellipsis, is at least 4
-// characters long and inside the secret (a truncated echo). Known limit: a page that overrides the
-// value getter to lie can hide a value from this check.
-const fold = text => String(text).toLowerCase().replace(/\s+/g,'');
-function showsSecret({value,placeholder}) {
+// #2848 (author decision on the approved rule): an editable field shows a known secret when what it
+// draws (its value; its placeholder while the value is empty; a contenteditable's text) and the secret,
+// each folded to lowercase letters and digits only, share a contiguous run of at least
+// min(4, folded secret length) characters. One rule covers exact copies, other case, spacing,
+// separators, an ellipsis at either end and a label plus a cut. Over-painting is the accepted
+// direction (a 4-character coincidence paints). Field text is compared up to FIELD_CAP characters; a
+// longer field is painted, not skipped. Known limit: a page that overrides the value getter to lie
+// can hide a value from this check.
+const FIELD_CAP = 4096;
+const fold = text => String(text).toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+function showsSecret({value,placeholder,long}) {
+  if (long) return true;
   const drawn = fold(value !== '' ? value : placeholder);
   if (!drawn) return false;
-  const trimmed = drawn.replace(/(?:…|\.\.\.)$/,'');
-  return secrets.some(([,known]) => { const secret = known ? fold(known) : ''; return secret !== '' && (drawn.includes(secret) || (trimmed.length >= 4 && secret.includes(trimmed))); });
+  return secrets.some(([,known]) => {
+    const secret = known ? fold(known) : '';
+    const run = Math.min(4, secret.length);
+    if (run === 0) return false;
+    for (let start = 0; start + run <= secret.length; start++) if (drawn.includes(secret.slice(start, start + run))) return true;
+    return false;
+  });
 }
 const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;
@@ -868,11 +878,14 @@ async function run(r) {
         const fields=await list();
         let prior=null, stable=false;
         try {
-          const reads=await page.evaluate(els=>els.map(el=>{
-            try { return {value:'value' in el ? String(el.value) : (el.textContent ?? ''), placeholder:el.getAttribute('placeholder') ?? ''}; }
-            catch { return {unreadable:true}; }
-          }),fields);
-          prior=await page.evaluate(apply,[fields,reads.map(read=>read.unreadable===true || showsSecret(read)),MASK_COLOR,PAINT_ATTRIBUTE]);
+          const paintFlags=async()=>(await page.evaluate(([els,cap])=>els.map(el=>{
+            try {
+              const value='value' in el ? String(el.value) : (el.textContent ?? ''), placeholder=el.getAttribute('placeholder') ?? '';
+              return {value:value.slice(0,cap), placeholder:placeholder.slice(0,cap), long:value.length>cap || placeholder.length>cap};
+            } catch { return {unreadable:true}; }
+          }),[fields,FIELD_CAP])).map(read=>read.unreadable===true || showsSecret(read));
+          const flags=await paintFlags();
+          prior=await page.evaluate(apply,[fields,flags,MASK_COLOR,PAINT_ATTRIBUTE]);
           const before=await list();
           const steady=await sameFields(fields,before);
           await release(before);
@@ -881,6 +894,8 @@ async function run(r) {
             const after=await list();
             stable=await sameFields(fields,after);
             await release(after);
+            // The paint decision is read again: a field that now shows a secret was captured readable.
+            if (stable) stable=(await paintFlags()).every((now,index)=>!now || flags[index]);
           }
         } finally { await restore(fields,prior); await release(fields); }
         if (stable) kept=true; else await rm(target,{force:true});

@@ -86,7 +86,8 @@ Declared detours: skill-to-skill rows of the step skills' transition tables that
 | `implement` | `implement` | a BLOCK on your head (same branch, then a new review) |
 | `implement` | `journey-prove` | the proof kind is journey or both |
 | `journey-prove` | `blind-review` | every approved flow replays green |
-| `journey-prove` | `implement` | a step fails on replay |
+| `journey-prove` | `implement` | a step fails on replay, or the QA rejected a draft flow |
+| `journey-prove` | `keel-journey-qa` | a draft flow the author wrote or edited goes to one blind QA subagent |
 | `merge` | `blind-review` | the head moved after approval |
 
 A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owner heartbeat). The unblocker's step becomes the next step, so a BLOCK on a PR sends the author back to `implement` on the same branch with the named defect, and a stall that only the owner can clear goes to `diagnose`.

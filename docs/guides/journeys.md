@@ -319,7 +319,11 @@ held where the agent cannot read it.
 agent approving its own flow. An agent never approves a flow, except the journey QA agent
 following the keel plugin's `keel-journey-qa` skill on the owner's explicit delegation: it approves
 a flow it did not write, with `journey approve` and the owner's token, only when all seven of that
-skill's points pass, and rejects it otherwise. To change an approved flow: set `status: draft` and `approved: null`
+skill's points pass, and rejects it otherwise. An author who leaves a flow as a draft does not judge it
+themself and does not ask the owner to approve it unchecked: `journey-prove` has them hand each draft flow to one
+blind QA subagent. With the owner's delegation or a scoped grant (`journey approve-grant`) it ends in `APPROVE`;
+with neither it ends in `QA-PASS` (every point passed, nothing approved) and the owner approves in the Studio or
+with `journey approve`. To change an approved flow: set `status: draft` and `approved: null`
 (keep `drift`), edit, `journey validate`, `journey compile --include-draft`, then ask the owner to
 re-approve. While `status: approved`, an edited flow reports `flow.approval_stale`, and
 `compile --include-draft` does not regenerate it.

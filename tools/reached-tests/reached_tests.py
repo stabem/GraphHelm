@@ -784,7 +784,7 @@ def reach(changed, packages, embedded, repo=None):
         # The keel plugin's skills carry the KEEL files' text verbatim: an edit to either side runs
         # the guard that compares them. The same guard reads both marketplaces.
         if (path in ("KEEL.md", ".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json")
-                or path.startswith(("keel/", "plugins/keel/"))):
+                or path.startswith(("keel/", "plugins/keel/", "tools/keel-plugin/"))):
             observer = "tools/keel-plugin/test_keel_plugin.py"
             if root is not None and (root / observer).is_file():
                 tools.add(python_test_tool(root, observer))

@@ -301,6 +301,8 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
   const searching = query.trim() !== "";
   const shown = filterJourneys(journeys, query);
   const groups = groupJourneys(shown);
+  // The scores in a group header are the whole group's, whatever the query; `groups` only picks what is drawn.
+  const wholeGroups = new Map(groupJourneys(journeys));
   // #1905: Approve N is the single Approve, one journey at a time, on every journey the Runtime says
   // it would accept now. The Runtime decides who may approve (owner credential only).
   const approvable = journeys.filter((flow) => flow.approvable === true && decisionOf(flow) !== "approved");
@@ -508,17 +510,22 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
         }} />
         {query !== "" && <button type="button" className="clear" aria-label="Clear search" onClick={() => { setQuery(""); searchField.current?.focus(); }}>×</button>}
       </div>
-      {searching && <span role="status" aria-label="Journeys shown" className="proof-counts journey-search-count">{shown.length} of {journeys.length} journeys</span>}
-      {searching && shown.length === 0 && <p role="status" aria-label="No match" className="journey-search-none">No journey matches “{query}”.</p>}
+      {searching && (
+        <div role="status" aria-label="Journeys shown" className="journey-search-status">
+          <span className="proof-counts journey-search-count">{shown.length} of {journeys.length} journeys</span>
+          {shown.length === 0 && <p className="journey-search-none">No journey matches “{query}”.</p>}
+        </div>
+      )}
       <ul className="journey-list" aria-label="Journeys">
         {groups.map(([feature, flows]) => {
-          const passed = flows.filter((flow) => statuses.get(flow.id)?.category === "passed").length;
-          const failed = flows.some((flow) => statuses.get(flow.id)?.category === "failed");
+          const whole = wholeGroups.get(feature) ?? flows;
+          const passed = whole.filter((flow) => statuses.get(flow.id)?.category === "passed").length;
+          const failed = whole.some((flow) => statuses.get(flow.id)?.category === "failed");
           return (
             <li key={feature} className="journey-group">
               <div className="journey-feature">
                 <span aria-hidden="true">▾</span><strong>{feature}</strong>
-                <span className={`mono group-score${failed ? " fail" : passed > 0 ? " pass" : ""}`} aria-label={`${feature}: ${passed} of ${flows.length} passed`}>{passed}/{flows.length}</span>
+                <span className={`mono group-score${failed ? " fail" : passed > 0 ? " pass" : ""}`} aria-label={`${feature}: ${passed} of ${whole.length} passed`}>{passed}/{whole.length}</span>
               </div>
               <ul>
                 {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} run={live[flow.id] ?? null} playing={active === flow.id} interruption={runAllJourneyNotice(interruptedBatch?.journeys.find((journey) => journey.flowId === flow.id), interruptedBatch?.reason)} />)}

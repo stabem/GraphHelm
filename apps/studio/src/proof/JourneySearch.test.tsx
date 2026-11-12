@@ -91,7 +91,7 @@ describe("the journeys column search (#2845)", () => {
     await type("LANES ");
     expect(cards()).toEqual(["See the lanes"]);
     expect(status()?.textContent).toBe("1 of 4 journeys");
-    expect(status()?.getAttribute("role")).toBe("status");
+    expect(status()?.closest("[role=status]")?.getAttribute("role")).toBe("status");
     expect(groups()).toEqual(["Studio"]);
     await type("proof-run");
     expect(cards()).toEqual(["Run a journey"]);
@@ -115,6 +115,8 @@ describe("the journeys column search (#2845)", () => {
     expect(cards()).toEqual([]);
     expect(status()?.textContent).toBe("0 of 4 journeys");
     const none = document.querySelector(".journey-search-none")!;
+    expect(document.querySelectorAll(".proof-journeys [role=status]")).toHaveLength(1);
+    expect(none.closest("[role=status]")).toBe(status()!.closest("[role=status]"));
     expect(none.textContent).toBe("No journey matches “<b>x</b>”.");
     expect(none.querySelector("b")).toBeNull();
   });
@@ -169,5 +171,26 @@ describe("the journeys column search (#2845)", () => {
     await act(async () => { root!.render(<ProofView projectKey="other" runtime={runtime} journeys={flows} error={null} executionId="exec-1" onRan={() => {}} />); });
     expect(field().value).toBe("");
     expect(cards()).toHaveLength(4);
+  });
+
+  it("keeps each group's score, accessible name and tint at the whole group while a query hides some of its journeys", async () => {
+    const replay = (status: string) => ({ status, kind: "replay", ranAt: null, reason: null, failingStep: null, flowChanged: false });
+    const grouped = [
+      flow("alpha-one", "Alpha one", "Studio", { lastRun: replay("passed") }),
+      flow("alpha-two", "Alpha two", "Studio", { lastRun: replay("failed") }),
+      flow("alpha-three", "Alpha three", "Studio", { lastRun: replay("not_run") }),
+      flow("keel-one", "Keel one", "Keel", { lastRun: replay("passed") }),
+    ];
+    await mount(runtimeStub().runtime, grouped);
+    const headers = () => [...document.querySelectorAll(".group-score")].map((el) => `${el.getAttribute("aria-label")}|${el.textContent}|${el.className}`);
+    const full = headers();
+    expect(full).toEqual(["Studio: 1 of 3 passed|1/3|mono group-score fail", "Keel: 1 of 1 passed|1/1|mono group-score pass"]);
+    await type("alpha three");
+    expect(cards()).toEqual(["Alpha three"]);
+    expect(headers()).toEqual([full[0]]);
+    await type("keel");
+    expect(headers()).toEqual([full[1]]);
+    await type("");
+    expect(headers()).toEqual(full);
   });
 });

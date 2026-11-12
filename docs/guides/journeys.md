@@ -91,7 +91,7 @@ allowed** (`flow.not_canonical`); `journey compile --fmt` rewrites a flow canoni
 | Field | Meaning |
 |---|---|
 | `status`, `approved` | `draft` and `null` while you author; only `journey approve` sets `approved` and fills `{digest, revision}` |
-| `secrets` | names only; replay reads each value from `GRAPHHELM_SECRET_<name>` |
+| `secrets` | names only; replay reads each value from `GRAPHHELM_SECRET_<name>`. A kept frame paints a field filled from a secret (and password fields, credential `autocomplete` fields, frames) in magenta; every other field is only outlined, so its typed text is readable in the frame. Type anything sensitive as a secret, never as `text` |
 | `scope` | repo-relative files or directories that render the screen, or `unknown` |
 | `purpose` | what the journey proves for the user, in one sentence |
 | screen `title` | what the screen is for |

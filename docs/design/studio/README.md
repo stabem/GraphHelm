@@ -22,6 +22,7 @@ https://claude.ai/artifact/WjdL5A6eXFgT2BWVbcmfuL (earlier copy: https://claude.
 | [`2532-step-dots/`](2532-step-dots/README.md) | Static before/after mock of the step dot tooltip (#2532, approved by Gabriel (owner), 2026-11-06, via the OpenBot confirm card relayed by Shikamaru): the tooltip below the dot row, "record #N" as the link |
 | [`2534-request-bar/`](2534-request-bar/README.md) | Static before/after mock of the request bar's stalled and not-started segments (#2534, approved by Gabriel (owner), 2026-11-06, via the OpenBot confirm card relayed by Shikamaru): a stalled segment outlined and hatched |
 | [`2845-journey-search/`](2845-journey-search/README.md) | Static before/after mocks of the Proof journeys column's search field (#2845, approved by Gabriel (owner), 2026-11-11; approval comment https://github.com/stabem/GraphHelm/issues/2845#issuecomment-6810835503): empty, typed and no-match states |
+| [`2848-capture-mask/`](2848-capture-mask/README.md) | Static before/after mocks of a journey frame (#2848, approved by Gabriel (owner), 2026-11-12, in the session chat): only secrets are painted magenta, every other editable field keeps its content inside a magenta outline; plus one capture by the built driver as build evidence |
 
 The `.dc.html` files use the artifact's Design Component format, and their images point at the
 artifact's asset store (`/_blob/...`). They open in the artifact, not as plain pages. The data on

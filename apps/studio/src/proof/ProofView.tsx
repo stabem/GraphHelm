@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { usePageTools } from "../webmcp/page-tools";
 
+import { filterJourneys, groupJourneys, JOURNEY_SEARCH_MAX } from "./journey-search";
 import { journeyName, RuntimeError, type JourneyFlow, type JourneyRun, type Runtime } from "../runtime/client";
 import { earlierRun } from "./compare";
 import { CheckMarks, CompareFrame } from "./CompareFrame";
@@ -169,6 +170,10 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
   const [refusal, setRefusalState] = useState<ActionErrorDetails | null>(null);
   const setRefusal = (value: string | ActionErrorDetails | null) => setRefusalState(value === null || typeof value !== "string" ? value : actionErrorDetails("Journey action failed", null, value, "Dismiss this message or retry the action."));
   const [interruptedBatch, setInterruptedBatch] = useState<RunAllBatch | null>(null);
+  // #2845: the search text is not kept anywhere: a reload, or another project, starts it empty.
+  const [search, setSearch] = useState({ projectKey, text: "" });
+  const searchField = useRef<HTMLInputElement>(null);
+  const setQuery = (text: string) => setSearch({ projectKey, text });
   const mounted = useRef(true);
   const viewGeneration = useRef(0);
   const observed = useRef(onObserved);
@@ -290,11 +295,12 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
     counts.waiting > 0 ? `${counts.waiting} waiting` : null,
     counts.unknown > 0 ? `${counts.unknown} unknown` : null,
   ].filter((text) => text !== null).join(" \u00b7 ");
-  const groups = new Map<string, JourneyFlow[]>();
-  for (const flow of journeys) {
-    const feature = flow.feature || "Other";
-    groups.set(feature, [...(groups.get(feature) ?? []), flow]);
-  }
+  // #2845: the search field only picks which cards the list shows. Everything below that acts on
+  // journeys (Run all, Approve N, the counts, the page tool) reads `journeys`, never `shown`.
+  const query = search.projectKey === projectKey ? search.text : "";
+  const searching = query.trim() !== "";
+  const shown = filterJourneys(journeys, query);
+  const groups = groupJourneys(shown);
   // #1905: Approve N is the single Approve, one journey at a time, on every journey the Runtime says
   // it would accept now. The Runtime decides who may approve (owner credential only).
   const approvable = journeys.filter((flow) => flow.approvable === true && decisionOf(flow) !== "approved");
@@ -496,8 +502,16 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
         <span className="proof-counts">{counts.passed} passed · {counts.failed} failed · {counts.stale} stale · {counts.not_run} not run</span>
       )}
       {otherCounts !== "" && <span className="proof-counts">{otherCounts}</span>}
+      <div className="journey-search">
+        <input ref={searchField} type="search" aria-label="Search journeys" placeholder="Search journeys" maxLength={JOURNEY_SEARCH_MAX} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+          if (event.key === "Escape" && query !== "") { event.preventDefault(); event.stopPropagation(); setQuery(""); }
+        }} />
+        {query !== "" && <button type="button" className="clear" aria-label="Clear search" onClick={() => { setQuery(""); searchField.current?.focus(); }}>×</button>}
+      </div>
+      {searching && <span role="status" aria-label="Journeys shown" className="proof-counts journey-search-count">{shown.length} of {journeys.length} journeys</span>}
+      {searching && shown.length === 0 && <p role="status" aria-label="No match" className="journey-search-none">No journey matches “{query}”.</p>}
       <ul className="journey-list" aria-label="Journeys">
-        {[...groups].map(([feature, flows]) => {
+        {groups.map(([feature, flows]) => {
           const passed = flows.filter((flow) => statuses.get(flow.id)?.category === "passed").length;
           const failed = flows.some((flow) => statuses.get(flow.id)?.category === "failed");
           return (

@@ -826,15 +826,16 @@ async function run(r) {
     const size=page.viewportSize();
     const fields=await editable.elementHandles();
     // The outline exists only for the screenshot: inline, important, put back exactly as it was.
-    const prior=await page.evaluate(([els,color])=>els.map(el=>{
+    let prior=null;
+    const apply=([els,color])=>els.map(el=>{
       const style=el.style, was=[style.getPropertyValue('outline'),style.getPropertyPriority('outline'),style.getPropertyValue('outline-offset'),style.getPropertyPriority('outline-offset')];
       const hadStyle=el.hasAttribute('style');
       style.setProperty('outline','2px solid '+color,'important'); style.setProperty('outline-offset','1px','important');
       return {was,hadStyle};
-    }),[fields,MASK_COLOR]);
-    try { await page.screenshot({path:target,fullPage:false,mask,maskColor:MASK_COLOR,timeout:TIMEOUT}); }
+    });
+    try { prior=await page.evaluate(apply,[fields,MASK_COLOR]); await page.screenshot({path:target,fullPage:false,mask,maskColor:MASK_COLOR,timeout:TIMEOUT}); }
     finally {
-      await page.evaluate(([els,all])=>els.forEach((el,index)=>{
+      if (prior) await page.evaluate(([els,all])=>els.forEach((el,index)=>{
         const {was,hadStyle}=all[index], style=el.style;
         for (const [name,value,priority] of [['outline',was[0],was[1]],['outline-offset',was[2],was[3]]]) { if (value) style.setProperty(name,value,priority); else style.removeProperty(name); }
         if (!hadStyle && el.getAttribute('style')==='') el.removeAttribute('style');

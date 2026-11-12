@@ -53,6 +53,9 @@ const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;
 const output = project ? resolve(args[3]) : null;
 function fail(code) { throw Object.assign(new Error(code), { code }); }
+// #2848: putting a capture's outline back after the page went away (navigated, closed) has nothing to
+// restore; any other failure is real and is rethrown.
+function pageGone(err) { if (!/context was destroyed|detached|closed|not attached|navigat/i.test(String(err?.message))) throw err; }
 function plain(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
 function exactKeys(value, required, optional = []) {
   return plain(value) && required.every(key => Object.hasOwn(value,key)) && Object.keys(value).every(key => required.includes(key) || optional.includes(key));
@@ -839,8 +842,8 @@ async function run(r) {
         const {was,hadStyle}=all[index], style=el.style;
         for (const [name,value,priority] of [['outline',was[0],was[1]],['outline-offset',was[2],was[3]]]) { if (value) style.setProperty(name,value,priority); else style.removeProperty(name); }
         if (!hadStyle && el.getAttribute('style')==='') el.removeAttribute('style');
-      }),[fields,prior]).catch(()=>{});
-      for (const field of fields) await field.dispose().catch(()=>{});
+      }),[fields,prior]).catch(pageGone);
+      for (const field of fields) await field.dispose().catch(pageGone);
       if (grownFrom) { const owner=grownFrom; grownFrom=null; await page.setViewportSize(owner); }
     }
     if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');

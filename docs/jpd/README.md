@@ -27,6 +27,11 @@ part any project can adopt with the `graphhelm` CLI; the full design is
    record at `.graphhelm/journey-grant-audit/<flow>.json` (grant id, actor, flow, approved revision and
    digest, time). The plain `journey approve` command is still owner-only. To revoke, set `"revoked": true`
    on the grant entry; there is no separate revoke command yet.
+
+   **The author's hand-off.** An author who wrote or edited a draft flow hands it to one blind
+   `keel-journey-qa` subagent per flow id (`journey-prove`, step b2) and never judges it themself. The QA ends in
+   `APPROVE` (owner delegation or scoped grant), `QA-PASS` (every point passed, no authority: nothing is approved
+   and the owner approves in the Studio or with `journey approve`) or `REJECT`.
 5. **Failures are kept.** A later green run does not erase an earlier failure.
 
 ## The journey file

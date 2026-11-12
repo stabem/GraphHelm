@@ -67,6 +67,44 @@ approve, ship the flows as drafts; `graphhelm --json journey validate --all --pr
 must report zero findings either way. A flow the owner approved travels with its generated
 contract: an approved flow whose contract is missing is `flow.contract_stale`.
 
+**Before you hand the owner anything, hand each draft flow you wrote or edited to a blind journey
+QA subagent** (next step). You never judge your own flow, and you do not ask the owner to approve
+one nobody has checked.
+
+### (b2) Hand each draft flow to a blind QA subagent
+
+For every flow id you wrote or edited that is still a draft, start ONE subagent per id. The
+subagent loads `keel-journey-qa` and follows it. It validates the flow through the page's own tools
+when the flow has `tool` acts, and by clicks otherwise. Fill this brief in with nothing else:
+
+```
+You are the journey QA agent for flow <flow id> in the project at <project root>.
+Load the keel-journey-qa skill and follow it.
+<one of:
+  Grant: <grant file path>, actor <actor name>. If all seven points pass, approve with
+  `graphhelm journey approve-grant`, as the skill says for a grant.
+  OR the sentence: No grant: do not approve; end with QA-PASS or REJECT.>
+Host limits: <the limits the project states, for example ports you must not use, no visible windows,
+no local paths in comments>.
+```
+
+What must NEVER go in the brief: your reasoning, what the flow is expected to show, a finding to
+look for, an expected verdict, how the flow was made. Name the flow id and nothing about the flow.
+Pass the grant only when the owner issued one with `graphhelm journey approve-grant`; never invent
+one. A host with no way to start a subagent: say so, ask the owner for another session to run the
+QA, and stop. You never become the QA.
+
+When the QA answers:
+
+- `REJECT`: fix the flow or the app, then hand the flow to a NEW blind QA subagent with a fresh
+  brief. Never send the same subagent your explanation or ask it to look again.
+- `QA-PASS`: every point passed and the QA holds no approval authority, so the flow is still a
+  draft. Tell the owner the flow passed QA and how to approve it (Studio Proof, or
+  `graphhelm journey approve <id> --project <root>`), and report the task as waiting for the
+  owner's approval. Do not replay it as proof until they have.
+- `APPROVE`: the QA held the owner's delegation or a scoped grant and approved; land the approval
+  lines (the flow YAML and its contract) through the normal delivery, then go on to (c).
+
 ### (c) Install the observer where the project root is
 
 Replay runs `.graphhelm/observers/journey_driver.mjs`, which must be byte-identical to the copy
@@ -153,6 +191,9 @@ a secret from a file, never the value.
 | After this | Next skill | Who acts |
 |---|---|---|
 | Every approved flow replays green at the reviewed revision | blind-review (the review reads this proof) | prover, then assigned reviewer |
+| Draft flow you wrote or edited, not yet checked by a QA | keel-journey-qa (one blind subagent per flow id, brief in (b2)) | author starts it, journey QA runs it |
+| QA answered REJECT | implement on the same branch, then a new blind keel-journey-qa | author |
+| QA answered QA-PASS, flow still a draft | wait for the owner's approval (Studio Proof or `journey approve`) | owner |
 | Flow not yet approved by the owner or approver | wait for approval; do not replay as proof | owner or approver |
 | A step fails on replay | implement on the same branch, then journey-prove again | author |
 

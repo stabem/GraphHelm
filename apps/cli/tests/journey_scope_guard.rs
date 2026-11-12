@@ -152,20 +152,66 @@ fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
     );
 }
 
-/// #2839: `studio2-proof-run-tools` proves the same screens as the click flow `studio2-proof-run`
-/// through the Studio's page tools, so it must never be judged by easier screens: every click-flow
-/// screen has a tool-flow screen of the same id with the same `url`, `state` and `scope` and every
-/// `expect` of the click flow's screen (the tool flow may add more, as it names the journey it runs,
-/// #2847), each tool-flow edge joins the same screens as the click flow's edge of that id, an edge
-/// whose acts differ carries only tool acts, and every other edge's acts are identical.
-#[test]
-fn the_page_tool_flow_is_never_weaker_than_the_click_flows_screens() {
-    let read = |id: &str| -> Value {
-        let path = repo().join(format!(".graphhelm/journeys/{id}.journey.yaml"));
-        serde_yaml_ng::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-    };
-    let click = read("studio2-proof-run");
-    let tools = read("studio2-proof-run-tools");
+/// The keys of two JSON objects, each once, so a field added to the schema later is compared by
+/// default instead of being skipped by a fixed list.
+fn keys_of(a: &Value, b: &Value) -> std::collections::BTreeSet<String> {
+    a.as_object()
+        .unwrap()
+        .keys()
+        .chain(b.as_object().unwrap().keys())
+        .cloned()
+        .collect()
+}
+
+/// Every field of `twin` equals the same field of `base`, except the named ones (a field absent on
+/// one side and present on the other counts as different).
+fn assert_same_but(base: &Value, twin: &Value, except: &[&str], what: &str) {
+    for key in keys_of(base, twin) {
+        if except.contains(&key.as_str()) {
+            continue;
+        }
+        assert_eq!(
+            twin.get(&key),
+            base.get(&key),
+            "{what}: `{key}` must equal the click flow's"
+        );
+    }
+}
+
+fn ids(items: &Value) -> Vec<String> {
+    let mut found: Vec<String> = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_string())
+        .collect();
+    found.sort();
+    found
+}
+
+/// The rule that keeps the tool flow from being weaker than the click flow (#2839, #2847).
+/// Flow level: every field is equal except the identity and prose (`id`, `name`, `title`,
+/// `purpose`), the approval state (`status`, `approved`: the click flow is approved, the tool flow
+/// is a draft) and `screens`/`edges`, judged below. Screens: the same set of ids; every screen field
+/// is equal (`id`, `title`, `intent`, `url`, `ignoreQuery`, `state`, `scope` and any field added
+/// later) except `expect`, where every click-flow expectation is present unchanged and extra ones
+/// are allowed. Edges: the same set of ids and the same `from`/`to`; an edge with identical acts is
+/// identical in every field; an edge whose acts differ carries only tool acts (the click flow's
+/// acts stay clicks), may differ in `acts`, `why` and `intent`, and is equal in every other field.
+fn check_tool_flow_not_weaker(click: &Value, tools: &Value) {
+    assert_same_but(
+        click,
+        tools,
+        &[
+            "id", "name", "title", "purpose", "status", "approved", "screens", "edges",
+        ],
+        "flow",
+    );
+    assert_eq!(
+        ids(&tools["screens"]),
+        ids(&click["screens"]),
+        "the tool flow must have exactly the click flow's screens"
+    );
     for screen in click["screens"].as_array().unwrap() {
         let id = screen["id"].as_str().unwrap();
         let twin = tools["screens"]
@@ -173,13 +219,8 @@ fn the_page_tool_flow_is_never_weaker_than_the_click_flows_screens() {
             .unwrap()
             .iter()
             .find(|candidate| candidate["id"] == screen["id"])
-            .unwrap_or_else(|| panic!("click-flow screen {id} is missing from the tool flow"));
-        for field in ["url", "state", "scope"] {
-            assert_eq!(
-                twin[field], screen[field],
-                "screen {id}: the tool flow's {field} must equal the click flow's"
-            );
-        }
+            .unwrap();
+        assert_same_but(screen, twin, &["expect"], &format!("screen {id}"));
         let kept = twin["expect"].as_array().unwrap();
         for expect in screen["expect"].as_array().unwrap() {
             assert!(
@@ -188,26 +229,30 @@ fn the_page_tool_flow_is_never_weaker_than_the_click_flows_screens() {
             );
         }
     }
-    let click_edges = click["edges"].as_array().unwrap();
-    let tool_edges = tools["edges"].as_array().unwrap();
     assert_eq!(
-        tool_edges.len(),
-        click_edges.len(),
-        "one tool-flow edge per click-flow edge"
+        ids(&tools["edges"]),
+        ids(&click["edges"]),
+        "the tool flow must have exactly the click flow's edges"
     );
+    let click_edges = click["edges"].as_array().unwrap();
     let mut replaced = 0;
-    for edge in tool_edges {
+    for edge in tools["edges"].as_array().unwrap() {
         let id = edge["id"].as_str().unwrap();
         let twin = click_edges
             .iter()
             .find(|candidate| candidate["id"] == edge["id"])
-            .unwrap_or_else(|| panic!("edge {id} has no click-flow edge of that id"));
-        assert_eq!(edge["from"], twin["from"], "edge {id}: from");
-        assert_eq!(edge["to"], twin["to"], "edge {id}: to");
+            .unwrap();
         if edge["acts"] == twin["acts"] {
+            assert_same_but(twin, edge, &[], &format!("edge {id}"));
             continue;
         }
         replaced += 1;
+        assert_same_but(
+            twin,
+            edge,
+            &["acts", "why", "intent"],
+            &format!("edge {id}"),
+        );
         let acts = edge["acts"].as_array().unwrap();
         assert!(
             !acts.is_empty() && acts.iter().all(|act| act["kind"] == "tool"),
@@ -226,4 +271,13 @@ fn the_page_tool_flow_is_never_weaker_than_the_click_flows_screens() {
         replaced > 0,
         "the tool flow replaces at least one click act"
     );
+}
+
+#[test]
+fn the_page_tool_flow_is_never_weaker_than_the_click_flows_screens() {
+    let read = |id: &str| -> Value {
+        let path = repo().join(format!(".graphhelm/journeys/{id}.journey.yaml"));
+        serde_yaml_ng::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
+    check_tool_flow_not_weaker(&read("studio2-proof-run"), &read("studio2-proof-run-tools"));
 }

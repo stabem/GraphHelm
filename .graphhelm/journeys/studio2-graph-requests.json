@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows heading \"Follow each owner request to its result\", listitem \"Show the work graph for the fixture run\", no listitem \"Prove a regression test for the fixture run\", no heading \"Work in flight, all journeys\"",
+      "statement": "shows heading \"Follow a request\", listitem \"Show the work graph for the fixture run\", no listitem \"Prove a regression test for the fixture run\", no heading \"Work in flight, all journeys\"",
       "statesToObserve": [
         "stable"
       ],
@@ -131,7 +131,7 @@
           "geometryClaim": false,
           "role": "button",
           "strategy": "accessible_name",
-          "value": "Follow each owner request to its result 1 issue · 1 PR planner"
+          "value": "Follow a request 1 issue · 1 PR planner"
         }
       },
       "stepId": "filtered"

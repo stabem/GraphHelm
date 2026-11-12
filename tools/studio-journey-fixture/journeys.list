@@ -1,0 +1,40 @@
+# The journeys the Studio fixture lists in Proof (#2863), one flow id per line.
+#
+# The fixture lists exactly these, plus the journeys fixture.sh writes itself (runtime-health always;
+# cli-hello, studio-home and the like only for the flows that need them). It does NOT list "every
+# flow in .graphhelm/journeys": a count read off the screen ("1 of 24 journeys") must change only when
+# someone edits this file on purpose, not when an unrelated journey is added to or removed from the
+# repository. Flows that pin that count (studio2-proof-search, studio2-graph-requests) are written
+# against the total of this list plus the fixture's own journey.
+#
+# An id here with no .graphhelm/journeys/<id>.journey.yaml fails the fixture (exit 3). To add a
+# journey: name it here and update the flows that pin the total.
+
+# Every studio2 flow: each is played against this fixture, and its own journey is seeded into it.
+studio2-auth-refusal
+studio2-graph-requests
+studio2-graph-review-screen
+studio2-lanes-board
+studio2-lanes-control
+studio2-lanes-needs-action
+studio2-lanes-reply
+studio2-no-run
+studio2-open
+studio2-proof-approve
+studio2-proof-compare
+studio2-proof-confirm
+studio2-proof-run
+studio2-proof-run-reload
+studio2-proof-run-switch
+studio2-proof-run-tools
+studio2-proof-search
+studio2-proof-send-fix
+studio2-proof-stale
+studio2-two-projects
+
+# Named by a studio2 flow's expectations, not a studio2 flow itself:
+# studio2-proof-search expects its card first in the first group.
+install-first-use
+# studio2-no-run expects these two cards in Proof with no run.
+keel-card-accepted
+keel-pinned-verdict-merge

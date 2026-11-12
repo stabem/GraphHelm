@@ -804,7 +804,9 @@ const echoFields=[
   ['Upper case',`<input class="f" aria-label="Upper case" value="${ECHO_SECRET.toUpperCase()}">`,true],
   ['Spaced',`<input class="f" aria-label="Spaced" value="${spaced}">`,true],
   ['Truncated',`<input class="f" aria-label="Truncated" value="${ECHO_SECRET.slice(0,8)}…">`,true],
-  ['Coincidence',`<input class="f" aria-label="Coincidence" value="${ECHO_SECRET.slice(0,3)}">`,false],
+  // A short value that is not a piece of the secret stays readable; one that is a piece is painted.
+  ['Coincidence',`<input class="f" aria-label="Coincidence" value="xqz">`,false],
+  ['Short piece',`<input class="f" aria-label="Short piece" value="${ECHO_SECRET.slice(0,3)}">`,true],
   // Accepted over-painting: a plain value that shares 4 letters or digits with the secret is painted.
   ['Four-character coincidence',`<input class="f" aria-label="Four-character coincidence" value="be 2848">`,true],
   ['Editable echo',`<div class="f" role="textbox" aria-label="Editable echo" contenteditable="true">${ECHO_SECRET}</div>`,true],
@@ -886,4 +888,31 @@ test('a secret written into an existing field between the read and the screensho
     const inside=await (await oracle.decode(await readFile(join(c.output,'late.png')))).inside(await oracle.box('Late'));
     assert.equal(inside.magenta,inside.total,'the late secret is painted, never kept readable');
   } else assert.equal(capture.code,'driver.capture_refused');
+});
+
+// #2848 third review: a secret split across several editable fields (a one-time-code widget, pairs,
+// 3-character pieces) is painted piece by piece: a field whose whole drawn text is a piece of a secret is painted.
+const OTP_SECRET='482915';
+async function paintedBoxes(t,base,names,env,prepare=async()=>{}) {
+  const oracle=await pixelOracle(t,base);
+  const c=await client(t,env);await open(c,base);await prepare(c);
+  const capture=await c.send('capture',{path:'pieces.png',maskSecrets:true});assert.equal(capture.ok,true,JSON.stringify(capture));
+  const image=await oracle.decode(await readFile(join(c.output,'pieces.png')));
+  const unpainted=[];
+  for(const name of names){const inside=await image.inside(await oracle.box(name));if(inside.magenta!==inside.total)unpainted.push(name);}
+  return unpainted;
+}
+test('six one-digit boxes spread from a filled first box are all painted',async t=>{
+  const names=[1,2,3,4,5,6].map(n=>'Digit '+n);
+  const base=await echoServer(t,()=>names.map((name,index)=>`<input class="f" aria-label="${name}" maxlength="6" ${index===0?'autocomplete="one-time-code" oninput="const v=this.value;const all=[...document.querySelectorAll(\'input\')];all.forEach((box,i)=>{box.value=v[i]??\'\'})"':''}>`).join(''));
+  const unpainted=await paintedBoxes(t,base,names,{GRAPHHELM_SECRET_CODE:OTP_SECRET},async c=>assert.equal((await act(c,'enter_text','textbox','Digit 1',{secretEnv:'GRAPHHELM_SECRET_CODE'})).ok,true));
+  assert.deepEqual(unpainted,[],'every box of the code is painted');
+});
+test('a secret shown in pairs or in 3-character pieces is painted piece by piece',async t=>{
+  const pairs=[['Pair 1','48'],['Pair 2','29'],['Pair 3','15']];
+  const pieces=[['Piece 1','ske'],['Piece 2','cho'],['Piece 3','pro'],['Piece 4','be2'],['Piece 5','848'],['Piece 6','zz']];
+  const rows=[...pairs,...pieces,['Unrelated piece','xqz']];
+  const base=await echoServer(t,()=>rows.map(([name,value])=>`<input class="f" aria-label="${name}" value="${value}">`).join(''));
+  const unpainted=await paintedBoxes(t,base,[...pairs,...pieces].map(([name])=>name),{GRAPHHELM_SECRET_CODE:OTP_SECRET,GRAPHHELM_SECRET_KEY:ECHO_SECRET});
+  assert.deepEqual(unpainted,[],'every piece of a secret is painted');
 });

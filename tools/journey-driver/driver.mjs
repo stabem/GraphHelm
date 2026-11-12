@@ -55,7 +55,8 @@ const PAINT_ATTRIBUTE = 'data-graphhelm-paint';
 // each folded to lowercase letters and digits only, share a contiguous run of at least
 // min(4, folded secret length) characters. One rule covers exact copies, other case, spacing,
 // separators, an ellipsis at either end and a label plus a cut. Over-painting is the accepted
-// direction (a 4-character coincidence paints). Field text is compared up to FIELD_CAP characters; a
+// direction (a 4-character coincidence paints). A field whose whole text is a piece of a secret paints
+// too (a secret split across boxes). Field text is compared up to FIELD_CAP characters; a
 // longer field is painted, not skipped. Known limit: a page that overrides the value getter to lie
 // can hide a value from this check.
 const FIELD_CAP = 4096;
@@ -68,6 +69,9 @@ function showsSecret({value,placeholder,long}) {
     const secret = known ? fold(known) : '';
     const run = Math.min(4, secret.length);
     if (run === 0) return false;
+    // A field whose whole drawn text is a piece of the secret is one box of a split secret (a
+    // one-time-code widget, pairs): painted at any length, without looking at its neighbours.
+    if (secret.includes(drawn)) return true;
     for (let start = 0; start + run <= secret.length; start++) if (drawn.includes(secret.slice(start, start + run))) return true;
     return false;
   });

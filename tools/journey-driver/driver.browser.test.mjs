@@ -787,3 +787,62 @@ test('a credential autocomplete paints a text field and an ordinary one does not
   }
   assert.equal((await c.send('close')).ok,true);
 });
+
+// #2848 review: a known secret drawn inside an editable field is painted however the field shows it
+// (placeholder, other case, spaced, truncated) and the paint never depends on the DOM staying still.
+const ECHO_SECRET='sk-ECHO-Probe-2848-zz';
+const ECHO_CSS='body{margin:0;background:#fff;color:#000;font:16px Arial}h1{margin:8px 40px;font-size:20px}.f{display:block;margin:6px 40px;width:300px;height:30px;box-sizing:border-box;border:1px solid #888;background:#fff;color:#000;font:16px Arial}div.f{padding:4px}';
+async function echoServer(t,body) {
+  const server=createServer((req,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Echo</title><style>${ECHO_CSS}</style></head><body><h1>Echo</h1>${body(new URL(req.url,'http://x').searchParams)}</body></html>`);});
+  await new Promise(done=>server.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>server.close(done)));
+  return `http://127.0.0.1:${server.address().port}`;
+}
+const spaced=ECHO_SECRET.replace(/(...)/g,'$1 ');
+const echoFields=[
+  ['Placeholder echo',`<input class="f" aria-label="Placeholder echo" placeholder="${ECHO_SECRET}">`,true],
+  ['Placeholder over value',`<input class="f" aria-label="Placeholder over value" placeholder="${ECHO_SECRET}" value="note text">`,false],
+  ['Upper case',`<input class="f" aria-label="Upper case" value="${ECHO_SECRET.toUpperCase()}">`,true],
+  ['Spaced',`<input class="f" aria-label="Spaced" value="${spaced}">`,true],
+  ['Truncated',`<input class="f" aria-label="Truncated" value="${ECHO_SECRET.slice(0,8)}…">`,true],
+  ['Coincidence',`<input class="f" aria-label="Coincidence" value="${ECHO_SECRET.slice(0,3)}">`,false],
+  ['Editable echo',`<div class="f" role="textbox" aria-label="Editable echo" contenteditable="true">${ECHO_SECRET}</div>`,true],
+  ['Plain',`<input class="f" aria-label="Plain" value="plain note">`,false],
+];
+test('a secret shown in an editable field is painted whatever its placeholder, case, spacing or truncation',async t=>{
+  const base=await echoServer(t,()=>echoFields.map(([,html])=>html).join(''));
+  const oracle=await pixelOracle(t,base);
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET});await open(c,base);
+  const capture=await c.send('capture',{path:'echo.png',maskSecrets:true});assert.equal(capture.ok,true,JSON.stringify(capture));
+  const image=await oracle.decode(await readFile(join(c.output,'echo.png')));
+  for(const [name,,painted] of echoFields) {
+    const inside=await image.inside(await oracle.box(name));
+    if(painted) assert.equal(inside.magenta,inside.total,`${name} is painted`);
+    else {assert.equal(inside.magenta,0,`${name} is not painted`);assert.ok(inside.ink>20,`${name} stays readable`);}
+  }
+  assert.equal((await c.send('close')).ok,true);
+});
+
+test('a field whose value cannot be read is painted, not skipped',async t=>{
+  const base=await echoServer(t,()=>`<input class="f" aria-label="Throwing" value="x"><script>Object.defineProperty(document.querySelector('[aria-label=Throwing]'),'value',{get(){throw new Error('no')}})</script>`);
+  const oracle=await pixelOracle(t,base);
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET});await open(c,base);
+  const capture=await c.send('capture',{path:'throws.png',maskSecrets:true});assert.equal(capture.ok,true,JSON.stringify(capture));
+  const inside=await (await oracle.decode(await readFile(join(c.output,'throws.png')))).inside(await oracle.box('Throwing'));
+  assert.equal(inside.magenta,inside.total,'the unreadable field is painted');
+});
+
+// A page that adds a field between the driver's read and its screenshot must not leave the secret unpainted:
+// one retry on the new DOM, then a refusal that keeps no image.
+const churnBody=params=>`<input class="f" aria-label="Holds secret" value="${ECHO_SECRET}"><input class="f" aria-label="Other" value="other note">${params.has('quiet')?'':`<script>let done=false;const mode=${JSON.stringify(params.get('mode'))};new MutationObserver(list=>{if(!list.some(m=>m.target.style&&m.target.style.outline))return;if(mode==='always'||!done){done=true;const n=document.createElement('input');n.className='f';n.setAttribute('aria-label','Inserted');n.style.cssText='position:absolute;left:600px;top:10px;width:100px';document.body.prepend(n)}}).observe(document.body,{attributes:true,subtree:true,attributeFilter:['style']})</script>`}`;
+test('a field added between the read and the screenshot never leaves a secret unpainted',async t=>{
+  const base=await echoServer(t,churnBody);
+  const oracle=await pixelOracle(t,base+'/?quiet=1');
+  const c=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET});await open(c,base+'/?mode=once');
+  const capture=await c.send('capture',{path:'once.png',maskSecrets:true});
+  assert.equal(capture.ok,true,JSON.stringify(capture));
+  const image=await oracle.decode(await readFile(join(c.output,'once.png')));
+  const inside=await image.inside(await oracle.box('Holds secret'));assert.equal(inside.magenta,inside.total,'the secret field is painted after one retry');
+  const always=await client(t,{GRAPHHELM_SECRET_KEY:ECHO_SECRET});await open(always,base+'/?mode=always');
+  assert.equal((await always.send('capture',{path:'always.png',maskSecrets:true})).code,'driver.capture_refused');
+  await assert.rejects(readFile(join(always.output,'always.png')),{code:'ENOENT'});
+});

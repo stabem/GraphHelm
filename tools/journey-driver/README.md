@@ -106,15 +106,32 @@ Capture paints only secrets, in opaque magenta (`#FF00FF`) before PNG creation: 
 fields (`input[type=password]`), fields the flow filled from a `secret`, fields whose
 `autocomplete` names a credential or payment value (`current-password`, `new-password`,
 `one-time-code`, `cc-number`, `cc-csc`, `cc-exp`, `cc-exp-month`, `cc-exp-year`; a guard for a
-secret typed into a `type=text` field), any editable field that currently holds a known secret
-value (a page may rebuild the field the flow filled), and any visible text equal to a known
-secret. Every editable field (`input`, `textarea`, `[contenteditable="true"]`), painted or not,
+secret typed into a `type=text` field), any editable field that shows a known secret (see below), and any visible
+non-editable text equal to a known secret (`getByText`, as the browser matches it). Every editable field (`input`, `textarea`, `[contenteditable="true"]`), painted or not,
 gets a 2px solid magenta outline with 1px offset instead of a cover, so a frame shows what a
 plain field holds (a search box, an e-mail address). The outline is set inline for the
 screenshot only and put back exactly as it was; it takes no space and moves nothing. Accepted
 trade (#2848): a value typed into a plain field is visible in the kept frame; a flow that
 handles something sensitive must name it a `secret`. `masked: true` means secrets are masked,
-not that every input is. Entire rendered iframe/frame elements are also covered, including
+not that every input is.
+
+Author decisions on top of the approved rule (#2848 review, labelled as such). An editable field
+(`input`, `textarea`, `[contenteditable="true"]`) shows a known secret when, with case folded and all
+whitespace removed on both sides, the secret is inside what the field draws (its `value`, or its
+`placeholder` while the value is empty, since a placeholder is drawn only then; the text for a
+contenteditable), or what the field draws minus a trailing `…` or `...` is at least 4 characters and
+inside the secret (a truncated echo). Such a field is painted. The paint is computed for the editable
+fields read in one pass and applied to those very elements (a temporary `data-graphhelm-paint`
+attribute, removed with the outline), never by re-resolving a position. A field whose value cannot be
+read is painted. The editable-field list is taken again right before and right after the screenshot;
+if it differs from the one read (a field appeared, disappeared or moved), the whole read-and-capture
+is repeated once on the new DOM, and a second difference refuses with `driver.capture_refused` and
+keeps no image: a bounded retry (a page that keeps changing cannot be given a mask that is known to
+fit it, and an endless retry would hang a flow), and a refusal is the safe failure because the flow
+fails loudly where an unpainted secret would pass silently. Known limits, stated and not solved: a
+page that overrides the value getter to lie can hide a value from this check; and a transformed echo
+(upper-cased, truncated) in a non-editable element is matched only as `getByText` matches it, as it
+was before this change. Entire rendered iframe/frame elements are also covered, including
 isolated/cross-origin frames; their contents are intentionally unobserved in
 the image. Main-document locators cannot establish privacy inside a frame. Images are temporary inputs to sealing, not a public screenshot
 output. Output directories/targets reject symlinks and existing files.

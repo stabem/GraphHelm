@@ -12,6 +12,8 @@ Rule drawn: a capture paints only password fields, fields the flow filled from a
 
 Accepted trade, stated to the owner before approval: a value typed in a plain field (for example an e-mail address) becomes visible in captures. A flow that handles something sensitive must mark it as a `secret`.
 
+Author decisions on top of the approved rule, from the review of the build (labelled as such, not part of the approved drawing): an editable field that shows a known secret is painted when, with case and whitespace ignored, the secret is inside its value (or inside its placeholder while the value is empty, or its text for a contenteditable) or the field's text minus a trailing ellipsis is at least 4 characters and inside the secret; the paint is applied to the elements read in one pass; if the editable fields change around the screenshot the capture is repeated once, then refused with `driver.capture_refused` and no image is kept. Limits: a page that overrides the value getter can hide a value from the check, and a transformed echo in a non-editable element is matched only as the browser's text match does, as before.
+
 Not drawn in the mocks, decided in the build: a text field whose `autocomplete` names a credential or payment value (`current-password`, `new-password`, `one-time-code`, `cc-number`, `cc-csc`, `cc-exp`, `cc-exp-month`, `cc-exp-year`) is painted too, as a cheap guard for a secret typed into a `type=text` field.
 
 Approved by Gabriel (owner), 2026-11-12, in the session chat on `form-before.png`, `form-after.png`, `studio-before.png` and `studio-after.png` ("Aprovo, implemente"; earlier, on the rule: "Sim, só segredo pintado").

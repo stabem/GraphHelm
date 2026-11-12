@@ -4,7 +4,7 @@ import '../hidden-node-children.mjs';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname } from 'node:path';
-import { lstat, mkdir, rename, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { judgeExpectations, containsText, normalText, viewportRect } from './judge.mjs';
 
 const PROTOCOL = 'graphhelm-journey-driver/1';
@@ -49,6 +49,19 @@ const EDITABLE = 'input,textarea,[contenteditable="true"]';
 const CREDENTIAL_AUTOCOMPLETE = ['current-password','new-password','one-time-code','cc-number','cc-csc','cc-exp','cc-exp-month','cc-exp-year'];
 const PAINTED = ['input[type="password" i]',...CREDENTIAL_AUTOCOMPLETE.flatMap(token=>[`input[autocomplete~="${token}" i]`,`textarea[autocomplete~="${token}" i]`])].join(',');
 const MASK_COLOR = '#FF00FF';
+const PAINT_ATTRIBUTE = 'data-graphhelm-paint';
+// #2848 (author decision on the approved rule): an editable field shows a known secret when, with case
+// and all whitespace removed, the secret is inside what the field draws (its value, or its placeholder
+// while the value is empty), or what the field draws, minus a trailing ellipsis, is at least 4
+// characters long and inside the secret (a truncated echo). Known limit: a page that overrides the
+// value getter to lie can hide a value from this check.
+const fold = text => String(text).toLowerCase().replace(/\s+/g,'');
+function showsSecret({value,placeholder}) {
+  const drawn = fold(value !== '' ? value : placeholder);
+  if (!drawn) return false;
+  const trimmed = drawn.replace(/(?:…|\.\.\.)$/,'');
+  return secrets.some(([,known]) => { const secret = known ? fold(known) : ''; return secret !== '' && (drawn.includes(secret) || (trimmed.length >= 4 && secret.includes(trimmed))); });
+}
 const args = process.argv.slice(2);
 const project = args[0] === '--project' && args[2] === '--output-dir' && args.length === 4 ? resolve(args[1]) : null;
 const output = project ? resolve(args[3]) : null;
@@ -815,37 +828,67 @@ async function run(r) {
     // Cover entire frame elements: same-origin, isolated/cross-origin and their
     // nested content are opaque without trusting frame DOM or echo rendering.
     // #2848: the rest of the paint list is only secrets: password fields, fields the flow filled
-    // from a secret, fields whose `autocomplete` names a credential or payment value, any field
-    // that now holds a known secret (the page may have rebuilt the one the flow filled), and any
-    // visible text equal to a known secret. Every editable field gets an outline instead.
-    const mask=[...secretInputs,page.locator(PAINTED),page.locator('iframe,frame')];
+    // from a secret, fields whose `autocomplete` names a credential or payment value, any editable
+    // field that shows a known secret (see `showsSecret`; the page may have rebuilt the one the flow
+    // filled), and any visible non-editable text equal to a known secret. Every editable field gets
+    // an outline instead.
+    const mask=[...secretInputs,page.locator(PAINTED),page.locator(`[${PAINT_ATTRIBUTE}]`),page.locator('iframe,frame')];
     // Closed shadow roots and nested documents may hide frame hosts from page
     // selectors. Refuse rather than claim their entire rendered area is covered.
     if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');
     for (const [,value] of secrets) if (value) mask.push(page.getByText(value,{exact:false}));
-    const editable=page.locator(EDITABLE);
-    const held=await editable.evaluateAll(els=>els.map(el=>'value' in el ? String(el.value) : (el.textContent ?? '')));
-    held.forEach((text,index)=>{ if (secrets.some(([,value])=>value && text.includes(value))) mask.push(editable.nth(index)); });
     const size=page.viewportSize();
-    const fields=await editable.elementHandles();
-    // The outline exists only for the screenshot: inline, important, put back exactly as it was.
-    let prior=null;
-    const apply=([els,color])=>els.map(el=>{
+    const editable=page.locator(EDITABLE);
+    const sameFields=async(a,b)=>page.evaluate(([x,y])=>x.length===y.length && x.every((el,index)=>el===y[index]),[a,b]);
+    const list=async()=>editable.elementHandles();
+    const release=async handles=>{ for (const handle of handles) await handle.dispose().catch(pageGone); };
+    // The outline and the paint mark exist only for the screenshot: inline, important, put back exactly as they were.
+    const apply=([els,paint,color,attribute])=>els.map((el,index)=>{
       const style=el.style, was=[style.getPropertyValue('outline'),style.getPropertyPriority('outline'),style.getPropertyValue('outline-offset'),style.getPropertyPriority('outline-offset')];
       const hadStyle=el.hasAttribute('style');
       style.setProperty('outline','2px solid '+color,'important'); style.setProperty('outline-offset','1px','important');
+      if (paint[index]) el.setAttribute(attribute,'');
       return {was,hadStyle};
     });
-    try { prior=await page.evaluate(apply,[fields,MASK_COLOR]); await page.screenshot({path:target,fullPage:false,mask,maskColor:MASK_COLOR,timeout:TIMEOUT}); }
-    finally {
-      if (prior) await page.evaluate(([els,all])=>els.forEach((el,index)=>{
+    const restore=async(fields,prior)=>{
+      if (!prior) return;
+      await page.evaluate(([els,all,attribute])=>els.forEach((el,index)=>{
         const {was,hadStyle}=all[index], style=el.style;
         for (const [name,value,priority] of [['outline',was[0],was[1]],['outline-offset',was[2],was[3]]]) { if (value) style.setProperty(name,value,priority); else style.removeProperty(name); }
         if (!hadStyle && el.getAttribute('style')==='') el.removeAttribute('style');
-      }),[fields,prior]).catch(pageGone);
-      for (const field of fields) await field.dispose().catch(pageGone);
+        el.removeAttribute(attribute);
+      }),[fields,prior,PAINT_ATTRIBUTE]).catch(pageGone);
+    };
+    // The mask is computed for the fields read in one pass and painted on those very elements. If the
+    // page adds, removes or reorders an editable field around the screenshot, the mask belongs to
+    // another DOM: read and capture once more, and refuse (keeping no image) if it moves again.
+    let kept=false;
+    try {
+      for (let attempt=0; attempt<2 && !kept; attempt++) {
+        const fields=await list();
+        let prior=null, stable=false;
+        try {
+          const reads=await page.evaluate(els=>els.map(el=>{
+            try { return {value:'value' in el ? String(el.value) : (el.textContent ?? ''), placeholder:el.getAttribute('placeholder') ?? ''}; }
+            catch { return {unreadable:true}; }
+          }),fields);
+          prior=await page.evaluate(apply,[fields,reads.map(read=>read.unreadable===true || showsSecret(read)),MASK_COLOR,PAINT_ATTRIBUTE]);
+          const before=await list();
+          const steady=await sameFields(fields,before);
+          await release(before);
+          if (steady) {
+            await page.screenshot({path:target,fullPage:false,mask,maskColor:MASK_COLOR,timeout:TIMEOUT});
+            const after=await list();
+            stable=await sameFields(fields,after);
+            await release(after);
+          }
+        } finally { await restore(fields,prior); await release(fields); }
+        if (stable) kept=true; else await rm(target,{force:true});
+      }
+    } finally {
       if (grownFrom) { const owner=grownFrom; grownFrom=null; await page.setViewportSize(owner); }
     }
+    if (!kept) fail('driver.capture_refused');
     if (await page.locator('iframe,frame').count() !== page.frames().length-1) fail('driver.capture_refused');
     checkHost();
     return {path:r.path,width:size.width,height:size.height,masked:true};

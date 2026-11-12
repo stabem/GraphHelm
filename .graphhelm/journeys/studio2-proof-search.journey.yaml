@@ -17,28 +17,28 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: searchbox, name: Search journeys, because: "the journeys column offers a search field above the list, so the owner can find one journey among many"}, {role: listitem, name: Reply to an agent, because: "with nothing typed the list shows every journey, among them the Studio flow that replies to an agent"}, {role: listitem, name: Compare a step, because: "with nothing typed the list shows every journey, among them the Studio flow that compares a step"}, {role: status, name: Journeys shown, absent: true, because: the count of shown journeys appears only while a search is typed}]
+    expect: [{role: searchbox, name: Search journeys, because: "the journeys column offers a search field above the list, so the owner can find one journey among many"}, {role: listitem, name: Install GraphHelm from INSTALL.md and run the first commands, because: "with nothing typed the list shows every journey, and the install flow is the first card of the first group"}, {role: listitem, name: Studio auth refusal, because: "with nothing typed the list shows every group, so the first card of the Studio group is listed beside the first group's"}, {role: status, name: Journeys shown, absent: true, because: the count of shown journeys appears only while a search is typed}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
   - id: cleared
     title: Clearing the search brings every journey back
     url: /?session=studio-fixture&run=demo&view=proof
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: Compare a step, because: "the field is empty again, so the list shows the journey the search had hidden"}, {role: listitem, name: Reply to an agent, because: the list shows every journey again}, {role: status, name: Journeys shown, absent: true, because: with the field empty the count of shown journeys is gone}, {role: button, name: Clear search, absent: true, because: there is nothing left to clear}]
+    expect: [{role: searchbox, name: Search journeys, because: "the field the search was typed in is on the frame beside the list, so the owner sees where the search was cleared"}, {role: listitem, name: Install GraphHelm from INSTALL.md and run the first commands, because: "the field is empty again, so the list shows the first card of the first group, which the typed search had hidden"}, {role: listitem, name: Studio auth refusal, because: "the list shows the first card of the Studio group again, so more than one group is back"}, {role: status, name: Journeys shown, absent: true, because: with the field empty the count of shown journeys is gone}, {role: button, name: Clear search, absent: true, because: "the Clear search button shows only while the field holds text, so its absence means the field is empty"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
   - id: found
     title: The list is narrowed to the journeys that match
     url: /?session=studio-fixture&run=demo&view=proof
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: Reply to an agent, because: "its id studio2-lanes-reply holds the typed text reply, so its card stays in the list"}, {role: listitem, name: Compare a step, absent: true, because: "neither its name, its id nor its group holds the typed text, so the search hides its card"}, {role: status, name: Journeys shown, text: 1 of, because: "exactly one journey matches, and the line says how many of all journeys are shown"}, {role: button, name: Clear search, because: "a search is typed, so the field offers to clear it"}]
+    expect: [{role: listitem, name: Reply to an agent, because: "its id studio2-lanes-reply holds the typed text reply, so its card stays in the list"}, {role: listitem, name: Compare a step, absent: true, because: "neither its name, its id nor its group holds the typed text, so the search hides its card"}, {role: status, name: Journeys shown, text: 1 of 29 journeys, because: "exactly one of the fixture's 29 journeys matches, so the line reads 1 of 29 journeys; the text check only looks for that text, so it would also pass for 11 of 29 or 21 of 29, and the two absent cards below rule those out; the flow goes red when the fixture gains or loses a journey"}, {role: listitem, name: Open the Studio, absent: true, because: "its name, id and group hold no reply, so a filter that lets more than one journey through shows it"}, {role: listitem, name: Start from no run, absent: true, because: "its name, id and group hold no reply, so a filter that lets more than one journey through shows it"}, {role: button, name: Clear search, because: "a search is typed, so the field offers to clear it"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
   - id: none
     title: Nothing matches the typed text
     url: /?session=studio-fixture&run=demo&view=proof
     ignoreQuery: [session, project]
     state: empty
-    expect: [{role: status, name: Journeys shown, text: No journey matches, because: "no journey holds the typed text, so the same status region that counts the shown journeys says so instead of showing an empty list"}, {role: status, name: Journeys shown, text: 0 of, because: the count line reads zero shown of all journeys}, {role: listitem, name: Reply to an agent, absent: true, because: "the typed text no longer matches it, so no card is listed"}]
+    expect: [{role: status, name: Journeys shown, text: 0 of 29 journeys No journey matches “zzz-no-such-journey”., because: "no journey holds the typed text, so the one status region reads its whole text: zero shown of the fixture's 29 journeys, then the no-match message naming the typed text; the flow goes red when the fixture gains or loses a journey"}, {role: listitem, name: Reply to an agent, absent: true, because: "the typed text no longer matches it, so no card is listed"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
 edges:
   - id: all.found

@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows button \"Run\", listitem \"Step 1\" saying \"web not run\", no status \"Preparing the browser\"",
+      "statement": "shows button \"Run\", listitem \"Step 1\" saying \"web not run\", no status \"Preparing the browser\", heading \"Open the Studio and its Lanes\"",
       "statesToObserve": [
         "stable"
       ],
@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Preparing the browser\", button \"Show log\"",
+      "statement": "shows status \"Preparing the browser\", button \"Show log\", heading \"Open the Studio and its Lanes\"",
       "statesToObserve": [
         "loading"
       ],
@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows log \"Run console\" saying \"Browser observer ready\", button \"Hide log\"",
+      "statement": "shows log \"Run console\" saying \"Browser observer ready\", button \"Hide log\", heading \"Open the Studio and its Lanes\"",
       "statesToObserve": [
         "loading"
       ],
@@ -60,7 +60,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows img \"Step 1 frame\", log \"Run console\" saying \"Browser observer ready\"",
+      "statement": "shows img \"Step 1 frame\", log \"Run console\" saying \"Browser observer ready\", heading \"Open the Studio and its Lanes\"",
       "statesToObserve": [
         "loading"
       ],
@@ -74,7 +74,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows img \"Step 1 frame\", listitem \"Step 1\" saying \"web ✓\", listitem \"Step 1\" saying \"mobile ✓\", status \"Passed\"",
+      "statement": "shows img \"Step 1 frame\", listitem \"Step 1\" saying \"web ✓\", listitem \"Step 1\" saying \"mobile ✓\", status \"Passed\", heading \"Open the Studio and its Lanes\"",
       "statesToObserve": [
         "success"
       ],

@@ -153,21 +153,41 @@ fn every_studio_screen_scopes_a_file_that_renders_its_expected_controls() {
 }
 
 /// #2839: `studio2-proof-run-tools` proves the same screens as the click flow `studio2-proof-run`
-/// through the Studio's page tools, so it must never be judged by easier screens: the screens are
-/// equal in every field, each tool-flow edge joins the same screens as the click flow's edge of that
-/// id, an edge whose acts differ carries only tool acts, and every other edge's acts are identical.
+/// through the Studio's page tools, so it must never be judged by easier screens: every click-flow
+/// screen has a tool-flow screen of the same id with the same `url`, `state` and `scope` and every
+/// `expect` of the click flow's screen (the tool flow may add more, as it names the journey it runs,
+/// #2847), each tool-flow edge joins the same screens as the click flow's edge of that id, an edge
+/// whose acts differ carries only tool acts, and every other edge's acts are identical.
 #[test]
-fn the_page_tool_flow_is_judged_by_the_click_flows_screens() {
+fn the_page_tool_flow_is_never_weaker_than_the_click_flows_screens() {
     let read = |id: &str| -> Value {
         let path = repo().join(format!(".graphhelm/journeys/{id}.journey.yaml"));
         serde_yaml_ng::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     };
     let click = read("studio2-proof-run");
     let tools = read("studio2-proof-run-tools");
-    assert_eq!(
-        tools["screens"], click["screens"],
-        "the tool flow's screens must equal the click flow's, field for field"
-    );
+    for screen in click["screens"].as_array().unwrap() {
+        let id = screen["id"].as_str().unwrap();
+        let twin = tools["screens"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|candidate| candidate["id"] == screen["id"])
+            .unwrap_or_else(|| panic!("click-flow screen {id} is missing from the tool flow"));
+        for field in ["url", "state", "scope"] {
+            assert_eq!(
+                twin[field], screen[field],
+                "screen {id}: the tool flow's {field} must equal the click flow's"
+            );
+        }
+        let kept = twin["expect"].as_array().unwrap();
+        for expect in screen["expect"].as_array().unwrap() {
+            assert!(
+                kept.contains(expect),
+                "screen {id}: the tool flow dropped or weakened a click-flow expect: {expect}"
+            );
+        }
+    }
     let click_edges = click["edges"].as_array().unwrap();
     let tool_edges = tools["edges"].as_array().unwrap();
     assert_eq!(

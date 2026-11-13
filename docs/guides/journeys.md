@@ -122,9 +122,15 @@ A button is a command, not an item, so a page opened by a button carries no such
 
 A screen reached by a backend act has no picture, so a preview keeps a text frame for it (`frame: true`,
 `kind: text`). A `cli` screen keeps the command's exit code and masked stdout and stderr; an `http` screen
-keeps the response status, its content type and its body, plus the sha256 of the raw body. Output and body are
-masked like the driver's stderr (every `GRAPHHELM_SECRET_*` value and the home path) and cut to their last
-4096 bytes; an `http` frame says `bodyTruncated: true` when the body was longer. An `http` frame never holds
+keeps the response status, its content type and its body, plus `bodySha256`. Output and body are
+masked like the driver's stderr (every `GRAPHHELM_SECRET_*` value, the home path, and the value of any request
+header whose name contains `auth`, `cookie`, `token`, `secret`, `key`, `session`, `password`, `passwd`,
+`credential`, `signature`, `apikey` or `api-key`, in any case) and cut to their last 4096 bytes; an `http`
+frame says `bodyTruncated: true` when the body was longer. `bodySha256`, and a `cli` frame's `stdoutSha256` and
+`stderrSha256`, are the sha256 of the whole text as decoded (invalid UTF-8 replaced) and masked, taken before
+the cut: they tell two different outputs apart and reveal nothing the masked text does not, so they cannot
+confirm a guess of a masked secret. A result kept before #2879 holds the digest of the unmasked text and is not
+rewritten. An `http` frame never holds
 request headers, cookies, `Set-Cookie`, `Authorization` or any response header other than the content type.
 A result kept before this carries `frame: false` for those screens and still reads. A frame is evidence: it
 is not part of the flow, so keeping it changes no digest or approval.

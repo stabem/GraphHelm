@@ -152,6 +152,58 @@ fn git_before(dir: &Path, args: &[&str], deadline: Instant) -> Result<String, St
     git_with_timeout(dir, args, remaining)
 }
 
+/// The states a ledger record's `state` field can hold. The ledger is persisted, so the strings
+/// are the wire form and never change; a record may also carry a string that is none of these
+/// (hand-edited, or written by another binary), which `of` reports as no state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LedgerState {
+    Initializing,
+    Claimed,
+    Failed,
+    Released,
+    Cleared,
+    Swept,
+    RemoveIncomplete,
+}
+
+impl LedgerState {
+    /// Every state, so a variant that can be written can always be read back by `of`.
+    const ALL: [Self; 7] = [
+        Self::Initializing,
+        Self::Claimed,
+        Self::Failed,
+        Self::Released,
+        Self::Cleared,
+        Self::Swept,
+        Self::RemoveIncomplete,
+    ];
+
+    /// The exact string stored in the ledger and printed in command output.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Initializing => "initializing",
+            Self::Claimed => "claimed",
+            Self::Failed => "failed",
+            Self::Released => "released",
+            Self::Cleared => "cleared",
+            Self::Swept => "swept",
+            Self::RemoveIncomplete => "remove_incomplete",
+        }
+    }
+
+    /// The state a record stores, or `None` for a missing, non-string or unknown value.
+    fn of(record: &Value) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|state| record["state"] == state.as_str())
+    }
+
+    /// Whether the record stores exactly this state; an unknown one is none of them.
+    fn is(self, record: &Value) -> bool {
+        Self::of(record) == Some(self)
+    }
+}
+
 fn write_record(file: &Path, record: &Value) -> std::io::Result<()> {
     let parent = file.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent)?;
@@ -211,7 +263,7 @@ fn run_claim(
     let file = ledger_file(root, lane, task);
     let dir = workspace_dir(root, lane, task);
     let reusable = read_record(&file).is_some_and(|record| {
-        record["state"] == "cleared"
+        LedgerState::Cleared.is(&record)
             && record["repo"].as_str().is_some_and(|saved| {
                 std::fs::canonicalize(repo).is_ok_and(|canonical| Path::new(saved) == canonical)
             })
@@ -269,7 +321,7 @@ fn run_claim(
     let repo_path = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
     let mut record = json!({
         "schema": SCHEMA, "lane": lane, "task": task, "branch": branch, "base": base,
-        "repo": repo_path.to_string_lossy(), "state": "initializing",
+        "repo": repo_path.to_string_lossy(), "state": LedgerState::Initializing.as_str(),
         "baseHead": base_head, "branchPreviouslyExisted": branch_previously_existed,
         "claimPid": std::process::id(), "claimedAt": null, "releasedAt": null,
         "releasedHead": null, "sweptAt": null,
@@ -300,7 +352,7 @@ fn run_claim(
         ],
         WORKTREE_ADD_TIMEOUT,
     ) {
-        record["state"] = json!("failed");
+        record["state"] = json!(LedgerState::Failed.as_str());
         record["claimFailure"] = json!(message);
         if write_record(&file, &record).is_err() {
             return Outcome::internal(COMMAND, "the failed workspace claim could not be recorded");
@@ -315,7 +367,7 @@ fn run_claim(
     for part in PARTS {
         let _ = std::fs::create_dir_all(dir.join(part));
     }
-    record["state"] = json!("claimed");
+    record["state"] = json!(LedgerState::Claimed.as_str());
     record["claimedAt"] = json!(now());
     if write_record(&file, &record).is_err() {
         return Outcome::internal(COMMAND, "the workspace record could not be written");
@@ -376,7 +428,7 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
             "/task",
         );
     };
-    if record["state"] == "initializing" || record["state"] == "failed" {
+    if LedgerState::Initializing.is(&record) || LedgerState::Failed.is(&record) {
         return recover_interrupted_claim(
             &file,
             &record,
@@ -385,7 +437,7 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
             &workspace_dir(root, lane, task),
         );
     }
-    if record["state"] != "claimed" {
+    if !LedgerState::Claimed.is(&record) {
         return refuse(
             COMMAND,
             crate::error_codes::GHCLI037_WORKSPACE_REFUSED,
@@ -415,7 +467,7 @@ fn run_release(root: &Path, lane: &str, task: &str) -> Outcome {
         );
     };
     let dirty = git(&worktree, &["status", "--porcelain"]).map_or(true, |s| !s.is_empty());
-    record["state"] = json!("released");
+    record["state"] = json!(LedgerState::Released.as_str());
     record["releasedAt"] = json!(now());
     record["releasedHead"] = json!(head);
     if write_record(&file, &record).is_err() {
@@ -718,7 +770,7 @@ fn clear_gone(file: &Path, record: &Value, workspace: &Path, lane: &str, task: &
     if workspace.exists() {
         // The remaining build/log directories need the original ledger as their provenance.
         let mut cleared = record.clone();
-        cleared["state"] = json!("cleared");
+        cleared["state"] = json!(LedgerState::Cleared.as_str());
         if write_record(file, &cleared).is_err() {
             return Outcome::internal(
                 COMMAND,
@@ -1864,7 +1916,7 @@ fn live(root: &Path, record: &Value, size_mode: LiveSizeMode, deadline: Instant)
     let blocked = ancestry.unwrap_or(true);
     // The sweep scan reads git state only for released records: keep_reason decides every other
     // state (swept, not_released) before head or dirty are looked at, so those git calls are waste.
-    let inspect_git = !matches!(size_mode, LiveSizeMode::Skip) || record["state"] == "released";
+    let inspect_git = !matches!(size_mode, LiveSizeMode::Skip) || LedgerState::Released.is(record);
     let (head, dirty, status_error) = if blocked {
         (
             None,
@@ -2065,10 +2117,10 @@ fn keep_reason(view: &Value) -> Option<&'static str> {
     if !view["processHolds"].is_null() {
         return Some("process_running");
     }
-    if view["state"] == "swept" {
+    if LedgerState::Swept.is(view) {
         return Some("already_swept");
     }
-    if view["state"] != "released" {
+    if !LedgerState::Released.is(view) {
         return Some("not_released");
     }
     if view["linked"] == json!(true) {
@@ -2140,10 +2192,10 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             view["lane"].as_str().unwrap_or_default().to_owned(),
             view["task"].as_str().unwrap_or_default().to_owned(),
         );
-        let incomplete = record["state"] == "remove_incomplete";
+        let incomplete = LedgerState::RemoveIncomplete.is(&record);
         // Only released records can be removed, so only they pay for the link scan. It runs before
         // the keep decision, as it always has: a link in a released worktree must still be named.
-        if !incomplete && record["state"] == "released" {
+        if !incomplete && LedgerState::Released.is(&record) {
             let worktree = workspace_dir(root, &lane, &task).join("wt");
             // #2606: a live process in the worktree or its target keeps the workspace.
             let target = workspace_dir(root, &lane, &task).join("target");
@@ -2208,7 +2260,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
         });
         if let Err(message) = removal {
             if dir.exists() {
-                record["state"] = json!("remove_incomplete");
+                record["state"] = json!(LedgerState::RemoveIncomplete.as_str());
                 record["removeError"] = json!(message);
                 if let Err(error) = write_record(&ledger_file(root, &lane, &task), &record) {
                     // A ledger that cannot be written is leftover too: report it, do not swallow it (#1504).
@@ -2231,7 +2283,7 @@ pub(crate) fn run_sweep(root: &Path, apply: bool) -> Outcome {
             .chain((incomplete && remove_tree(&worktree).is_err()).then_some("worktree"))
             .collect();
         let _ = std::fs::remove_dir(&dir);
-        record["state"] = json!("swept");
+        record["state"] = json!(LedgerState::Swept.as_str());
         record["sweptAt"] = json!(now());
         let _ = write_record(&ledger_file(root, &lane, &task), &record);
         removed.push(json!({"lane": lane, "task": task, "sizeBytes": size,
@@ -2487,7 +2539,7 @@ fn sweep_removes_the_leftover_of_a_failed_worktree_removal_and_reports_it() {
     write_record(
         &ledger_file(&root, lane, task),
         &json!({"schema": SCHEMA, "lane": lane, "task": task,
-            "state": "remove_incomplete", "worktree": leftover.join("wt").to_string_lossy()}),
+            "state": LedgerState::RemoveIncomplete.as_str(), "worktree": leftover.join("wt").to_string_lossy()}),
     )
     .unwrap();
 
@@ -2634,5 +2686,88 @@ mod process_hold_tests {
             "release still refused after exit: {:?}",
             released.output.diagnostics
         );
+    }
+}
+
+#[cfg(test)]
+mod ledger_state_tests {
+    use super::{LedgerState, keep_reason};
+    use serde_json::{Value, json};
+
+    /// Every stored value a hand-edited or foreign ledger could hold that is not a known state.
+    fn odd_states() -> Vec<Value> {
+        let mut odd = vec![
+            json!({}),
+            json!({"state": null}),
+            json!({"state": 7}),
+            json!({"state": true}),
+            json!({"state": []}),
+            json!({"state": {}}),
+        ];
+        for text in [
+            "Released",
+            " released",
+            "released
+",
+            "",
+            "future_state",
+        ] {
+            odd.push(json!({"state": text}));
+        }
+        odd
+    }
+
+    /// The ledger is persisted: every state keeps the exact string older binaries wrote, and every
+    /// variant that can be written can be read back.
+    #[test]
+    fn every_state_round_trips_through_its_stored_string() {
+        let strings = [
+            "initializing",
+            "claimed",
+            "failed",
+            "released",
+            "cleared",
+            "swept",
+            "remove_incomplete",
+        ];
+        assert_eq!(LedgerState::ALL.len(), strings.len());
+        for (state, text) in LedgerState::ALL.into_iter().zip(strings) {
+            assert_eq!(state.as_str(), text);
+            let record = json!({"state": state.as_str()});
+            assert_eq!(LedgerState::of(&record), Some(state));
+            for other in LedgerState::ALL {
+                assert_eq!(other.is(&record), other == state, "{text} vs {other:?}");
+            }
+        }
+    }
+
+    /// A missing, non-string or unknown state is no state: no `is` call that guards a decision
+    /// (reuse, recovery, release, sweep, link scan) says yes, as `== "x"` never did.
+    #[test]
+    fn an_odd_stored_state_matches_no_state() {
+        for record in odd_states() {
+            assert_eq!(LedgerState::of(&record), None, "{record}");
+            for state in LedgerState::ALL {
+                assert!(!state.is(&record), "{state:?} accepted {record}");
+            }
+        }
+    }
+
+    /// The sweep decision: an odd state is kept as `not_released`, so nothing is removed; swept
+    /// is `already_swept`; only a released record gets past the state checks.
+    #[test]
+    fn keep_reason_keeps_every_state_but_a_released_one() {
+        for record in odd_states() {
+            assert_eq!(keep_reason(&record), Some("not_released"), "{record}");
+        }
+        for state in LedgerState::ALL {
+            let view = json!({"state": state.as_str()});
+            let reason = keep_reason(&view);
+            match state {
+                LedgerState::Swept => assert_eq!(reason, Some("already_swept")),
+                LedgerState::Released => assert_ne!(reason, Some("not_released")),
+                other => assert_eq!(reason, Some("not_released"), "{other:?}"),
+            }
+        }
     }
 }

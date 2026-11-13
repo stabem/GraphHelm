@@ -1833,11 +1833,16 @@ pub struct StepClock {
     pub spent: BTreeMap<String, i64>,
 }
 
-const fn timed_step(step: &str) -> bool {
-    matches!(
-        step.as_bytes(),
-        b"plan" | b"critic" | b"implement" | b"review" | b"merge"
-    )
+/// Whether time spent in `step` is booked on the clock; a new step must say so here.
+const fn timed_step(step: TaskStep) -> bool {
+    match step {
+        TaskStep::Plan
+        | TaskStep::Critic
+        | TaskStep::Implement
+        | TaskStep::Review
+        | TaskStep::Merge => true,
+        TaskStep::Merged => false,
+    }
 }
 
 /// #2703/#2739: the time a record gives the clock. A record that leaves the step as it was and
@@ -1864,8 +1869,8 @@ fn clock_time(
 /// was (an assignment, a stray verdict) only starts the clock when it had no start yet.
 pub fn clock_step(
     clock: &mut StepClock,
-    before: &str,
-    after: &str,
+    before: TaskStep,
+    after: TaskStep,
     at: Option<PersistedTimestamp>,
     resume_after_gap: bool,
 ) {
@@ -1879,7 +1884,7 @@ pub fn clock_step(
         && now_ms - last_ms >= ACTIVE_GAP_MS
     {
         if last_ms > since_ms && timed_step(before) {
-            *clock.spent.entry(before.to_owned()).or_insert(0) += last_ms - since_ms;
+            *clock.spent.entry(before.as_str().to_owned()).or_insert(0) += last_ms - since_ms;
         }
         clock.since = at.clone();
         clock.last_at = at;
@@ -1898,7 +1903,7 @@ pub fn clock_step(
         && now_ms >= since_ms
         && timed_step(before)
     {
-        *clock.spent.entry(before.to_owned()).or_insert(0) += now_ms - since_ms;
+        *clock.spent.entry(before.as_str().to_owned()).or_insert(0) += now_ms - since_ms;
     }
     clock.since = at.clone();
     clock.last_at = at;
@@ -3138,11 +3143,11 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
         // time is Implement's. Judged after the record is applied, so the `task.planned` that ends
         // Plan books the claim's time as Plan's.
         let plan_missing = state.plan.is_none();
-        let timed = |step: TaskStep| -> &'static str {
+        let timed = |step: TaskStep| -> TaskStep {
             if matches!(step, TaskStep::Plan | TaskStep::Critic) && plan_missing {
-                "implement"
+                TaskStep::Implement
             } else {
-                step.as_str()
+                step
             }
         };
         let after = state.step;
@@ -3219,7 +3224,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                     clock_step(
                         &mut claim.state.clock,
                         timed(claim_before),
-                        "merged",
+                        TaskStep::Merged,
                         event.occurred_at.clone(),
                         false,
                     );
@@ -3608,9 +3613,44 @@ mod older_head_clock_tests {
             last_at: Some(at("2026-10-24T11:59:00Z")),
             spent: BTreeMap::new(),
         };
-        clock_step(&mut clock, "review", "review", None, false);
+        clock_step(&mut clock, TaskStep::Review, TaskStep::Review, None, false);
         assert_eq!(clock.last_at, Some(at("2026-10-24T11:59:00Z")));
         assert_eq!(clock.since, Some(at("2026-10-24T10:00:00Z")));
+    }
+
+    #[test]
+    fn leaving_a_step_books_its_time_under_its_name_except_merged() {
+        for (step, key) in [
+            (TaskStep::Plan, Some("plan")),
+            (TaskStep::Critic, Some("critic")),
+            (TaskStep::Implement, Some("implement")),
+            (TaskStep::Review, Some("review")),
+            (TaskStep::Merge, Some("merge")),
+            (TaskStep::Merged, None),
+        ] {
+            let mut clock = StepClock {
+                since: Some(at("2026-10-24T10:00:00Z")),
+                last_at: None,
+                spent: BTreeMap::new(),
+            };
+            let next = if step == TaskStep::Plan {
+                TaskStep::Critic
+            } else {
+                TaskStep::Plan
+            };
+            clock_step(
+                &mut clock,
+                step,
+                next,
+                Some(at("2026-10-24T10:01:00Z")),
+                false,
+            );
+            let booked: Vec<_> = clock.spent.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+            match key {
+                Some(key) => assert_eq!(booked, vec![(key, 60_000)], "{step:?}"),
+                None => assert!(booked.is_empty(), "{step:?}"),
+            }
+        }
     }
 
     fn event(kind: &str, sequence: u64, time: &str, extra: serde_json::Value) -> TaskEventRecord {

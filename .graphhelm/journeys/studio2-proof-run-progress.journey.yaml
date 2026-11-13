@@ -4,8 +4,8 @@ title: A running journey shows its first step's frame and mark before it ends
 name: Watch a run's progress
 feature: Studio
 purpose: "Pressing Run on the fixture's report-slow journey, which plays for several seconds, shows step 1's frame and its web pass mark while the run is still going and step 2 has not finished, and then the run ends Passed with both steps marked."
-status: draft
-approved: null
+status: approved
+approved: {revision: 3503c43be905f3050aea10fcbd6ea832a92f7d8a, digest: sha256:1e6edc4dfd04871c7c100bc3e5298ee4c537680124769afcde0b61fe242f78c3}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

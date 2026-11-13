@@ -1061,7 +1061,7 @@
           "id": "skill/journey-prove",
           "kind": "skill",
           "path": "skills/journey-prove/SKILL.md",
-          "sha256": "sha256:2484a6d86e88fe2856e8f4850d4bcbf711377042c6b3174e5b31fa22fcfd34ae",
+          "sha256": "sha256:0d6bca5634c13445a946af190b0f7691b2a9634a319f3f95f3a3782a5aa603c7",
           "effects": [
             "artifact.local.write",
             "artifact.propose"

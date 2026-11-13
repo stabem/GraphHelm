@@ -4,8 +4,8 @@ title: Clear the Needs action list
 name: Clear needs action
 feature: Studio
 purpose: "Needs action lists the planner's question (the oldest wait) before PR #801 (the newest), and each item's button does its action: Answer opens the reply; Assign hands PR #801 to a free lane and keeps the item for about a minute as a recorded row; Merge, Archive and Reassign each take their item off the list. After each action the board shows what the Runtime recorded."
-status: draft
-approved: null
+status: approved
+approved: {revision: 3503c43be905f3050aea10fcbd6ea832a92f7d8a, digest: sha256:ccde13f370a2a81b0cc1c36d0d7b460dc02c5dcfd49a065f3e7382e10178d30e}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

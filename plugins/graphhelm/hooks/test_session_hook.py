@@ -767,6 +767,47 @@ class SessionHookTests(unittest.TestCase):
         self.assertEqual(spawned, [])
         self.assertFalse(marker.exists())
 
+    def test_a_pid_whose_recorded_start_differs_is_not_a_live_waiter_for_start_and_sweep(self):
+        """A reused PID names a live process that is not the waiter: the start must spawn a new one
+        and the sweep must remove the files. A pid file with no start record (an older waiter) still
+        counts as alive by its PID alone."""
+        hook = self.load_hook()
+        events = Path(self.temp.name) / "events-reused-pid"
+        events.mkdir()
+        state = Path(self.temp.name) / "reused-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        payload = {"session_id": "session-reused-pid"}
+        env = {**self.env, "GRAPHHELM_EVENTS_DIR": str(events), "GRAPHHELM_ACTOR": "gh-lane-1",
+               "GRAPHHELM_HOOK_STATE_DIR": str(state)}
+        # The live process the pid file names is this test process; a "1" start record is not its.
+        for recorded, spawns, swept in (("1", 1, 1), (None, 0, 0)):
+            with self.subTest(recorded=recorded), patch.dict(os.environ, env):
+                marker = hook._waiter_path(payload, bound, "codex")
+                started = hook._waiter_started_path(marker)
+                marker.parent.mkdir(parents=True, exist_ok=True)
+
+                def seed():
+                    marker.write_text(str(os.getpid()), encoding="ascii")
+                    started.unlink(missing_ok=True)
+                    if recorded is not None:
+                        started.write_text(recorded, encoding="ascii")
+
+                seed()
+                spawned = []
+                with patch.object(hook.subprocess, "Popen",
+                                  side_effect=lambda argv, **_kw: spawned.append(argv) or type("C", (), {"pid": 424242})()),                      patch.object(hook, "arm_lane_wake", return_value=5):
+                    hook.start_lane_waiter(payload, bound, "codex")
+                self.assertEqual(len(spawned), spawns)
+                seed()
+                self.assertEqual(hook.sweep_dead_waiters(), swept)
+                self.assertEqual(marker.exists(), not swept)
+                self.assertEqual(started.exists(), not swept and recorded is not None)
+                marker.unlink(missing_ok=True)
+                started.unlink(missing_ok=True)
+
     @unittest.skipUnless(os.name == "nt", "job objects are a Windows host contract")
     def test_start_lane_waiter_leaves_the_hook_job_and_falls_back_when_refused(self):
         """#919: a waiter started inside the hook's job died with it, so no lane held a lease."""

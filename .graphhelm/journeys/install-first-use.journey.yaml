@@ -2,8 +2,8 @@ schema: graphhelm.journey-flow/1
 id: install-first-use
 title: Install GraphHelm from INSTALL.md and run the first commands
 purpose: "A new user follows INSTALL.md in an empty project and the CLI answers, the project is provisioned, the Runtime answers on its own port and graph validate passes."
-status: approved
-approved: {revision: 6ab2351b04f4bda631746d782d04ac2aab2ba78e, digest: sha256:cb60a9828d8c16cf5005d796ff48cf19ebbfe57a09466a71d2e3e9fc0e0444f9}
+status: draft
+approved: null
 base: http://127.0.0.1:1
 actors: [new-user]
 secrets: []
@@ -19,7 +19,7 @@ screens:
     title: The documented install path reaches the first useful commands
     url: /first-use
     state: success
-    expect: [{role: exit, name: "0", because: run.py exits 0 only when every step answered what INSTALL.md says it answers}, {role: stdout, name: version=ok, because: "`graphhelm --version` prints `graphhelm <version>` (INSTALL.md step 2) and a build commit equal to the head of the checkout, so the CLI walked is the head's; any other CLI ends the run unobserved"}, {role: stdout, name: init=ok, because: "init ends with ok:true and leaves events/, events.token, serve.key and keyring/ under .graphhelm/, INSTALL.md step 3"}, {role: stdout, name: runtime=ok, because: "serve starts with no keyring or bind warning, /health names a project and an instance, and the init token is accepted on /v1/executions, INSTALL.md step 4"}, {role: stdout, name: validate=ok, because: "graph validate accepts examples/graphs/software-feature.yaml, the first command a new user runs"}]
+    expect: [{role: exit, name: "0", because: run.py exits 0 only when every step answered what INSTALL.md says it answers}, {role: stdout, name: version=ok, because: "`graphhelm --version` prints `graphhelm <version>` (INSTALL.md step 2) and a build commit that is the head of the checkout, or an ancestor of it with only docs, journey flows, Studio sources or the Studio journey fixture changed since, so the CLI walked is a build of the head's binary inputs; any other CLI ends the run unobserved"}, {role: stdout, name: init=ok, because: "init ends with ok:true and leaves events/, events.token, serve.key and keyring/ under .graphhelm/, INSTALL.md step 3"}, {role: stdout, name: runtime=ok, because: "serve starts with no keyring or bind warning, /health names a project and an instance, and the init token is accepted on /v1/executions, INSTALL.md step 4"}, {role: stdout, name: validate=ok, because: "graph validate accepts examples/graphs/software-feature.yaml, the first command a new user runs"}]
     scope: unknown
 edges:
   - id: install-and-run

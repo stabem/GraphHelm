@@ -32,6 +32,42 @@ use crate::output::{CommandOutput, Outcome};
 const COMMAND: &str = "journey.preview";
 const PREVIEWS: &str = ".graphhelm/journey-previews";
 const STATE: &str = "state.json";
+
+/// The words a preview run's stored `state` field takes, written to `state.json` and read by the
+/// Studio and by an installed binary. `Ready` means finished with a verdict (see `result`), not
+/// success. The answer-only `none` (nothing stored for this flow, digest and commit) is built in
+/// `body_with`, never persisted and never compared, so it is not a word of this field.
+#[derive(Clone, Copy)]
+pub(crate) enum RunState {
+    Running,
+    Ready,
+    Failed,
+}
+
+impl RunState {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// True when the run's stored `state` is exactly `word`. A missing, null, non-string or unknown
+/// state is none of them. The one place the commands read this rule.
+pub(crate) fn run_is(state: &Value, word: RunState) -> bool {
+    state["state"] == word.as_str()
+}
+
+/// True when the run ended: `ready` or `failed`. A missing or unknown state has not ended.
+pub(crate) fn run_finished(state: &Value) -> bool {
+    run_is(state, RunState::Ready) || run_is(state, RunState::Failed)
+}
+
+pub(crate) fn set_run_state(state: &mut Value, word: RunState) {
+    state["state"] = word.as_str().into();
+}
 /// The runner's own stderr (#1298): why a runner that died before finishing stopped.
 const RUNNER_LOG: &str = "runner.log";
 /// The last bytes of `RUNNER_LOG` a lost run carries as its `launchLog.tail`.
@@ -213,7 +249,7 @@ pub(crate) fn run_checkout(project: &Path) -> Value {
 /// what to do; the count is only as current as the last fetch.
 fn new_run_state(project: &Path, digest: &str, commit: &str) -> Value {
     let mut state = json!({"preview":true,"digest":digest,"commit":commit,
-        "runId":uuid::Uuid::new_v4().to_string(),"state":"running",
+        "runId":uuid::Uuid::new_v4().to_string(),"state":RunState::Running.as_str(),
         "startedAt":chrono::Utc::now().to_rfc3339(),"screens":{},"edges":{}});
     record_checkout(&mut state, project);
     state
@@ -741,12 +777,13 @@ fn body_with(
     }
     // The kind follows the flow as it is now: approving it turns the same run into a replay's.
     state["kind"] = kind.into();
-    if state["state"] == "running" && (!within_budget(&state) || liveness(&state) == Liveness::Dead)
+    if run_is(&state, RunState::Running)
+        && (!within_budget(&state) || liveness(&state) == Liveness::Dead)
     {
         // A runner that died without finishing never reports; say so instead of "running" forever.
         // Past its budget the run did not finish in time, whatever became of the runner (#560
         // review): its own watchdog ends it there.
-        state["state"] = "failed".into();
+        set_run_state(&mut state, RunState::Failed);
         state["reason"] = if within_budget(&state) {
             "internal"
         } else {
@@ -930,8 +967,8 @@ fn io_answer(
     path: &Path,
     error: &std::io::Error,
 ) -> Outcome {
-    if data["state"] == "running" {
-        data["state"] = "failed".into();
+    if run_is(&data, RunState::Running) {
+        set_run_state(&mut data, RunState::Failed);
         data["reason"] = code.into();
         if let Some(object) = data.as_object_mut() {
             object.remove("pid");
@@ -952,7 +989,7 @@ fn io_answer(
 
 fn terminal_start_failure(dir: &Path, running: &Value, mut detail: Value) -> Value {
     let mut terminal = running.clone();
-    terminal["state"] = "failed".into();
+    set_run_state(&mut terminal, RunState::Failed);
     terminal["reason"] = detail["code"].clone();
     terminal["detail"] =
         json!({"code":detail["code"],"pointer":detail["pointer"],"message":detail["message"]});
@@ -1171,7 +1208,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
             Ok(lock) => Some(lock),
             Err(detail) => {
                 return answer(
-                    json!({"state":"failed","reason":"preview.busy","detail":detail}),
+                    json!({"state":RunState::Failed.as_str(),"reason":"preview.busy","detail":detail}),
                     None,
                 );
             }
@@ -1185,20 +1222,19 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     // forced start would then overwrite its result and start another run (#1610).
     let running_now = stored
         .as_ref()
-        .is_some_and(|state| state["state"] == "running");
+        .is_some_and(|state| run_is(state, RunState::Running));
     let current = body(stored.clone(), &flow, &digest, &commit);
     if running_now {
-        if current["state"] == "running" {
+        if run_is(&current, RunState::Running) {
             return answer(current, None);
         }
         // A run for an older flow or commit is still going: one runner per flow at a time.
         let mut busy = current;
-        busy["state"] = "failed".into();
+        set_run_state(&mut busy, RunState::Failed);
         busy["reason"] = "preview.busy".into();
         return answer(busy, None);
     }
-    if !args.force && !args.confirm && matches!(current["state"].as_str(), Some("ready" | "failed"))
-    {
+    if !args.force && !args.confirm && run_finished(&current) {
         return answer(current, None);
     }
     if unsealed_proof(args, &flow) {
@@ -1300,7 +1336,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
     // quickly (no observer, app down) must not have its result overwritten by this answer. The
     // runner writes its own pid.
     let mut running = json!({"preview":true,"kind":current["kind"],"digest":digest,"commit":commit,
-        "runId":uuid::Uuid::new_v4().to_string(),"state":"running","startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
+        "runId":uuid::Uuid::new_v4().to_string(),"state":RunState::Running.as_str(),"startedAt":chrono::Utc::now().to_rfc3339(),"current":null,
         "screens":{},"edges":{}});
     // #2468: the door writes the `running` state the runner reuses, so it records the checkout.
     record_checkout(&mut running, &project);
@@ -1313,9 +1349,7 @@ fn start_with(args: &JourneyPreviewArgs, liveness: impl Fn(&Value) -> Liveness) 
             &error,
         );
     }
-    if let Some(previous) = stored
-        .as_ref()
-        .filter(|state| matches!(state["state"].as_str(), Some("ready" | "failed")))
+    if let Some(previous) = stored.as_ref().filter(|state| run_finished(state))
         && let Err(error) = archive(&dir, previous)
     {
         let terminal = terminal_start_failure(
@@ -1401,10 +1435,10 @@ fn watch_budget(
         let Some(mut state) = read_state(&dir) else {
             return;
         };
-        if state["state"] != "running" || state["pid"].as_u64() != Some(u64::from(pid)) {
+        if !run_is(&state, RunState::Running) || state["pid"].as_u64() != Some(u64::from(pid)) {
             return;
         }
-        state["state"] = "failed".into();
+        set_run_state(&mut state, RunState::Failed);
         state["reason"] = "preview.budget_exceeded".into();
         state["current"] = Value::Null;
         state["ranAt"] = chrono::Utc::now().to_rfc3339().into();
@@ -1456,7 +1490,7 @@ fn reap_lost_from_with(
     let Some(probed) = dead.into_inner() else {
         return Some(state);
     };
-    if state["state"] != "running"
+    if !run_is(&state, RunState::Running)
         || state["pid"] != probed["pid"]
         || state["startedAt"] != probed["startedAt"]
     {
@@ -1478,7 +1512,7 @@ fn reap_lost_from_with(
     } else {
         "preview.budget_exceeded"
     };
-    state["state"] = "failed".into();
+    set_run_state(&mut state, RunState::Failed);
     state["reason"] = reason.into();
     state["current"] = Value::Null;
     if let Some(object) = state.as_object_mut() {
@@ -1516,7 +1550,7 @@ fn read_settled_with(
     liveness: &impl Fn(&Value) -> Liveness,
 ) -> Option<Value> {
     let state = read()?;
-    if state["state"] == "running" && liveness(&state) == Liveness::Dead {
+    if run_is(&state, RunState::Running) && liveness(&state) == Liveness::Dead {
         return read();
     }
     Some(state)
@@ -1555,7 +1589,7 @@ fn failed_reason(code: &str) -> &'static str {
 /// `preview.step_failed` and `detail.code` says which: a step timeout used to read `internal`,
 /// and the viewport kept the failed edge as `not_reached`, so nothing named the cause.
 fn record_refusal(flow: &Value, state: &mut Value, code: &str, pointer: &str) {
-    state["state"] = "failed".into();
+    set_run_state(state, RunState::Failed);
     let mut detail = json!({"code":code,"pointer":pointer});
     if code.starts_with("watch.")
         || code.starts_with("observer.")
@@ -2005,7 +2039,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     };
     let dir = dir_for(&project, &args.id, args.validation_dir.as_deref());
     let mut state = read_state(&dir).unwrap_or_else(|| json!({}));
-    if state["digest"] != digest.as_str() || state["state"] != "running" {
+    if state["digest"] != digest.as_str() || !run_is(&state, RunState::Running) {
         state = new_run_state(&project, &digest, &commit);
     }
     state["kind"] = if super::journey_flow::flow_is_approved(&flow) {
@@ -2103,7 +2137,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     }
     let app = match outcome {
         Ok(app) => {
-            run.state["state"] = "ready".into();
+            set_run_state(&mut run.state, RunState::Ready);
             run.state["result"] = worst.into();
             if let Some(reason) = incomplete {
                 run.state["reason"] = reason.into();
@@ -2129,7 +2163,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     };
     // #1309 card 1c: a passing preview is the owner's proof for approve; the runner that played
     // it records it, over the evidence it read, before it publishes completion.
-    if run.state["state"] == "ready" && run.state["result"] == "pass" && !run.validation {
+    if run_is(&run.state, RunState::Ready) && run.state["result"] == "pass" && !run.validation {
         let recorded = record_pass(&run, &project, &digest, &commit);
         run.state["recorded"] = recorded.is_ok().into();
         // #1672: who observed this run, as the record names it: the runner actor, the sha256 of
@@ -3219,7 +3253,7 @@ pub(crate) fn newest_finished(project: &Path, id: &str) -> Option<Value> {
         return None;
     }
     let dir = dir_of(project, id);
-    let finished = |state: &Value| matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let finished = run_finished;
     let (state, run, current) = match read_state(&dir).filter(finished) {
         Some(state) => {
             let run = history_id(&state)?;
@@ -3321,7 +3355,7 @@ pub(crate) fn history_frame(
 /// history list although it is the newest run. `None` when the slot is empty or still running.
 fn slot_run(dir: &Path) -> Option<(String, Value)> {
     let state = read_state(dir)?;
-    if !matches!(state["state"].as_str(), Some("ready" | "failed")) {
+    if !run_finished(&state) {
         return None;
     }
     Some((history_id(&state)?, state))
@@ -3347,15 +3381,15 @@ pub(crate) fn last_run(project: &Path, id: &str, flow: Option<&Value>) -> Value 
         return not_run;
     }
     let dir = dir_of(project, id);
-    let finished = |state: &Value| matches!(state["state"].as_str(), Some("ready" | "failed"));
+    let finished = run_finished;
     let state = read_state(&dir).filter(finished).or_else(|| {
         let history = dir.join("history");
         let newest = history_ids(&history).pop()?;
         read_state(&history.join(newest)).filter(finished)
     });
     let Some(state) = state else { return not_run };
-    let passed = state["state"] == "ready" && state["result"] == "pass";
-    let held = state["state"] == "ready" && state["result"] == "held";
+    let passed = run_is(&state, RunState::Ready) && state["result"] == "pass";
+    let held = run_is(&state, RunState::Ready) && state["result"] == "held";
     let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
     let (viewports, fails_only_on) = viewport_statuses(&state, passed);
     let mut failing = if passed {
@@ -3401,7 +3435,7 @@ pub(crate) fn running(project: &Path, id: &str) -> Value {
         return Value::Null;
     }
     match read_state(&dir_of(project, id)) {
-        Some(state) if state["state"] == "running" && within_budget(&state) => {
+        Some(state) if run_is(&state, RunState::Running) && within_budget(&state) => {
             let text = |key: &str| state[key].as_str().map_or(Value::Null, Value::from);
             json!({"startedAt": text("startedAt"), "current": text("current"), "kind": text("kind")})
         }
@@ -3417,7 +3451,7 @@ fn viewport_statuses(state: &Value, passed: bool) -> (Value, Value) {
         let web = if passed { "passed" } else { "failed" };
         return (json!({"web": web, "mobile": "not_run"}), Value::Null);
     };
-    let finished = state["state"] == "ready";
+    let finished = run_is(state, RunState::Ready);
     let mut statuses = json!({"web": "not_run", "mobile": "not_run"});
     for (name, view) in views {
         if name == "web" || name == "mobile" {
@@ -3497,6 +3531,75 @@ fn sha_of(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The stored words are the wire: the Studio and an installed binary read these exact
+    /// strings, and a missing, null, non-string or unknown `state` is neither running nor ready
+    /// nor finished.
+    #[test]
+    fn the_run_state_words_are_the_persisted_ones() {
+        use super::{RunState, run_finished, run_is, set_run_state};
+        use serde_json::json;
+        assert_eq!(RunState::Running.as_str(), "running");
+        assert_eq!(RunState::Ready.as_str(), "ready");
+        assert_eq!(RunState::Failed.as_str(), "failed");
+        let mut state = json!({"result":"pass"});
+        for (word, running, ready, finished) in [
+            (RunState::Running, true, false, false),
+            (RunState::Ready, false, true, true),
+            (RunState::Failed, false, false, true),
+        ] {
+            set_run_state(&mut state, word);
+            assert_eq!(state["state"], word.as_str());
+            assert_eq!(run_is(&state, RunState::Running), running);
+            assert_eq!(run_is(&state, RunState::Ready), ready);
+            assert_eq!(run_finished(&state), finished);
+        }
+        for odd in [
+            json!({}),
+            json!({"state":null}),
+            json!({"state":3}),
+            json!({"state":"Running"}),
+            json!({"state":"paused"}),
+        ] {
+            assert!(!run_is(&odd, RunState::Running), "{odd}");
+            assert!(!run_is(&odd, RunState::Ready), "{odd}");
+            assert!(!run_finished(&odd), "{odd}");
+        }
+    }
+
+    /// A stored state with no `state`, or one this binary does not know, through the real read
+    /// path: the reaper does not touch it, the answer hands it back, and it is neither a running
+    /// run nor a finished one (not the slot's newest run, not a last run).
+    #[test]
+    fn a_missing_or_unknown_stored_state_is_neither_running_nor_finished() {
+        use serde_json::json;
+        let project = tempfile::tempdir().unwrap();
+        let flow = json!({"status":"draft"});
+        for stored in [
+            json!({"preview":true,"digest":"sha256:aa","commit":"c1","pid":std::process::id(),
+                "startedAt":"2026-11-03T10:00:00Z","screens":{},"edges":{}}),
+            json!({"preview":true,"digest":"sha256:aa","commit":"c1","state":"paused",
+                "pid":std::process::id(),"startedAt":"2026-11-03T10:00:00Z",
+                "screens":{},"edges":{}}),
+        ] {
+            let dir = super::dir_of(project.path(), "flow-a");
+            std::fs::create_dir_all(&dir).unwrap();
+            super::write_state(&dir, &stored).unwrap();
+            let dead = |_: &serde_json::Value| super::Liveness::Dead;
+            let read = super::read_settled_with(|| super::read_state(&dir), &dead).unwrap();
+            assert_eq!(read, stored, "the reaper leaves it alone");
+            let answer = super::body_with(Some(read), &flow, "sha256:aa", "c1", &dead);
+            assert_eq!(answer["state"], stored["state"], "{answer}");
+            assert!(answer.get("reason").is_none(), "{answer}");
+            assert!(super::slot_run(&dir).is_none());
+            assert!(super::running(project.path(), "flow-a").is_null());
+            assert_eq!(
+                super::last_run(project.path(), "flow-a", None)["status"],
+                "not_run"
+            );
+            assert!(super::newest_finished(project.path(), "flow-a").is_none());
+        }
+    }
+
     #[test]
     fn start_diagnostics_mask_secrets_before_cutting_and_bound_redaction_work() {
         let secrets = vec!["canary-long-password".to_owned(), "canary".to_owned()];

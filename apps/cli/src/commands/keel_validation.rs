@@ -490,7 +490,9 @@ pub(crate) fn run(repo: &Path) -> Outcome {
                 .and_then(|output| serde_json::from_slice::<Value>(&output.stdout).ok())
                 .unwrap_or(Value::Null);
             let result = &reply["data"];
-            let mut successful = result["state"] == "ready" && result["result"] == "pass";
+            let mut successful =
+                super::journey_preview::run_is(result, super::journey_preview::RunState::Ready)
+                    && result["result"] == "pass";
             let mut reached = false;
             for path in declared_path_names(flow) {
                 let entry = &result["paths"][&path];

@@ -950,7 +950,7 @@ fn proposed_text(value: &Value) -> Vec<Finding> {
     found
 }
 
-fn mark_digest(flow: &Value, edge: &Value) -> String {
+pub(crate) fn mark_digest(flow: &Value, edge: &Value) -> String {
     let url = flow["screens"]
         .as_array()
         .and_then(|screens| screens.iter().find(|screen| screen["id"] == edge["from"]))

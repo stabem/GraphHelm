@@ -386,7 +386,9 @@ is observed by a GET of its `url`; a `cli`-only flow's start screen is its preco
 not observed, and no launcher is needed. An act that cannot run is `fail`; an unmet expectation
 is `drift`. **Safety.** Backend acts go through the destructive-act guard. Any `http` method other than
 `GET`, `HEAD` or `OPTIONS` (an unknown method included) is a mutation, whatever its path says:
-a draft never sends it (`guard_refused`, even on a launched app), and an approved flow holds it
+a draft sends it only when the preview launched the app itself AND the owner marked that edge
+safe (`journey mark-safe`: the mark must match the edge's current content and the owner's store
+must hold its record), otherwise it is `guard_refused`, and an approved flow holds it
 at `confirm_needed` until the owner's click (`--confirm`). Validation and sabotage never confirm.
 A `cli` act in a draft holds at `confirm_needed` (#1662). The hold names the flow digest and
 every argv in the flow. Only the owner's confirm runs it: the Runtime's owner-only preview route

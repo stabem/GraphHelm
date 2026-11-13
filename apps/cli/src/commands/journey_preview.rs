@@ -2295,6 +2295,12 @@ fn play(
         cli_confirmed,
         cli_reviewed,
     };
+    // #2890: only a draft's mutating `http` act can be freed by the owner's mark.
+    let marked = if approved {
+        Default::default()
+    } else {
+        owner_marked_edges(flow, project)
+    };
     let screens: std::collections::BTreeMap<&str, &Value> = flow["screens"]
         .as_array()
         .unwrap()
@@ -2332,7 +2338,8 @@ fn play(
         run.save();
         let deadline = deadline.min(Instant::now() + PREVIEW_BUDGET);
         play_paths(
-            project, &base, &secrets, &screens, &edges, &paths, backend, guard, deadline, run,
+            project, &base, &secrets, &screens, &edges, &paths, backend, guard, &marked, deadline,
+            run,
         )
     })?;
     // The runner retains ownership until the completed result is stored.
@@ -2428,6 +2435,7 @@ fn play_paths(
     paths: &[(&String, &Value)],
     backend: bool,
     guard: Guard,
+    marked: &std::collections::BTreeSet<&str>,
     deadline: Instant,
     run: &mut Run,
 ) -> Result<bool> {
@@ -2451,7 +2459,9 @@ fn play_paths(
             .map(|id| id.as_str().unwrap())
             .collect();
         if backend {
-            play_backend_path(project, base, screens, edges, &ids, name, guard, run);
+            play_backend_path(
+                project, base, screens, edges, &ids, name, guard, marked, run,
+            );
         } else {
             play_path(
                 project, base, secrets, screens, edges, &ids, name, guard, run,
@@ -2487,9 +2497,10 @@ impl Guard {
     /// argv the owner has seen. #1662: in a draft it holds (`confirm_needed`) until the owner's
     /// store confirms this exact digest and argv list (approval needs a passing preview, so
     /// waiting for approval could never end). A mutating `http` act (any method but GET, HEAD,
-    /// OPTIONS) in a draft is refused even on a launched app, and an approved flow holds it for
-    /// the owner's click.
-    fn stops_before(self, act: &Value) -> Option<&'static str> {
+    /// OPTIONS) in a draft is refused unless the preview launched the app AND the owner marked the
+    /// act's edge safe at its current digest (`http_marked_safe`, #2890); an approved flow holds
+    /// it for the owner's click.
+    fn stops_before(self, act: &Value, http_marked_safe: bool) -> Option<&'static str> {
         let backend = matches!(act["kind"].as_str(), Some("http" | "cli"));
         // #1911: a draft's command runs when its flow is the reviewed one on main (or the owner
         // confirmed this exact argv, #1662); otherwise it waits for review.
@@ -2500,10 +2511,29 @@ impl Guard {
         if self.approved {
             (!self.confirmed).then_some("confirm_needed")
         } else {
-            (backend || !self.launched).then_some("guard_refused")
+            let owner_marked_http = act["kind"] == "http" && http_marked_safe;
+            ((backend && !owner_marked_http) || !self.launched).then_some("guard_refused")
         }
     }
 }
+
+/// #2890: a browser path never carries an `http` act, so no owner mark applies to it.
+const NOT_OWNER_MARKED: bool = false;
+
+/// #2890: the edges of a draft the owner marked safe at their current content. The digest alone
+/// is not enough (whoever writes the file can compute it): the owner's store must hold the mark.
+fn owner_marked_edges<'a>(flow: &'a Value, project: &Path) -> std::collections::BTreeSet<&'a str> {
+    flow["edges"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|edge| super::journey_flow::edge_marked_safe_by_owner(flow, edge, project))
+        .filter_map(|edge| edge["id"].as_str())
+        .collect()
+}
+
+#[cfg(test)]
+mod guard_test;
 
 #[allow(clippy::too_many_arguments)]
 fn play_path(
@@ -2584,7 +2614,7 @@ fn play_path(
             let edge = edges[id];
             let to = edge["to"].as_str().unwrap();
             for act in edge["acts"].as_array().unwrap() {
-                if let Some(reason) = guard.stops_before(act) {
+                if let Some(reason) = guard.stops_before(act, NOT_OWNER_MARKED) {
                     run.edge(id, "skipped", Some(reason));
                     if matches!(reason, "confirm_needed" | "review_needed") {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
@@ -2800,6 +2830,7 @@ fn play_backend_path(
     ids: &[&str],
     path_name: &str,
     guard: Guard,
+    marked: &std::collections::BTreeSet<&str>,
     run: &mut Run,
 ) {
     use super::journey_backend as backend;
@@ -2846,7 +2877,7 @@ fn play_backend_path(
             let to = edge["to"].as_str().unwrap();
             let mut last = None;
             for act in edge["acts"].as_array().unwrap() {
-                if let Some(reason) = guard.stops_before(act) {
+                if let Some(reason) = guard.stops_before(act, marked.contains(id)) {
                     run.edge(id, "skipped", Some(reason));
                     if matches!(reason, "confirm_needed" | "review_needed") {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});
@@ -4988,13 +5019,13 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 cli_confirmed: false,
                 cli_reviewed: false,
             };
-            assert_eq!(held.stops_before(&pay), Some("confirm_needed"));
-            assert_eq!(held.stops_before(&look), None);
+            assert_eq!(held.stops_before(&pay, false), Some("confirm_needed"));
+            assert_eq!(held.stops_before(&look, false), None);
             let clicked = Guard {
                 confirmed: true,
                 ..held
             };
-            assert_eq!(clicked.stops_before(&pay), None);
+            assert_eq!(clicked.stops_before(&pay, false), None);
         }
         let draft = |launched| Guard {
             approved: false,
@@ -5003,8 +5034,11 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             cli_confirmed: false,
             cli_reviewed: false,
         };
-        assert_eq!(draft(false).stops_before(&pay), Some("guard_refused"));
-        assert_eq!(draft(true).stops_before(&pay), None);
+        assert_eq!(
+            draft(false).stops_before(&pay, false),
+            Some("guard_refused")
+        );
+        assert_eq!(draft(true).stops_before(&pay, false), None);
     }
 
     /// #2837: a page tool is the page's own code with the page's privileges, so it is guarded like
@@ -5022,8 +5056,11 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             cli_confirmed: false,
             cli_reviewed: false,
         };
-        assert_eq!(draft(false).stops_before(&tool), Some("guard_refused"));
-        assert_eq!(draft(true).stops_before(&tool), None);
+        assert_eq!(
+            draft(false).stops_before(&tool, false),
+            Some("guard_refused")
+        );
+        assert_eq!(draft(true).stops_before(&tool, false), None);
         let approved = Guard {
             approved: true,
             launched: true,
@@ -5031,12 +5068,12 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             cli_confirmed: false,
             cli_reviewed: false,
         };
-        assert_eq!(approved.stops_before(&tool), Some("confirm_needed"));
+        assert_eq!(approved.stops_before(&tool, false), Some("confirm_needed"));
         let clicked = Guard {
             confirmed: true,
             ..approved
         };
-        assert_eq!(clicked.stops_before(&tool), None);
+        assert_eq!(clicked.stops_before(&tool, false), None);
     }
 
     /// #927 review: backend acts must not bypass the guard. Defects named: a DELETE or POST read
@@ -5056,29 +5093,29 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             };
             for method in ["DELETE", "POST", "put", "BREW"] {
                 assert_eq!(
-                    draft.stops_before(&http(method)),
+                    draft.stops_before(&http(method), false),
                     Some("guard_refused"),
                     "{method}"
                 );
             }
             for method in ["GET", "HEAD", "options"] {
-                assert_eq!(draft.stops_before(&http(method)), None, "{method}");
+                assert_eq!(draft.stops_before(&http(method), false), None, "{method}");
             }
-            assert_eq!(draft.stops_before(&cli), Some("review_needed"));
+            assert_eq!(draft.stops_before(&cli, false), Some("review_needed"));
             // #1911: a draft reviewed on main runs its command; a destructive one stays refused.
             let reviewed = Guard {
                 cli_reviewed: true,
                 ..draft
             };
-            assert_eq!(reviewed.stops_before(&cli), None);
-            assert_eq!(reviewed.stops_before(&wipe), Some("guard_refused"));
+            assert_eq!(reviewed.stops_before(&cli, false), None);
+            assert_eq!(reviewed.stops_before(&wipe, false), Some("guard_refused"));
             // #1662: the owner's confirm of this argv lets it play; a destructive one stays refused.
             let confirmed = Guard {
                 cli_confirmed: true,
                 ..draft
             };
-            assert_eq!(confirmed.stops_before(&cli), None);
-            assert_eq!(confirmed.stops_before(&wipe), Some("guard_refused"));
+            assert_eq!(confirmed.stops_before(&cli, false), None);
+            assert_eq!(confirmed.stops_before(&wipe, false), Some("guard_refused"));
         }
         let approved = Guard {
             approved: true,
@@ -5088,16 +5125,19 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             cli_reviewed: false,
         };
         for method in ["DELETE", "POST"] {
-            assert_eq!(approved.stops_before(&http(method)), Some("confirm_needed"));
+            assert_eq!(
+                approved.stops_before(&http(method), false),
+                Some("confirm_needed")
+            );
         }
-        assert_eq!(approved.stops_before(&http("GET")), None);
-        assert_eq!(approved.stops_before(&cli), None);
-        assert_eq!(approved.stops_before(&wipe), Some("confirm_needed"));
+        assert_eq!(approved.stops_before(&http("GET"), false), None);
+        assert_eq!(approved.stops_before(&cli, false), None);
+        assert_eq!(approved.stops_before(&wipe, false), Some("confirm_needed"));
         let clicked = Guard {
             confirmed: true,
             ..approved
         };
-        assert_eq!(clicked.stops_before(&http("DELETE")), None);
+        assert_eq!(clicked.stops_before(&http("DELETE"), false), None);
     }
 
     /// #1662 review: a command's output never reaches the run state or its evidence with a secret

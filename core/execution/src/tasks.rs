@@ -1035,7 +1035,7 @@ pub fn backlog(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<QueuedIs
     let held = |n: u64| {
         tasks
             .iter()
-            .any(|t| t.issue == Some(n) && t.released_by.is_none() && t.step != TaskStep::Merged)
+            .any(|t| t.issue == Some(n) && t.is_open())
     };
     let mut out: Vec<QueuedIssue> = newest
         .queued
@@ -2087,6 +2087,18 @@ pub struct TaskState {
     pub paths: Vec<String>,
 }
 
+impl TaskState {
+    /// #2892: the one definition of an open slice: its work is still owed by its lane. A slice
+    /// stops being open when its PR merged (`step`), when its claim was released (`released_by`),
+    /// or when its lane was retired under it (`orphaned`, which the fold sets together with
+    /// `released_by`). `step` alone only names the lit step, so a reader asks this instead of
+    /// re-deriving it from the three fields.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.step != TaskStep::Merged && self.released_by.is_none() && !self.orphaned
+    }
+}
+
 /// #562: a design critic round whose task nobody has claimed: no issue, PR or branch.
 #[must_use]
 pub fn is_unclaimed_critic(task: &TaskState) -> bool {
@@ -2376,8 +2388,7 @@ fn slice_for(slices: &mut Vec<Slice>, next_id: &mut usize, event: &TaskEventReco
         .collect();
     let open = |s: &TaskState| {
         s.pr.is_none()
-            && s.step != TaskStep::Merged
-            && s.released_by.is_none()
+            && s.is_open()
             && (s.lane.is_none() || event.lane.is_none() || s.lane == event.lane)
     };
     let mut add = |slices: &mut Vec<Slice>| {
@@ -2467,7 +2478,7 @@ fn slice_for(slices: &mut Vec<Slice>, next_id: &mut usize, event: &TaskEventReco
     } else {
         group.iter().copied().find(|&i| {
             let s = &slices[i].state;
-            s.pr.is_none() && s.step != TaskStep::Merged && s.released_by.is_none()
+            s.pr.is_none() && s.is_open()
         })
     };
     if let Some(index) = claimed {
@@ -2561,8 +2572,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             if event.retired == Some(true) {
                 for slice in slices.iter_mut().filter(|s| {
                     !s.ended
-                        && s.state.step != TaskStep::Merged
-                        && s.state.released_by.is_none()
+                        && s.state.is_open()
                         && s.state
                             .lane
                             .as_ref()
@@ -2599,8 +2609,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
         {
             let found = slices.iter().enumerate().position(|(index, s)| {
                 !s.ended
-                    && s.state.step != TaskStep::Merged
-                    && s.state.released_by.is_none()
+                    && s.state.is_open()
                     && s.state.lane == event.lane
                     && slice_key(&s.state, index) == *key
             });
@@ -2755,8 +2764,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                     if claim.task_id == event.task_id
                         && claim.lane == event.lane
                         && claim.pr.is_none()
-                        && claim.released_by.is_none()
-                        && claim.step != TaskStep::Merged
+                        && claim.is_open()
                         && claim
                             .claim_sequence
                             .is_some_and(|c| c > opened_at && c < event.sequence)
@@ -2796,8 +2804,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
                 if claim.task_id == event.task_id
                     && claim.lane == event.lane
                     && claim.pr.is_none()
-                    && claim.released_by.is_none()
-                    && claim.step != TaskStep::Merged
+                    && claim.is_open()
                     && claim.claim_sequence.is_some_and(|c| c < claim_sequence)
                 {
                     absorbed.push(slices.remove(at));

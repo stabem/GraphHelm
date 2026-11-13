@@ -191,9 +191,7 @@ pub fn classify(
     grace: Grace,
 ) -> Vec<Diagnosis> {
     let gone = |lane: Option<&str>| lane.is_none_or(|lane| silent.contains(lane));
-    let open = |task: &TaskState| {
-        task.released_by.is_none() && task.step != TaskStep::Merged && !task.orphaned
-    };
+    let open = TaskState::is_open;
     // Another open slice of the same issue with a live lane: someone already took the work over.
     let taken_over = |task: &TaskState| {
         task.issue.is_some()

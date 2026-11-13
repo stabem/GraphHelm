@@ -1007,8 +1007,7 @@ fn validate_journey_frames(
         slice.task_id == document["taskId"]
             && slice.pr == pr
             && slice.lane.as_deref() == Some(actor_id)
-            && slice.released_by.is_none()
-            && slice.step != graphhelm_execution::tasks::TaskStep::Merged
+            && slice.is_open()
     }) else {
         return Err(super::signal_invalid(
             "journey frames need an open PR of this task that this lane opened",
@@ -1262,8 +1261,7 @@ fn validate_key_release(
         slice.key == document["sliceKey"]
             && slice.task_id == document["taskId"]
             && slice.lane.as_deref() == document["lane"].as_str()
-            && slice.released_by.is_none()
-            && slice.step != graphhelm_execution::tasks::TaskStep::Merged
+            && slice.is_open()
     });
     if !open {
         return Err(super::signal_invalid(

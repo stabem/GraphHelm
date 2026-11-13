@@ -2704,3 +2704,62 @@ fn a_lanes_identity_is_its_newest_claims_kind_and_model() {
         .is_none()
     );
 }
+
+/// #2892: a slice is open until one of the three endings the fold writes: its PR merged, its
+/// claim was released, or its lane was retired under it. A retired lane's slice is orphaned AND
+/// released, which is what lets every reader ask `is_open` instead of testing the fields apart.
+#[test]
+fn a_slice_is_open_until_it_is_merged_released_or_orphaned() {
+    let claim = claimed(1, "lane-a", "issue-2892", 2892, "issue-2892-x");
+    let only = |records: &[TaskEventRecord]| {
+        let mut tasks = fold_task_events(records);
+        assert_eq!(tasks.len(), 1, "one slice: {tasks:?}");
+        tasks.remove(0)
+    };
+
+    let live = only(std::slice::from_ref(&claim));
+    assert!(live.is_open(), "a claimed slice is open: {live:?}");
+
+    let with_pr = only(&[
+        claim.clone(),
+        opened(2, "lane-a", "issue-2892", 30, "aaaaaaaa"),
+    ]);
+    assert!(with_pr.is_open(), "a slice in review is open: {with_pr:?}");
+
+    let merged_slice = only(&[
+        claim.clone(),
+        opened(2, "lane-a", "issue-2892", 30, "aaaaaaaa"),
+        merged(3, "lane-b", "issue-2892", 30, "bbbbbbbb", &[2892]),
+    ]);
+    assert_eq!(merged_slice.step, TaskStep::Merged);
+    assert!(!merged_slice.is_open(), "a merged slice is not open");
+
+    let released_slice = only(&[
+        claim.clone(),
+        record(
+            2,
+            "task.released",
+            "lane-a",
+            json!({"taskId": "issue-2892", "lane": "lane-a", "claimSequence": 1, "reason": "handing back"}),
+        ),
+    ]);
+    assert_eq!(released_slice.released_by.as_deref(), Some("lane-a"));
+    assert!(!released_slice.is_open(), "a released slice is not open");
+
+    let orphaned_slice = only(&[
+        claim,
+        record(
+            2,
+            "task.lane_retired",
+            "owner",
+            json!({"taskId": "lanes", "lanes": ["lane-a"], "retired": true, "reason": "retired"}),
+        ),
+    ]);
+    assert!(orphaned_slice.orphaned);
+    assert_eq!(
+        orphaned_slice.released_by.as_deref(),
+        Some("owner"),
+        "the fold releases what it orphans"
+    );
+    assert!(!orphaned_slice.is_open(), "an orphaned slice is not open");
+}

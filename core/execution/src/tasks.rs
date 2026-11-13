@@ -733,7 +733,14 @@ pub enum Verdict {
 
 impl Verdict {
     fn parse(value: &serde_json::Value) -> Option<Self> {
-        match value.as_str()? {
+        Self::from_word(value.as_str()?)
+    }
+
+    /// The verdict a comment-text word spells, exactly as `as_str` writes it; any other word,
+    /// in any other case or with any padding, is no verdict.
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        match word {
             "APPROVE" => Some(Self::Approve),
             "APPROVE-WITH-RISK" => Some(Self::ApproveWithRisk),
             "BLOCK" => Some(Self::Block),
@@ -3593,6 +3600,21 @@ pub fn task_durations(
                 .count(),
             ..population
         },
+    }
+}
+
+#[cfg(test)]
+mod verdict_word_tests {
+    use super::*;
+
+    #[test]
+    fn a_verdict_word_is_read_exactly_as_it_is_written() {
+        for verdict in [Verdict::Approve, Verdict::ApproveWithRisk, Verdict::Block] {
+            assert_eq!(Verdict::from_word(verdict.as_str()), Some(verdict));
+        }
+        for word in ["approve", "APPROVE ", " BLOCK", "APPROVE-X", "LGTM", ""] {
+            assert_eq!(Verdict::from_word(word), None, "{word:?}");
+        }
     }
 }
 

@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use graphhelm_execution::{
-    ChangedSince, Freshness, GitHistory, ScopeHistory, UnknownCause, fold_journeys,
+    ChangedSince, Freshness, GitHistory, ScopeHistory, UnknownCause, fold_journeys, tasks::Verdict,
     valid_journey_id,
 };
 use graphhelm_policy::keel::{self as policy_keel, Card, Finding, JourneyScreen, KeelPolicy};
@@ -150,13 +150,13 @@ pub(super) fn verdict(head: &str, reviewer: &str, comments_path: &Path) -> Outco
         if !verdict_identity_matches(&comment.body, reviewer, &short_head) {
             continue;
         }
-        let Some(value) = comment_verdict(&comment.body) else {
+        let Some(verdict) = comment_verdict(&comment.body) else {
             continue;
         };
-        if value == "BLOCK" {
+        if verdict == Verdict::Block {
             matching_block_ids.push(comment.id.clone());
         }
-        verdicts.push(serde_json::json!({"commentId": comment.id, "verdict": value}));
+        verdicts.push(serde_json::json!({"commentId": comment.id, "verdict": verdict.as_str()}));
     }
     Outcome::success(
         VERDICT_COMMAND,
@@ -184,21 +184,14 @@ fn verdict_identity_matches(body: &str, reviewer: &str, head: &str) -> bool {
     identity_lines.len() == 1 && identity_lines[0] == format!("Session: {reviewer} · Head: {head}")
 }
 
-fn comment_verdict(body: &str) -> Option<&'static str> {
+fn comment_verdict(body: &str) -> Option<Verdict> {
     body.lines().find_map(|line| {
         let line = line.trim();
         let line = line.strip_prefix("**").unwrap_or(line);
-        ["APPROVE-WITH-RISK", "APPROVE", "BLOCK"]
-            .into_iter()
-            .find(|verdict| {
-                line == *verdict
-                    || line
-                        .strip_prefix(verdict)
-                        .and_then(|suffix| suffix.chars().next())
-                        .is_some_and(|first| {
-                            first.is_whitespace() || first == ':' || first == '|' || first == '*'
-                        })
-            })
+        let word_end = line
+            .find(|c: char| c.is_whitespace() || matches!(c, ':' | '|' | '*'))
+            .unwrap_or(line.len());
+        Verdict::from_word(&line[..word_end])
     })
 }
 
@@ -1426,6 +1419,26 @@ mod tests {
     use super::*;
     use std::process::Stdio;
     use std::thread;
+
+    /// #2918: the verdict word opens a comment line, bare or bold, and ends at whitespace of any
+    /// kind, `:`, `|` or `*`; the bold marker is stripped once; a longer word is no verdict.
+    #[test]
+    fn a_comment_verdict_is_the_word_that_opens_a_line() {
+        let read = |body: &str| comment_verdict(body).map(Verdict::as_str);
+        assert_eq!(read("**BLOCK**"), Some("BLOCK"));
+        assert_eq!(read("  APPROVE: fine"), Some("APPROVE"));
+        assert_eq!(
+            read("APPROVE-WITH-RISK | one risk"),
+            Some("APPROVE-WITH-RISK")
+        );
+        assert_eq!(read("text\nBLOCK"), Some("BLOCK"));
+        assert_eq!(read("APPROVE\u{a0}rest"), Some("APPROVE"));
+        assert_eq!(read("APPROVE-X"), None);
+        assert_eq!(read("BLOCKED"), None);
+        assert_eq!(read("approve"), None);
+        assert_eq!(read("****BLOCK"), None);
+        assert_eq!(read(""), None);
+    }
 
     const KEEL_POLICY_SCHEMA: &str = include_str!(
         "../../../../extensions/builtin/graphhelm-development-contracts/schemas/keel-policy.schema.json"

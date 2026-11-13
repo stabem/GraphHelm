@@ -569,6 +569,33 @@ mod tests {
     const GENESIS: &str = "sha256:35c8ab0717bef1684ad07efcf3bedd4648c778a2c944cbd2c7e6a4802e2237b3";
     const EXECUTION: &str = "exec-briefing";
 
+    /// `next_step` keeps its own exhaustive match on the run status (deliberately not a call to
+    /// `SimulationStatus::is_terminal`, see that method). This pins the two spellings together:
+    /// the briefing reports the run finished exactly when `is_terminal` says so.
+    #[test]
+    fn next_step_reports_finished_exactly_when_the_status_is_terminal() {
+        for status in [
+            SimulationStatus::Running,
+            SimulationStatus::Completed,
+            SimulationStatus::Failed,
+            SimulationStatus::Paused,
+            SimulationStatus::Blocked,
+            SimulationStatus::Cancelled,
+        ] {
+            let projection = ExecutionProjection {
+                execution_id: Some(EXECUTION.to_owned()),
+                simulation_status: Some(status.clone()),
+                ..ExecutionProjection::default()
+            };
+            let answer = attention(&projection, &AttentionInputs::default());
+            let finished = matches!(
+                next_step(&projection, &answer),
+                NextStep::Finished { status: ref reported } if *reported == status
+            );
+            assert_eq!(finished, status.is_terminal(), "{status:?}");
+        }
+    }
+
     fn actor(actor_type: PersistedActorType, id: &str) -> PersistedActor {
         PersistedActor::new(actor_type, ActorId::parse(id.to_owned()).unwrap())
     }

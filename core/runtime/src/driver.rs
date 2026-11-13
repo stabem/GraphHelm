@@ -1193,14 +1193,10 @@ async fn drive_inner(
     preflight_diagnostics.extend(delegation_declaration_diagnostics(&spec)?);
     if !preflight_diagnostics.is_empty() {
         let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
-        let already_terminal = matches!(
-            projection.simulation_status,
-            Some(
-                SimulationStatus::Completed
-                    | SimulationStatus::Failed
-                    | SimulationStatus::Cancelled
-            )
-        );
+        let already_terminal = projection
+            .simulation_status
+            .as_ref()
+            .is_some_and(SimulationStatus::is_terminal);
         if !already_terminal {
             append_preflight_refusal(
                 &store_open,
@@ -1801,21 +1797,15 @@ async fn drive_inner(
     if pending_proposal {
         return Ok(projection);
     }
-    let already_terminal = matches!(
-        projection.simulation_status,
-        Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)
-    );
+    let already_terminal = projection
+        .simulation_status
+        .as_ref()
+        .is_some_and(SimulationStatus::is_terminal);
     let all_terminal = spec.nodes.keys().all(|node| {
-        matches!(
-            projection.node_states.get(node),
-            Some(
-                NodeState::Succeeded
-                    | NodeState::Failed
-                    | NodeState::Waived
-                    | NodeState::Skipped
-                    | NodeState::Cancelled
-            )
-        )
+        projection
+            .node_states
+            .get(node)
+            .is_some_and(|state| graphhelm_execution::is_terminal(*state))
     });
     if all_terminal && !already_terminal {
         let all_success = spec.nodes.keys().all(|node| {

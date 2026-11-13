@@ -156,6 +156,23 @@ pub enum SimulationStatus {
     Cancelled,
 }
 
+impl SimulationStatus {
+    /// Whether the run is finished: `Completed`, `Failed` or `Cancelled`. `Running`, `Paused` and
+    /// `Blocked` can still move.
+    ///
+    /// The match has no `_` arm on purpose: a new status does not compile until it is classified
+    /// here. The one other spelling of this set is the exhaustive match in the execution crate's
+    /// briefing `next_step`, kept as a match because it also binds the status for
+    /// `NextStep::Finished`; a test there pins it to this method.
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        match self {
+            Self::Completed | Self::Failed | Self::Cancelled => true,
+            Self::Running | Self::Paused | Self::Blocked => false,
+        }
+    }
+}
+
 /// A deterministic node outcome supplied to the effect-free simulator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -167,7 +184,23 @@ pub enum FixtureOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::NodeState;
+    use super::{NodeState, SimulationStatus};
+
+    /// The terminal set is Completed, Failed and Cancelled; a run that is still moving or only
+    /// stopped for now (Running, Paused, Blocked) is not finished.
+    #[test]
+    fn only_completed_failed_and_cancelled_runs_are_terminal() {
+        for (status, terminal) in [
+            (SimulationStatus::Running, false),
+            (SimulationStatus::Completed, true),
+            (SimulationStatus::Failed, true),
+            (SimulationStatus::Paused, false),
+            (SimulationStatus::Blocked, false),
+            (SimulationStatus::Cancelled, true),
+        ] {
+            assert_eq!(status.is_terminal(), terminal, "{status:?}");
+        }
+    }
 
     /// A proposed expansion must be representable in the one shared vocabulary. A second
     /// execution-only enum would let simulation and execution drift apart permanently.

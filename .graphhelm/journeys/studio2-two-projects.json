@@ -91,7 +91,8 @@
           "apps/studio/src/sidebar/Sidebar.tsx",
           "apps/studio/src/topbar/Topbar.tsx",
           "apps/studio/src/sidebar/project-summary.ts",
-          "apps/studio/src/login/session.ts"
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/graph/RequestsView.tsx"
         ],
         "screenId": "first",
         "title": "demo is open with its own run"
@@ -157,7 +158,8 @@
           "apps/studio/src/sidebar/Sidebar.tsx",
           "apps/studio/src/topbar/Topbar.tsx",
           "apps/studio/src/sidebar/project-summary.ts",
-          "apps/studio/src/login/session.ts"
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/graph/RequestsView.tsx"
         ],
         "screenId": "second",
         "title": "The added project opens with its own run"

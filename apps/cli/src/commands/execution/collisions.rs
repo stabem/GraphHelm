@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use graphhelm_execution::tasks::{TaskState, TaskStep};
+use graphhelm_execution::tasks::TaskState;
 use serde::Serialize;
 
 use super::tasks::TasksView;

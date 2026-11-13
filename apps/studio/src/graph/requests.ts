@@ -1,5 +1,6 @@
 import type { BoardTask, JourneyFlow, TasksBoard } from "../runtime/client";
 import { minutesInStep } from "../lanes/board";
+import { lastRunChip } from "../proof/steps";
 
 /** #1801: one owner request as `GET /v1/executions/{id}/requests` serves it (#1792 R1). */
 export interface OwnerRequest {
@@ -28,7 +29,7 @@ export interface ElsewhereLink {
 }
 
 /** The Kanban columns of the design, left to right. "Merged" is not done: a card is Proven only
- * when every journey its slice names passed its last run. */
+ * when every journey its slice names last passed as a replay of the current flow. */
 export const KANBAN = ["ready", "implementing", "review", "merged", "proven"] as const;
 export type KanbanColumn = (typeof KANBAN)[number];
 export const KANBAN_NAME: Record<KanbanColumn, string> = {
@@ -39,11 +40,13 @@ export const KANBAN_NAME: Record<KanbanColumn, string> = {
   proven: "Proven",
 };
 
-/** Whether every journey a slice names passed its last run. A slice naming none, or a journey with
- * no recorded run (an older Runtime, or never run), is not proven: absence is not a pass. */
+/** Whether every journey a slice names is proven by its last run. A slice naming none, or a journey
+ * with no recorded run (an older Runtime, or never run), is not proven: absence is not a pass.
+ * #2895: what counts as proof is the Proof view's rule (`lastRunChip`), so the two views cannot
+ * disagree: a preview pass, a pass of an older version of the flow and a run that waits are not. */
 export function proven(task: Pick<BoardTask, "journeys">, flows: readonly JourneyFlow[]): boolean {
   if (task.journeys.length === 0) return false;
-  return task.journeys.every((id) => flows.find((flow) => flow.id === id)?.lastRun?.status === "passed");
+  return task.journeys.every((id) => lastRunChip(flows.find((flow) => flow.id === id)?.lastRun).category === "passed");
 }
 
 /** The column a slice sits in: a stall it owes first, then its step; a merged slice is Proven only

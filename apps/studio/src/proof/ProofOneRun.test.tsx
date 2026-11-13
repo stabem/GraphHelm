@@ -87,6 +87,38 @@ describe("one Run at a time for a journey, card and panel (#2939)", () => {
     expect(startJourneyRun).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps that card's Run disabled when another journey is picked while the panel's start request is in flight", async () => {
+    const { runtime, startJourneyRun, answer } = heldStart();
+    await mount(runtime);
+    await act(async () => { panelRun().click(); });
+    await settle();
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="Select Run a journey"]')!.click(); });
+    await settle();
+
+    expect(cardRun("See the lanes").disabled).toBe(true);
+    await act(async () => { cardRun("See the lanes").click(); });
+    expect(startJourneyRun).toHaveBeenCalledTimes(1);
+
+    await act(async () => { answer(); });
+    await settle();
+    expect(cardRun("See the lanes").disabled).toBe(false);
+  });
+
+  it("gives both Run buttons back when the start request is refused", async () => {
+    let refuse: (cause: unknown) => void = () => undefined;
+    const startJourneyRun = vi.fn(() => new Promise((_resolve, reject) => { refuse = reject; }));
+    const runtime = { journeyRun: async () => ({ state: "none" }), journeyHistory: async () => [], requests: async () => [], journeyFrame: async () => null, startJourneyRun } as unknown as Runtime;
+    await mount(runtime);
+    await act(async () => { panelRun().click(); });
+    await settle();
+    expect(cardRun("See the lanes").disabled).toBe(true);
+
+    await act(async () => { refuse(new Error("refused")); });
+    await settle();
+    expect(cardRun("See the lanes").disabled).toBe(false);
+    expect(panelRun().disabled).toBe(false);
+  });
+
   it("gives the card's Run back once the panel's start request is answered and the run has ended", async () => {
     const { runtime, answer } = heldStart();
     (runtime as unknown as { journeyRun: () => Promise<unknown> }).journeyRun = async () => ({ state: "ready", result: "pass", screens: {}, edges: {} });

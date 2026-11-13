@@ -2723,21 +2723,14 @@ fn a_terminal_draft_does_not_clear_a_different_pending_one() {
         ("p-b", proposed("draft-b", true)),
         ("p-c", proposed("draft-c", true)),
         ("p-d", proposed("draft-d", true)),
+        ("p-e", proposed("draft-e", true)),
         ("r-a", rejected("draft-a")),
         ("ap-b", applied("draft-b")),
+        ("r-e", rejected("draft-e")),
+        ("ap-e", applied("draft-e")),
     ]);
+    // draft-e holds both terminal outcomes and is not pending either.
     assert_eq!(pending, ["draft-c", "draft-d"]);
-}
-
-/// Either terminal outcome ends a draft, including a history that holds both.
-#[test]
-fn a_draft_both_rejected_and_applied_is_not_pending() {
-    let pending = pending_after(vec![
-        ("p-a", proposed("draft-a", true)),
-        ("r-a", rejected("draft-a")),
-        ("ap-a", applied("draft-a")),
-    ]);
-    assert!(pending.is_empty());
 }
 
 /// A legacy proposal event without a digest can repeat an id and replay cleanly; each proposal

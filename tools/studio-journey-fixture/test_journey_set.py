@@ -16,6 +16,12 @@ SCRIPT = HERE / "journey_set.sh"
 LIST = HERE / "journeys.list"
 SHELL = r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else "bash"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# #2869: a studio2 flow whose own journey is never shown in Proof is not listed, so the total that
+# flows pin ("1 of 24 journeys") does not move for it; it runs a journey of its own that fixture.sh
+# seeds for that flow only.
+UNLISTED = {
+    "studio2-proof-run-progress": "it presses Run on report-slow, which fixture.sh seeds for this flow alone",
+}
 
 
 def run(*args):
@@ -70,8 +76,11 @@ class JourneySet(unittest.TestCase):
         result = run("check", ROOT / ".graphhelm" / "journeys", LIST)
         self.assertEqual(result.returncode, 0, result.stderr)
         for flow in sorted((ROOT / ".graphhelm" / "journeys").glob("studio2-*.journey.yaml")):
-            self.assertIn(flow.name.removesuffix(".journey.yaml"), ids,
-                          "every studio2 flow is played on this fixture, so it is listed")
+            flow_id = flow.name.removesuffix(".journey.yaml")
+            if flow_id in UNLISTED:
+                self.assertNotIn(flow_id, ids, f"{flow_id} is exempt from the list; {UNLISTED[flow_id]}")
+                continue
+            self.assertIn(flow_id, ids, "every studio2 flow is played on this fixture, so it is listed")
 
 
 if __name__ == "__main__":

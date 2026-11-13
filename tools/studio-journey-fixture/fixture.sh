@@ -450,6 +450,64 @@ drift: []
 FLOW
     git -C "$dir/project" add -f -- .graphhelm/journeys/health-slow.journey.yaml
   fi
+  # #2869: studio2-proof-run-progress needs a browser run whose second step is still playing after
+  # its first step has its frame and mark: a draft reading a FIXTURE-ONLY loopback page that shows its
+  # "Open report" button 12 seconds after it loads. Step 1 (the page opened) is done at once; step 2
+  # (the button) waits on the page's own clock, not on the flow. Only for that flow, so no other
+  # flow's journey count changes. Its pid is recorded, so down stops it.
+  if [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-proof-run-progress ]; then
+    rm -f "$dir/.graphhelm/report.port"
+    nohup node -e '
+      const fs = require("fs"); const file = process.argv[1];
+      const page = "<!doctype html><html lang=en><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>Weekly report</title></head><body><h1>Weekly report</h1><p>Preparing the report.</p><script>setTimeout(function () { var b = document.createElement(\"button\"); b.textContent = \"Open report\"; document.body.appendChild(b); }, 12000);</script></body></html>";
+      const server = require("http").createServer((_, res) => { res.setHeader("content-type", "text/html; charset=utf-8"); res.end(page); });
+      server.listen(0, "127.0.0.1", () => fs.writeFileSync(file, String(server.address().port)));
+      setTimeout(() => process.exit(0), 3600000);
+    ' "$dir/.graphhelm/report.port" > /dev/null 2>&1 &
+    echo "report-server $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
+    for _ in $(seq 1 50); do [ -s "$dir/.graphhelm/report.port" ] && break; sleep 0.2; done
+    report=$(cat "$dir/.graphhelm/report.port" 2> /dev/null || true)
+    [[ "$report" =~ ^[0-9]+$ ]] || { echo 'fixture: the report server did not start' >&2; exit 1; }
+    cat > "$dir/project/.graphhelm/journeys/report-slow.journey.yaml" <<FLOW
+schema: graphhelm.journey-flow/1
+id: report-slow
+title: Open the weekly report
+name: Open the weekly report
+purpose: "The fixture's browser draft with two steps whose second one plays for several seconds: its page shows the report button after a wait."
+status: draft
+approved: null
+base: http://127.0.0.1:$report
+actors: [owner]
+secrets: []
+risks: []
+viewports: [web]
+screens:
+  - id: opened
+    title: The report page is open
+    url: /
+    state: stable
+    expect: [{role: heading, name: Weekly report, because: the page names the report the owner opened}]
+    scope: unknown
+  - id: ready
+    title: The report button is there
+    url: /
+    state: success
+    expect: [{role: button, name: Open report, because: the page offers the report only after its own wait}]
+    scope: unknown
+edges:
+  - id: wait
+    from: opened
+    to: ready
+    why: The report button appears after the page's own wait, so this step plays for several seconds.
+    acts:
+      - {kind: wait_for, role: button, name: Open report}
+paths:
+  main: [wait]
+drift: []
+FLOW
+    "$bin" --json journey compile report-slow --fmt --include-draft --project "$dir/project" > /dev/null 2>&1 || true
+    git -C "$dir/project" add -f -- .graphhelm/journeys/report-slow.journey.yaml .graphhelm/journeys/report-slow.json
+  fi
   git -C "$dir/project" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: observer seed flow'
   # #1901: the Studio opens a project's team run by itself, so a project with no run at all needs a
   # fixture that starts none: GRAPHHELM_FIXTURE_EMPTY=1, or the studio2-no-run flow, skips both the

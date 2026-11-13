@@ -60,7 +60,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Last action\" saying \"Merge requested\", no button \"Merge lane-author\"",
+      "statement": "shows status \"Last action\" saying \"Asked to merge\", no button \"Ask to merge lane-author\"",
       "statesToObserve": [
         "success"
       ],
@@ -229,7 +229,7 @@
           "geometryClaim": false,
           "role": "button",
           "strategy": "accessible_name",
-          "value": "Merge lane-author"
+          "value": "Ask to merge lane-author"
         }
       },
       "stepId": "merged"

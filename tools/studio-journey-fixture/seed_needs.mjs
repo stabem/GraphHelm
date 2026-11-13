@@ -8,7 +8,7 @@
 // silence budget has passed since its last record, by the Runtime's own clock, which no record
 // can backdate (the fixture starts it with a one-minute budget), so `fresh` first waits that long,
 // then records what must stay recent: a PR with no
-// reviewer (Assign), an approved PR (Merge), and `lane-free`, a live lane that owes nothing and so
+// reviewer (Assign), an approved PR (Merge), and `lane-free` and `lane-spare`, live lanes that owe nothing and so
 // can take assigned or reassigned work. Every record goes through the Runtime's public signal route, signed by
 // the lane it names; a refusal stops the fixture.
 import fs from 'node:fs';
@@ -65,7 +65,11 @@ if (phase === 'silent') {
   await record('lane-review', 'task.review_verdict', { taskId: 'issue-802-needs', pr: 802, headSha: '802abcde', reviewer: 'lane-review', verdict: 'APPROVE', commentUrl: 'https://github.com/stabem/GraphHelm/pull/802#review' });
   // A lane is on the board only once it held a slice; lane-free claims one and releases it, so it
   // is live and owes nothing: the lane Assign and Reassign hand work to.
-  const sequence = await claim('lane-free', 806, 'Picked up and handed back');
-  if (!Number.isInteger(sequence)) throw new Error('seed_needs: the claim reported no sequence');
-  await record('lane-free', 'task.released', { taskId: 'issue-806-needs', lane: 'lane-free', claimSequence: sequence, reason: 'Handed back; free for new work.' });
+  // Two of them: an Assign gives its reviewer an open review, and a lane that owes one is no longer
+  // free, so the Reassign that follows on the same board (the flow's main path) needs its own lane.
+  for (const [lane, issue] of [['lane-free', 806], ['lane-spare', 807]]) {
+    const sequence = await claim(lane, issue, 'Picked up and handed back');
+    if (!Number.isInteger(sequence)) throw new Error('seed_needs: the claim reported no sequence');
+    await record(lane, 'task.released', { taskId: `issue-${issue}-needs`, lane, claimSequence: sequence, reason: 'Handed back; free for new work.' });
+  }
 }

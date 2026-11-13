@@ -4,8 +4,8 @@ title: Clear the Needs action list
 name: Clear needs action
 feature: Studio
 purpose: "Needs action lists the planner's question (the oldest wait) before PR #801 (the newest), and each item's button does its action: Answer opens the reply, and Assign, Merge, Archive and Reassign each take their item off the list."
-status: approved
-approved: {revision: 715d1cbd09203211ceaeb397b4c546f733df88e8, digest: sha256:ec6cc940a4072f9364e64ae930b848160168ddbd9854782f8f1a41d45e0a88d5}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -45,14 +45,14 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Merge requested, because: "the Studio asks the lane to merge PR #802; the merge itself is the lane's"}, {role: button, name: Merge lane-author, absent: true, because: "the merge was requested, so the approved PR no longer waits on the owner"}]
+    expect: [{role: status, name: Last action, text: Asked to merge, because: "the Studio asks the lane to merge PR #802; the merge itself is the lane's"}, {role: button, name: Ask to merge lane-author, absent: true, because: "the merge was requested, so the approved PR no longer waits on the owner"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: reassigned
     title: Reassign takes the quiet lane's slice off the list
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Reassigned, because: "the Runtime recorded #803 as handed from lane-quiet to lane-free"}, {role: button, name: Reassign lane-quiet, absent: true, because: "#803 has a live owner again, so its item leaves Needs action"}]
+    expect: [{role: status, name: Last action, text: Reassigned, because: "the Runtime recorded #803 as handed from lane-quiet to lane-spare, the free lane the Assign before it left"}, {role: button, name: Reassign lane-quiet, absent: true, because: "#803 has a live owner again, so its item leaves Needs action"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
 edges:
   - id: answered.assigned
@@ -72,7 +72,7 @@ edges:
     to: merged
     why: "The owner lands approved work without opening GitHub, so a finished pull request stops waiting on him."
     acts:
-      - {kind: activate, role: button, name: Merge lane-author}
+      - {kind: activate, role: button, name: Ask to merge lane-author}
   - id: list.answered
     from: list
     to: answered

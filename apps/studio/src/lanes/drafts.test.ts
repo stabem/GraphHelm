@@ -36,7 +36,7 @@ describe("the owner's Assign (#1889)", () => {
     // core/execution/src/tasks.rs parse_task_event: schema, taskId, revision, then pr, headSha, reviewer;
     // wake.rs wakes the lane the description's `reviewer` names.
     expect(JSON.parse(signal.description as string)).toEqual({
-      schema: "graphhelm-task-event-v1", taskId: "issue-7", revision: 1, at: "2026-10-28T21:24:05Z", pr: 12, headSha: head, reviewer: "lane-r",
+      schema: "graphhelm-task-event-v1", taskId: "issue-7", revision: 1, at: "2026-10-28T21:24:05Z", pr: 12, headSha: head, reviewer: "lane-r", ordinal: 1,
     });
   });
 });

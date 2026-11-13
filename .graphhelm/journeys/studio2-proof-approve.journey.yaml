@@ -4,8 +4,8 @@ title: Approve or reject a run journey
 name: Approve a journey
 feature: Studio
 purpose: "On the fully run runtime-health journey, Reject without a reason records nothing, Reject with a reason records the rejection and shows the reason, and a later Approve records the approval; each time the runtime-health row in the journey list shows the new status."
-status: approved
-approved: {revision: d747031829659af960ca02d926a90691436a1ae5, digest: sha256:947f86a8e93ee9e19913638da9c7055bf5e130d29ec165598ef0ca36be964bf6}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -31,7 +31,7 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof&journey=runtime-health
     ignoreQuery: [session, project]
     state: error
-    expect: [{role: alert, name: Say why the journey is rejected before rejecting it., because: "Reject with an empty reason is refused in the decision bar, and the alert tells the owner to type a reason first"}, {role: status, name: Rejected, absent: true, because: "a rejection with no reason is refused before it reaches the Runtime, so the decision bar shows no Rejected status"}, {role: listitem, name: Read the Runtime health, text: "preview, not proof 2/2", because: "runtime-health's row still goes straight from its last run to its score 2/2, with no decision chip between them; after a recorded rejection that row reads rejected before the score"}, {role: button, name: Reject, because: the decision is still open after the refusal}]
+    expect: [{role: alert, name: Decision could not be recorded, text: Say why the journey is rejected before rejecting it., because: "Reject with an empty reason is refused in the decision bar, and the alert tells the owner to type a reason first"}, {role: status, name: Rejected, absent: true, because: "a rejection with no reason is refused before it reaches the Runtime, so the decision bar shows no Rejected status"}, {role: listitem, name: Read the Runtime health, text: "preview, not proof 2/2", because: "runtime-health's row still goes straight from its last run to its score 2/2, with no decision chip between them; after a recorded rejection that row reads rejected before the score"}, {role: button, name: Reject, because: the decision is still open after the refusal}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/decision.ts]
   - id: rejected
     title: "A rejected journey shows as rejected, with its reason"

@@ -45,6 +45,14 @@ describe("a passed command run (#1912)", () => {
     expect(countSteps(steps)).toEqual({ passed: 2, waits: 0, failed: 0, notRun: 0 });
   });
 
+  it("reads the start screen as the precondition when the Runtime kept it as a passed text frame (#2161)", () => {
+    const kept: JourneyRun = { ...passed, screens: { ...passed.screens, start: { frame: true, kind: "text", precondition: true, result: "pass" } } };
+    expect(journeySteps(flow, kept).map((step) => step.status)).toEqual(["precondition", "passed", "passed"]);
+    // A start screen that is a real passed step (no precondition mark) stays passed.
+    const real: JourneyRun = { ...passed, screens: { ...passed.screens, start: { frame: true, kind: "text", result: "pass" } } };
+    expect(journeySteps(flow, real)[0]!.status).toBe("passed");
+  });
+
   it("keeps not run for a start screen before any run", () => {
     expect(journeySteps(flow, null)[0]!.status).toBe("not run");
   });

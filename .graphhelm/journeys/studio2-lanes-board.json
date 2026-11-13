@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"What I asked\" saying \"Show the work graph for the fixture run In progress · 0 of 1\", list \"Blocked\" saying \"planner\", group \"Request\" saying \"#1556 Show what each lane is doing\", group \"For request\" saying \"for: Show the work graph for the fixture run\", group \"Last action\" saying \"planned\", no group \"Not linked\", region \"Question\" saying \"Should the deploy go to staging first, or straight to production?\", complementary \"Agent\" saying \"REPLY TO planner\"",
+      "statement": "shows region \"What I asked\" saying \"Show the work graph for the fixture run In progress · 0 of 1\", list \"Blocked\" saying \"planner\", group \"Request\" saying \"#1556 Show what each lane is doing\", button \"Show only the agents for Show the work graph for the fixture run\" saying \"for: Show the work graph for the fixture run\", group \"Last action\" saying \"planned\", no group \"Not linked\", region \"Question\" saying \"Should the deploy go to staging first, or straight to production?\", complementary \"Agent\" saying \"REPLY TO planner\"",
       "statesToObserve": [
         "stable"
       ],

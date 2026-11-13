@@ -68,3 +68,49 @@ describe("review modal frames", () => {
     expect(revoked).toContain("blob:mobile");
   });
 });
+
+describe("review modal states how the Now layer is drawn", () => {
+  const both = {
+    ...journey,
+    now: { pr: 721, headSha: "721abcde", ranAt: null, result: "pass", screens: [{ screen: "graph", frameUrl: "/now" }] },
+  } as unknown as IssueJourney;
+  const open = async () => {
+    const runtime = {
+      issueJourneys: async () => [both],
+      frameAt: async (url: string) => Object.assign(new Blob([url]), { tag: url.slice(1) }),
+    } as unknown as Runtime;
+    const host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+    await act(async () => { root!.render(<ReviewModal runtime={runtime} executionId="demo" task={task} onClose={() => {}} />); });
+    await tick();
+    return host;
+  };
+  const press = async (host: HTMLElement, label: string) => {
+    const button = [...host.querySelectorAll("button")].find((each) => each.textContent === label)!;
+    await act(async () => { button.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await tick();
+  };
+  const facts = (host: HTMLElement) => host.querySelector("figure")?.textContent ?? "";
+
+  it("reads the blend of Changes and the opacity of Overlay from the drawn image, and follows the slider", async () => {
+    const host = await open();
+    await press(host, "Changes");
+    expect(facts(host)).toContain("Now layer drawn with blend difference, opacity 1");
+    await press(host, "Overlay");
+    expect(facts(host)).toContain("Now layer drawn with blend normal, opacity 0.5");
+    const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "25");
+      slider.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    expect(facts(host)).toContain("Now layer drawn with blend normal, opacity 0.25");
+  });
+
+  it("draws the statement out of sight: one clipped pixel, no layout of its own", async () => {
+    const host = await open();
+    await press(host, "Changes");
+    const statement = host.querySelector<HTMLElement>("figure span")!;
+    expect(statement.style.position).toBe("absolute");
+    expect(statement.style.width).toBe("1px");
+    expect(statement.style.overflow).toBe("hidden");
+  });
+});

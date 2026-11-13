@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows button \"Issue #721\" saying \"in review\", group \"Pull request of #721\" saying \"PR #721 waits for a reviewer\", complementary \"Journeys with work\" saying \"1 of 24\"",
+      "statement": "shows button \"Issue #721\" saying \"in review\", group \"Pull request of #721\" saying \"PR #721 waits for a reviewer\", complementary \"Journeys with work\" saying \"Open the Studio\"",
       "statesToObserve": [
         "stable"
       ],
@@ -60,7 +60,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows figure \"Changes: Now against Before (unchanged pixels are black)\"",
+      "statement": "shows figure \"Changes: Now against Before (unchanged pixels are black)\" saying \"Now layer drawn with blend difference, opacity 1\"",
       "statesToObserve": [
         "stable"
       ],
@@ -74,11 +74,25 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows slider \"Now opacity\", figure \"Now over Before at 50%\"",
+      "statement": "shows slider \"Now opacity\", figure \"Now over Before at 50%\" saying \"Now layer drawn with blend normal, opacity 0.5\"",
       "statesToObserve": [
         "stable"
       ],
       "stepId": "overlay"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "slid.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows figure \"Now over Before at 25%\" saying \"Now layer drawn with blend normal, opacity 0.25\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "slid"
     },
     {
       "maxEvidenceAgeSeconds": 604800,
@@ -277,6 +291,39 @@
         }
       },
       "stepId": "overlay"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen slid not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/graph/RequestsView.tsx",
+          "apps/studio/src/graph/ReviewModal.tsx",
+          "apps/studio/src/graph/review.ts",
+          "apps/studio/src/views/Views.tsx"
+        ],
+        "screenId": "slid",
+        "title": "The slider changes how much of Now shows"
+      },
+      "semanticAction": {
+        "kind": "enter_text",
+        "target": {
+          "geometryClaim": false,
+          "role": "slider",
+          "strategy": "accessible_name",
+          "value": "Now opacity"
+        }
+      },
+      "stepId": "slid"
     },
     {
       "actorId": "owner",

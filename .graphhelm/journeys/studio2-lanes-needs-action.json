@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Last action\" saying \"Assigned\", no button \"Assign lane-author\"",
+      "statement": "shows status \"Last action\" saying \"Assigned PR #801 to lane-free\", region \"Needs action\" saying \"PR #801 assigned to lane-free\", button \"Assigned lane-author\", list \"Review\" saying \"lane-free\"",
       "statesToObserve": [
         "success"
       ],
@@ -60,7 +60,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Last action\" saying \"Asked to merge\", no button \"Ask to merge lane-author\"",
+      "statement": "shows status \"Last action\" saying \"Asked to merge PR #802 to lane-review\", no button \"Ask to merge lane-author\"",
       "statesToObserve": [
         "success"
       ],
@@ -74,7 +74,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Last action\" saying \"Archived\", no button \"Archive lane-gone\"",
+      "statement": "shows status \"Last action\" saying \"Archived lane-gone\", list \"Review\" saying \"lane-gone\", no button \"Archive lane-gone\"",
       "statesToObserve": [
         "success"
       ],
@@ -88,7 +88,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows status \"Last action\" saying \"Reassigned\", no button \"Reassign lane-quiet\"",
+      "statement": "shows status \"Last action\" saying \"Reassigned #803 to lane-spare\", list \"Backlog\" saying \"#803 Quiet lane holds this slice\", listitem \"Silent, empty\", no button \"Reassign lane-quiet\"",
       "statesToObserve": [
         "success"
       ],
@@ -187,7 +187,7 @@
           "apps/studio/src/lanes/drafts.ts"
         ],
         "screenId": "assigned",
-        "title": "Assign takes the unreviewed PR off the list"
+        "title": "Assign hands the unreviewed PR to a free lane"
       },
       "semanticAction": {
         "kind": "activate",
@@ -289,7 +289,7 @@
           "apps/studio/src/lanes/drafts.ts"
         ],
         "screenId": "reassigned",
-        "title": "Reassign takes the quiet lane's slice off the list"
+        "title": "Reassign hands the quiet lane's slice to a free lane"
       },
       "semanticAction": {
         "kind": "activate",

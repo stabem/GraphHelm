@@ -808,6 +808,62 @@ fn sweep_removes_only_released_clean_unmoved_workspaces_and_never_follows_links(
     assert_eq!(state, Some(Value::from("swept")), "{listed}");
 }
 
+/// A ledger written by hand or by another binary can hold a state this binary does not know, or
+/// one that is not a string. The sweep keeps such a workspace (`not_released`) and the listing
+/// prints the stored value as it was. This passes on the parent too: it pins unchanged behaviour
+/// while the state strings move to one definition. Temp directories only.
+#[test]
+fn an_unknown_or_non_string_ledger_state_is_kept_and_listed_as_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let root_s = root.to_str().unwrap();
+    let ledger = root.join(".graphhelm-workspaces");
+    std::fs::create_dir_all(&ledger).unwrap();
+    let stored = [
+        ("odd-text", Value::from("future_state")),
+        ("odd-number", Value::from(7)),
+    ];
+    for (task, state) in &stored {
+        let worktree = root.join("lane").join(task).join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join("work.txt"), "x").unwrap();
+        let record = serde_json::json!({
+            "schema": "graphhelm.workspace/1", "lane": "lane", "task": task, "state": state,
+        });
+        std::fs::write(
+            ledger.join(format!("lane--{task}.json")),
+            serde_json::to_vec_pretty(&record).unwrap(),
+        )
+        .unwrap();
+    }
+    let (code, swept) = run(&["sweep", "--root", root_s, "--apply"]);
+    assert_eq!(code, 0, "{swept}");
+    assert_eq!(swept["data"]["removed"], serde_json::json!([]), "{swept}");
+    let kept = swept["data"]["kept"].as_array().unwrap();
+    assert_eq!(kept.len(), 2, "{swept}");
+    for entry in kept {
+        assert_eq!(entry["reason"], "not_released", "{swept}");
+    }
+    let (_, listed) = run(&["list", "--root", root_s]);
+    for (task, state) in &stored {
+        assert!(
+            root.join("lane")
+                .join(task)
+                .join("wt")
+                .join("work.txt")
+                .is_file(),
+            "{task} was removed"
+        );
+        let shown = listed["data"]["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["task"] == *task)
+            .map(|w| w["state"].clone());
+        assert_eq!(shown.as_ref(), Some(state), "{listed}");
+    }
+}
+
 /// #374 BLOCK: `git worktree remove` recursed through a junction at an IGNORED path inside a clean,
 /// released worktree and deleted its target outside the root. The worktree stays clean (git does
 /// not report ignored paths), so only a link scan of `wt/` before git runs can stop it.

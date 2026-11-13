@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usePageTools } from "../webmcp/page-tools";
 
 import { filterJourneys, groupJourneys, JOURNEY_SEARCH_MAX } from "./journey-search";
@@ -86,6 +86,30 @@ export function runAllJourneyNotice(journey: RunAllJourneyState | undefined, rea
   return `This run finished, but the batch remainder was not resumed. ${detail}`;
 }
 
+/** #2939: `list` without one occurrence of `id`. */
+function withoutOne(list: readonly string[], id: string): readonly string[] {
+  const at = list.indexOf(id);
+  return at < 0 ? list : [...list.slice(0, at), ...list.slice(at + 1)];
+}
+
+/** #2939: `runtime`, with each start or confirm of a journey run told to `tell` when it is sent and
+ * again when it is answered or refused. The request outlives the panel that sent it, so the telling
+ * rides on the request, not on the panel. Every other call goes to `runtime` unchanged. */
+function tellingStarts(runtime: Runtime, tell: (flowId: string, moment: "sent" | "settled") => void): Runtime {
+  const held = <T,>(flowId: string, send: () => Promise<T>): Promise<T> => {
+    tell(flowId, "sent");
+    return send().finally(() => tell(flowId, "settled"));
+  };
+  return new Proxy(runtime, {
+    get(target, key) {
+      if (key === "startJourneyRun") return (flowId: string, executionId: string | null) => held(flowId, () => target.startJourneyRun(flowId, executionId));
+      if (key === "confirmJourneyRun") return (flowId: string, digest: string, executionId: string | null) => held(flowId, () => target.confirmJourneyRun(flowId, digest, executionId));
+      const value: unknown = Reflect.get(target, key, target);
+      return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+}
+
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
 export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked, initialPast = null, onPast }: ProofViewProps) {
@@ -96,6 +120,14 @@ export function ProofView({ projectKey, runtime, journeys, error, executionId, o
   const [reread, setReread] = useState(0);
   // #1914: the run the open panel follows, by journey, so its card reads it before the list is read again.
   const [live, setLive] = useState<Record<string, JourneyRun>>({});
+  // #2939: the journeys whose start request is in flight, from a card and from the run panel. Each
+  // side reads the other's, so one journey's two Run buttons cannot both send a start. The panel's
+  // are held here, not in the panel, so picking another journey does not forget a request still open.
+  const [cardStarting, setCardStarting] = useState<string | null>(null);
+  const [panelStarts, setPanelStarts] = useState<readonly string[]>([]);
+  const panelRuntime = useMemo(() => tellingStarts(runtime, (flowId, moment) => {
+    setPanelStarts((before) => (moment === "sent" ? [...before, flowId] : withoutOne(before, flowId)));
+  }), [runtime]);
   // A list read again carries the result; a run still playing stays until its next answer.
   // #1953: a journey the list says is running is seeded, so a reload still shows it running.
   useEffect(() => { setLive((before) => liveAfterList(before, journeys)); }, [journeys]);
@@ -143,10 +175,10 @@ export function ProofView({ projectKey, runtime, journeys, error, executionId, o
   const observedRun = (id: string, run: JourneyRun) => { setLive((before) => ({ ...before, [id]: run })); };
   return (
     <section id="panel-proof" aria-label="Proof" className="proof">
-      <JourneysColumn projectKey={projectKey} runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onObserved={observedRun} onRan={onRan} live={live} />
+      <JourneysColumn projectKey={projectKey} runtime={runtime} journeys={journeys} selected={selected?.id ?? null} executionId={executionId} onPick={setPicked} onStarted={started} onStarting={setCardStarting} panelStarts={panelStarts} onObserved={observedRun} onRan={onRan} live={live} />
       {selected === null
         ? <div className="proof-main"><Empty title="No journeys yet" hint="This project has no journeys yet. A journey appears here once one is drafted for a request." /></div>
-        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={runtime} flow={selected} initialPast={selected.id === initial ? initialPast : null} onPast={onPast} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => afterPanelGone(before, selected.id))} />}
+        : <JourneyRunPanel key={`${selected.id}:${reread}`} runtime={panelRuntime} flow={selected} initialPast={selected.id === initial ? initialPast : null} onPast={onPast} executionId={executionId} onRan={onRan} onRun={(run) => setLive((before) => ({ ...before, [selected.id]: run }))} onGone={() => setLive((before) => afterPanelGone(before, selected.id))} startingFromCard={cardStarting === selected.id} />}
     </section>
   );
 }
@@ -159,12 +191,16 @@ interface ColumnProps {
   executionId: string | null;
   onPick: (id: string) => void;
   onStarted: (id: string) => void;
+  /** #2939: the journey whose start request this column has in flight, `null` once it is answered. */
+  onStarting: (id: string | null) => void;
+  /** #2939: the journeys whose start request the run panel has in flight. */
+  panelStarts: readonly string[];
   onObserved: (id: string, run: JourneyRun) => void;
   onRan: () => void;
   live: Record<string, JourneyRun>;
 }
 
-function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, onPick, onStarted, onObserved, onRan, live }: ColumnProps) {
+function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, onPick, onStarted, onStarting, panelStarts, onObserved, onRan, live }: ColumnProps) {
   const [busy, setBusy] = useState<string | null>(null);
   // #1914: the journey Run all is playing now; its card reads running even when no panel follows it.
   const [active, setActive] = useState<string | null>(null);
@@ -317,12 +353,13 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
   // run starts and cleared where `busy` is cleared, so the button and the page tool share one single-flight.
   const starting = useRef(false);
   const runSingle = (flow: JourneyFlow) => {
-    if (starting.current) return;
+    if (starting.current || panelStarts.includes(flow.id)) return;
     starting.current = true;
+    onStarting(flow.id);
     setRefusal(null);
     setBusy(`Starting ${nameOf(flow)}`);
     onPick(flow.id);
-    runOne(flow).catch((cause: unknown) => setRefusal(actionErrorDetails("Journey run failed", cause, "The Runtime refused the run.", "Check the Runtime response, then try Run again."))).finally(() => { starting.current = false; setBusy(null); });
+    runOne(flow).catch((cause: unknown) => setRefusal(actionErrorDetails("Journey run failed", cause, "The Runtime refused the run.", "Check the Runtime response, then try Run again."))).finally(() => { starting.current = false; setBusy(null); onStarting(null); });
   };
   // #2839: the function behind the Journeys column's `Run <journey name>` button (`runSingle`: it
   // selects the journey and starts its run), offered to a WebMCP agent. It is not the run panel's
@@ -335,6 +372,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
       const flow = typeof journey === "string" ? journeys.find((candidate) => candidate.id === journey) : undefined;
       if (flow === undefined) return { ok: false, reason: "journey must be the id of a journey listed in Proof." };
       if (busy !== null || starting.current) return { ok: false, reason: "Run is disabled while the journeys column is busy." };
+      if (panelStarts.includes(flow.id)) return { ok: false, reason: "Run is disabled while this journey's run is starting." };
       runSingle(flow);
       return { ok: true };
     },
@@ -538,7 +576,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
                 <span className={`mono group-score${failed ? " fail" : passed > 0 ? " pass" : ""}`} aria-label={`${feature}: ${passed} of ${whole.length} passed`}>{passed}/{whole.length}</span>
               </div>
               <ul>
-                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null} onPick={onPick} onRun={runSingle} run={live[flow.id] ?? null} playing={active === flow.id} interruption={runAllJourneyNotice(interruptedBatch?.journeys.find((journey) => journey.flowId === flow.id), interruptedBatch?.reason)} />)}
+                {flows.map((flow) => <JourneyCard key={flow.id} flow={flow} selected={flow.id === selected} disabled={busy !== null || panelStarts.includes(flow.id)} onPick={onPick} onRun={runSingle} run={live[flow.id] ?? null} playing={active === flow.id} interruption={runAllJourneyNotice(interruptedBatch?.journeys.find((journey) => journey.flowId === flow.id), interruptedBatch?.reason)} />)}
               </ul>
             </li>
           );
@@ -685,7 +723,7 @@ function viewportLine(step: Step, stale: boolean) {
   );
 }
 
-export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone, initialPast = null, onPast }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void; onGone: () => void; initialPast?: string | null; onPast?: (run: string | null) => void }) {
+export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGone, initialPast = null, onPast, startingFromCard = false }: { runtime: Runtime; flow: JourneyFlow; executionId: string | null; onRan: () => void; onRun: (run: JourneyRun) => void; onGone: () => void; initialPast?: string | null; onPast?: (run: string | null) => void; startingFromCard?: boolean }) {
   // #2442: the earlier run on screen (its history id), else the latest or live run.
   const [viewing, setViewing] = useState<string | null>(initialPast);
   const view = (id: string | null) => { setViewing(id); onPast?.(id); };
@@ -701,8 +739,9 @@ export function JourneyRunPanel({ runtime, flow, executionId, onRan, onRun, onGo
   const shown = viewed !== null ? pastAsRun(viewed) : stale ? pastAsRun(earlier) : run;
   const steps = journeySteps(flow, shown);
   const counts = countSteps(steps);
-  const busy = starting || run?.state === "running";
-  const status = runStatus(run, starting);
+  // #2939: a start the journey's card has in flight is this journey starting, whoever was clicked.
+  const busy = starting || startingFromCard || run?.state === "running";
+  const status = runStatus(run, starting || startingFromCard);
   const said = stale ? CHANGED : verdict(shown);
   const selected = steps.find((step) => step.n === picked) ?? steps.find((step) => step.status === "failed")
     // #1912: a command flow opens on its first command, not on the start screen it never observes.

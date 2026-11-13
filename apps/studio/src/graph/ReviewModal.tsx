@@ -1,5 +1,5 @@
 import { when } from "../time/when";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { BoardTask, IssueJourney, Runtime } from "../runtime/client";
 import { modesOn, type ReviewMode } from "./review";
@@ -64,6 +64,19 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
   const [opacity, setOpacity] = useState(50);
   const [viewport, setViewport] = useState<"web" | "mobile">("web");
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  // The Now layer of Overlay and Changes, and the text that states how the browser drew it.
+  const nowLayer = useRef<HTMLImageElement | null>(null);
+  const nowFacts = useRef<HTMLSpanElement | null>(null);
+
+  // After every render, read the blend and opacity the browser actually applied to the Now layer
+  // (not the values the state asked for) and write them where a reader of the page can see them.
+  useLayoutEffect(() => {
+    const layer = nowLayer.current;
+    const facts = nowFacts.current;
+    if (layer === null || facts === null) return;
+    const applied = getComputedStyle(layer);
+    facts.textContent = `Now layer drawn with blend ${applied.mixBlendMode}, opacity ${applied.opacity}`;
+  });
 
   useEffect(() => {
     if (task.issue === null) { setJourneys([]); return; }
@@ -174,8 +187,10 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
                 <figure style={{ position: "relative" }}>
                   <figcaption>{shown === "overlay" ? `Now over Before at ${opacity}%` : "Changes: Now against Before (unchanged pixels are black)"}</figcaption>
                   <img src={before.src} alt={`${screen ?? "screen"} before`} />
-                  <img src={now.src} alt={`${screen ?? "screen"} now`}
+                  <img ref={nowLayer} src={now.src} alt={`${screen ?? "screen"} now`}
                     style={{ position: "absolute", left: 0, bottom: 0, opacity: shown === "overlay" ? opacity / 100 : 1, mixBlendMode: shown === "changes" ? "difference" : "normal" }} />
+                  {/* Read by screen readers and by journey checks; clipped to one pixel, so nothing is drawn. */}
+                  <span ref={nowFacts} style={{ position: "absolute", top: 0, left: 0, width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" }} />
                 </figure>
               )}
               {shown === "frame" && (

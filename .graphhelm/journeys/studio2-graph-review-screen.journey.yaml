@@ -17,14 +17,14 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: button, name: "Issue #721", text: in review, because: "the fixture's issue #721 has an open PR, so its card shows it in review"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the card's PR waits for a reviewer, which is what the owner is about to review"}, {role: complementary, name: Journeys with work, text: 1 of 24, because: "the journey list has loaded, so the card is tagged with its journey title"}]
+    expect: [{role: button, name: "Issue #721", text: in review, because: "the fixture's issue #721 has an open PR, so its card shows it in review"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the card's PR waits for a reviewer, which is what the owner is about to review"}, {role: complementary, name: Journeys with work, text: Open the Studio, because: "the list of journeys with work in flight names the journey issue #721's slices carry, so the card in review belongs to the journey the modal opens on"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: changes
     title: Changes shows only the pixels that moved
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: figure, name: "Changes: Now against Before (unchanged pixels are black)", because: "Changes compares Now against Before and blacks out what did not change, so the owner spots the difference"}]
+    expect: [{role: figure, name: "Changes: Now against Before (unchanged pixels are black)", text: "Now layer drawn with blend difference, opacity 1", because: "the figure states the blend the browser applied to the Now image, read from its drawn style, not from the app's state: difference at full opacity is what blacks out unchanged pixels, so the owner spots the difference"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: closed
     title: Close shuts the modal and the card is still in review
@@ -52,7 +52,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: slider, name: Now opacity, because: the slider fades Now over Before so the owner can see what moved}, {role: figure, name: Now over Before at 50%, because: "the overlay opens at half opacity, the slider's starting point"}]
+    expect: [{role: slider, name: Now opacity, because: the slider fades Now over Before so the owner can see what moved}, {role: figure, name: Now over Before at 50%, text: "Now layer drawn with blend normal, opacity 0.5", because: "the overlay opens at half opacity, the slider's starting point, and the figure states the opacity the browser applied to the Now image, read from its drawn style, not the label"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: side
     title: Side by side shows Before and Now together
@@ -60,6 +60,13 @@ screens:
     ignoreQuery: [session, project]
     state: stable
     expect: [{role: img, name: graph before, because: the left frame is the graph screen from the main run}, {role: img, name: graph now, because: "the right frame is the same screen captured at the PR head, so both can be read at once"}, {role: combobox, name: Review screen, text: graph, because: "both frames are of the screen picked here, studio2-open's graph"}, {role: region, name: Review frame, text: "Now · PR #721 at 721abcde", because: "the Now frame is the one the fixture recorded for PR #721 at head 721abcde"}]
+    scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
+  - id: slid
+    title: The slider changes how much of Now shows
+    url: /?session=studio-fixture&run=demo
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: figure, name: Now over Before at 25%, text: "Now layer drawn with blend normal, opacity 0.25", because: "the label follows the slider, and the opacity the browser applied to the Now image follows it too: a quarter of Now over Before, not a label over a layer still drawn at half"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: board.modal
@@ -87,18 +94,24 @@ edges:
     why: "Side by side puts Before next to Now, so the owner reads both versions of the screen at once."
     acts:
       - {kind: activate, role: button, name: Side by side}
-  - id: overlay.mobile
+  - id: overlay.slid
     from: overlay
-    to: mobile
-    why: "Mobile shows the same screen at phone width, so a change is checked on both sizes."
+    to: slid
+    why: "Moving the slider fades Now over Before, so the owner can judge a small change at any strength."
     acts:
-      - {kind: activate, role: button, name: Mobile}
+      - {kind: enter_text, role: slider, name: Now opacity, text: "25"}
   - id: side.changes
     from: side
     to: changes
     why: "Changes shows only what differs, so a small change is not missed."
     acts:
       - {kind: activate, role: button, name: Changes}
+  - id: slid.mobile
+    from: slid
+    to: mobile
+    why: "Mobile shows the same screen at phone width, so a change is checked on both sizes."
+    acts:
+      - {kind: activate, role: button, name: Mobile}
 paths:
-  main: [board.modal, modal.side, side.changes, changes.overlay, overlay.mobile, mobile.closed]
+  main: [board.modal, modal.side, side.changes, changes.overlay, overlay.slid, slid.mobile, mobile.closed]
 drift: []

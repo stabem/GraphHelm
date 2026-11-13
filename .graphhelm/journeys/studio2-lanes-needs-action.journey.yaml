@@ -3,7 +3,7 @@ id: studio2-lanes-needs-action
 title: Clear the Needs action list
 name: Clear needs action
 feature: Studio
-purpose: "Needs action lists the planner's question (the oldest wait) before PR #801 (the newest), and each item's button does its action: Answer opens the reply, and Assign, Merge, Archive and Reassign each take their item off the list."
+purpose: "Needs action lists the planner's question (the oldest wait) before PR #801 (the newest), and each item's button does its action: Answer opens the reply; Assign hands PR #801 to a free lane and keeps the item for about a minute as a recorded row; Merge, Archive and Reassign each take their item off the list. After each action the board shows what the Runtime recorded."
 status: draft
 approved: null
 base: http://127.0.0.1:5184
@@ -24,14 +24,14 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Archived, because: the Runtime recorded lane-gone as archived}, {role: button, name: Archive lane-gone, absent: true, because: "an archived lane owes nothing more, so its item leaves Needs action"}]
+    expect: [{role: status, name: Last action, text: Archived lane-gone, because: the Studio names the lane it asked the Runtime to archive}, {role: list, name: Review, text: lane-gone, because: "this comes from the Runtime: once it recorded the stop, the board no longer reads lane-gone as silent, so its card leaves Silent for Review, where its PR #804 waits; with no stop recorded it stays in Silent"}, {role: button, name: Archive lane-gone, absent: true, because: "this comes from the Runtime: the item is built from the board's silent mark on lane-gone, so it leaves Needs action only after the stop was recorded"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: assigned
-    title: Assign takes the unreviewed PR off the list
+    title: Assign hands the unreviewed PR to a free lane
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Assigned, because: "the Runtime recorded a reviewer for PR #801"}, {role: button, name: Assign lane-author, absent: true, because: "PR #801 now has a reviewer, so its item leaves Needs action"}]
+    expect: [{role: status, name: Last action, text: "Assigned PR #801 to lane-free", because: "the Studio names the lane it asked the Runtime to make the reviewer: lane-free, the first free lane"}, {role: region, name: Needs action, text: "PR #801 assigned to lane-free", because: "by design the item stays for about a minute as a recorded row, so the owner sees what was done instead of the item vanishing"}, {role: button, name: Assigned lane-author, because: "the recorded row carries a disabled Assigned button in place of Assign, so the same assignment is not sent twice"}, {role: list, name: Review, text: lane-free, because: "this comes from the Runtime: the Review column was empty, and lane-free is drawn there holding PR #801 only once the board names it the PR's reviewer; with no assignment recorded it stays in Backlog"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: list
     title: Needs action lists items oldest first
@@ -45,14 +45,14 @@ screens:
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Asked to merge, because: "the Studio asks the lane to merge PR #802; the merge itself is the lane's"}, {role: button, name: Ask to merge lane-author, absent: true, because: "the merge was requested, so the approved PR no longer waits on the owner"}]
+    expect: [{role: status, name: Last action, text: "Asked to merge PR #802 to lane-review", because: "the Studio asks lane-review, the reviewer whose APPROVE moved PR #802 to merge; the merge itself is that lane's"}, {role: button, name: Ask to merge lane-author, absent: true, because: "this comes from the Runtime: the Studio hides nothing itself, the item leaves Needs action only when the board lists the note the Runtime recorded for it"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
   - id: reassigned
-    title: Reassign takes the quiet lane's slice off the list
+    title: Reassign hands the quiet lane's slice to a free lane
     url: /?session=studio-fixture&run=demo&view=lanes
     ignoreQuery: [session, project]
     state: success
-    expect: [{role: status, name: Last action, text: Reassigned, because: "the Runtime recorded #803 as handed from lane-quiet to lane-spare, the free lane the Assign before it left"}, {role: button, name: Reassign lane-quiet, absent: true, because: "#803 has a live owner again, so its item leaves Needs action"}]
+    expect: [{role: status, name: Last action, text: "Reassigned #803 to lane-spare", because: "the Studio names the lane it asked the Runtime to hand #803 to: lane-spare, the free lane left once lane-free took the review"}, {role: list, name: Backlog, text: "#803 Quiet lane holds this slice", because: "this comes from the Runtime: the board draws #803 on the card of the free lane it was handed to, in Backlog, and lane-quiet's own card no longer holds it"}, {role: listitem, name: "Silent, empty", because: "this comes from the Runtime: lane-quiet was the last silent lane (the Archive cleared lane-gone), and once its slice was released the board no longer reads it silent"}, {role: button, name: Reassign lane-quiet, absent: true, because: "#803 has a live owner again, so the item leaves Needs action once the Runtime recorded the hand-over"}]
     scope: [apps/studio/src/lanes/LanesView.tsx, apps/studio/src/lanes/LanesPanels.tsx, apps/studio/src/lanes/panels.ts, apps/studio/src/lanes/board.ts, apps/studio/src/lanes/drafts.ts]
 edges:
   - id: answered.assigned
@@ -82,7 +82,7 @@ edges:
   - id: merged.archived
     from: merged
     to: archived
-    why: "A silent lane will never answer, so archiving it stops it holding a pull request's review and clears the list."
+    why: "A silent lane will never answer, so archiving it records that: the lane stops counting as silent and its item leaves the owner's list."
     acts:
       - {kind: activate, role: button, name: Archive lane-gone}
 paths:

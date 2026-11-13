@@ -4,8 +4,8 @@ title: The Studio refuses to add a project when the request has no session
 name: Studio add refusal
 feature: Studio
 purpose: "POST /__studio/add, the route that joins a project folder to a running Studio, is refused as session_required when it carries no session cookie, and as foreign_origin when it names a foreign Origin; all from loopback, so this proves those two checks on the live wiring and not a refusal from an off-loopback peer."
-status: draft
-approved: null
+status: approved
+approved: {revision: 43e299a7bc7d50e4028d93142e1bfbda8fdf9990, digest: sha256:97172c64356aba1e83e106ad35b667e7af56e0568fdb820fd8a0914e4f6d65d8}
 base: http://127.0.0.1:5184
 actors: [client]
 secrets: []

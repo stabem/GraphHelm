@@ -54,3 +54,42 @@ describe("journey action error persistence (#2445)", () => {
     expect(read).toHaveBeenCalledTimes(3);
   });
 });
+
+function Titled({ runtime }: { runtime: Runtime }) {
+  const state = useJourneyRun(runtime, "demo", null, () => undefined);
+  return createElement("div", null,
+    createElement("button", { type: "button", onClick: () => state.start() }, "Run"),
+    createElement("output", null, state.error === null ? "" : `${state.error.title} | ${state.error.cause} | ${state.error.nextStep}`),
+  );
+}
+
+describe("a failed run read is not a failed start (#2935)", () => {
+  const mount = async (runtime: Runtime) => {
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => { root?.render(createElement(Titled, { runtime })); });
+  };
+
+  it("says the run could not be read when opening the journey fails, with no start attempted", async () => {
+    const start = vi.fn();
+    const runtime = { journeyRun: vi.fn().mockRejectedValue(new Error("network down")), startJourneyRun: start, journeyHistory: vi.fn().mockResolvedValue([]) } as unknown as Runtime;
+    await mount(runtime);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(container?.textContent).toContain("Run could not be read | The Runtime could not return this journey's run. | Try opening this journey again.");
+    expect(container?.textContent).not.toContain("could not start");
+  });
+
+  it("still says the run could not start when Run is pressed and refused", async () => {
+    const runtime = {
+      journeyRun: vi.fn().mockResolvedValue({ state: "none" }),
+      startJourneyRun: vi.fn().mockRejectedValue(new RuntimeError("The flow is not approved.", 409, "preview.flow_invalid")),
+      journeyHistory: vi.fn().mockResolvedValue([]),
+    } as unknown as Runtime;
+    await mount(runtime);
+    await act(async () => { container?.querySelector("button")?.click(); });
+
+    expect(container?.textContent).toContain("Run could not start | The flow is not approved. | Fix the cause and try Run again.");
+  });
+});

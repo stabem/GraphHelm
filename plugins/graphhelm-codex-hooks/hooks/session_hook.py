@@ -471,14 +471,18 @@ def _recorded_waiter_start(pid_path: Path) -> str:
         return ""
 
 
-def _waiter_alive(pid_path: Path, pid: int) -> bool:
+def _waiter_alive(pid_path: Path, pid: int, *, signal_safe: bool = False) -> bool:
     """The one answer to "is the recorded waiter alive": its PID is alive and, when a creation time was
-    recorded, it is still that process's. A reused PID is not the waiter. No record keeps the PID alone
-    deciding, as it did before the record existed."""
+    recorded, the live process does not show another one. A reused PID is not the waiter; an identity that
+    cannot be read is not a different one, and no record keeps the PID alone deciding, as before the
+    record existed. `signal_safe` is the stricter ask before a signal: a record that exists and matches."""
     if not _pid_alive(pid):
         return False
     recorded = _recorded_waiter_start(pid_path)
-    return not recorded or recorded == _process_identity(pid)
+    if signal_safe:
+        return bool(recorded) and recorded == _process_identity(pid)
+    live = _process_identity(pid)
+    return not recorded or live is None or recorded == live
 
 
 def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
@@ -744,8 +748,8 @@ def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None]
     # time recorded at the waiter's start is signalled; a waiter left alone ends once its heartbeat is gone.
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
-        # Stricter than the start and the sweep: a signal needs the record, not only the absence of a mismatch.
-        if _recorded_waiter_start(pid_path) and _waiter_alive(pid_path, pid):
+        # Stricter than the start and the sweep: a signal needs a record that matches, not only no mismatch.
+        if _waiter_alive(pid_path, pid, signal_safe=True):
             os.kill(pid, signal.SIGTERM)
     except (FileNotFoundError, ValueError, OSError):
         pass

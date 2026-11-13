@@ -24,14 +24,14 @@ screens:
     url: /
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: region, name: Project demo, text: demo · 0 agents, because: "demo's sidebar card names its active run, demo"}, {role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run, both demo"}, {role: region, name: Graph, text: RUN demo STATUS, because: Graph shows demo's own team run}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}]
+    expect: [{role: region, name: Project demo, text: demo · 0 agents, because: "demo's sidebar card names its active run, demo"}, {role: banner, name: Top bar, text: demo / demo, because: "the top bar reads project / run, both demo"}, {role: region, name: Graph, text: RUN demo STATUS, because: Graph shows demo's own team run}, {role: list, name: Runs in demo, absent: true, because: each project is one card with no run list under it}, {role: region, name: Project proj-two, absent: true, because: "proj-two is a real project folder with its own run, but the Studio has not been told about it yet, so it has no card until the owner adds it"}, {role: link, name: proj-two, absent: true, because: "the sidebar offers no way to open proj-two before it is added, so the add step is what makes it appear"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/topbar/Topbar.tsx, apps/studio/src/sidebar/project-summary.ts, apps/studio/src/login/session.ts]
   - id: refused
     title: An invalid folder adds no project
     url: /
     ignoreQuery: [session, project]
     state: error
-    expect: [{role: form, name: Add project folder, text: That folder is not a GraphHelm project., because: "an invalid project folder is refused, and the form says so instead of failing silently"}, {role: banner, name: Top bar, text: demo / demo, because: "nothing changed: demo and its run stay open"}]
+    expect: [{role: form, name: Add project folder, text: That folder is not a GraphHelm project., because: "an invalid project folder is refused, and the form says so instead of failing silently"}, {role: banner, name: Top bar, text: demo / demo, because: "nothing changed: demo and its run stay open"}, {role: region, name: Project missing-project-folder, absent: true, because: "the Studio names a card by its folder, so a card for the invalid folder would be called missing-project-folder; the refusal added none"}, {role: region, name: Project proj-two, absent: true, because: "the refused add registered no project at all, proj-two included"}]
     scope: [apps/studio/src/App.tsx, apps/studio/src/sidebar/Sidebar.tsx, apps/studio/src/login/session.ts, apps/studio/src/topbar/Topbar.tsx]
   - id: second
     title: The added project opens with its own run
@@ -44,19 +44,18 @@ edges:
   - id: first.refused
     from: first
     to: refused
-    intent: The owner adds proj-two's folder but enters an invalid folder.
-    why: "A folder is added only with the valid local browser session, so an invalid folder cannot attach another project to this Studio."
+    intent: The owner means to add proj-two but submits a folder that is not a GraphHelm project.
+    why: "A folder that is not a GraphHelm project is refused with a message and adds no card, so a typo cannot attach a stray project to this Studio."
     acts:
       - {kind: activate, role: button, name: Add project folder}
       - {kind: enter_text, role: textbox, name: Project folder, text: missing-project-folder}
       - {kind: submit, role: button, name: Add}
-  - id: first.second
-    from: first
+  - id: refused.second
+    from: refused
     to: second
-    intent: The owner adds the second project's folder within the local browser session.
-    why: "Adding a second project folder through the local browser session opens it as its own card in the same Studio, so the owner watches both projects from one port."
+    intent: The owner corrects the folder to proj-two's real project folder in the same form and adds it.
+    why: "After a refusal the same form still takes the right folder: adding proj-two through the local browser session makes it appear as its own card in the same Studio, so the owner watches both projects from one port."
     acts:
-      - {kind: activate, role: button, name: Add project folder}
       - {kind: enter_text, role: textbox, name: Project folder, secret: proj_two_folder}
       - {kind: submit, role: button, name: Add}
   - id: second.back
@@ -66,6 +65,5 @@ edges:
     acts:
       - {kind: activate, role: link, name: demo}
 paths:
-  main: [first.second, second.back]
-  refused: [first.refused]
+  main: [first.refused, refused.second, second.back]
 drift: []

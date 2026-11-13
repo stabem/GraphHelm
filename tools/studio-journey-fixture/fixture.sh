@@ -3,7 +3,7 @@
 # Runtime with one seeded run and one unanswered agent question, and this repository's Studio dev
 # server pointed at it. `graphhelm journey replay studio2-<id>` runs against what this script starts.
 # For studio2-two-projects (GRAPHHELM_JOURNEY_FLOW) it also starts a second project, `proj-two`, with
-# its own Runtime on <runtime port>+2, and registers it with the Studio.
+# its own Runtime on <runtime port>+2 and one run; it does not register it, the flow's add step does.
 #
 #   tools/studio-journey-fixture/fixture.sh up   <fixture dir> [runtime port] [studio port]
 #   tools/studio-journey-fixture/fixture.sh down <fixture dir>
@@ -899,8 +899,8 @@ NODE
     if [ -r /proc/$$/winpid ]; then echo "studio-listener 0 $pid"; else echo "studio-listener $pid"; fi >> "$pids"
   done
   # #1808 studio2-two-projects: a second project, `proj-two`, with its own Runtime and one run,
-  # registered with this Studio the way `graphhelm studio open` does it. The reusable link it prints
-  # is kept in a private file for the replay to open once; it is never echoed.
+  # prepared but not registered with this Studio; the flow's add step registers it. Its folder is
+  # kept in a private file for the replay to type into the form; it is never echoed.
   if [ "$flow" = studio2-two-projects ]; then
     p2=$((rport + 2))
     [ "$p2" != 8793 ] && [ "$p2" != "$sport" ] || { echo 'fixture: unsafe second Runtime port' >&2; exit 2; }
@@ -928,9 +928,9 @@ NODE
         --fixtures "$dir/.graphhelm/fixtures.json" --mode supervised --execution second-run \
         > "$dir/.graphhelm/seed-second.json"
     fi
-    (umask 077; "$bin" --json studio open --project "$second" --port "$sport" --no-browser > "$dir/.graphhelm/second-open.json")
-    grep -q '"ok":true' "$dir/.graphhelm/second-open.json" \
-      || { echo "fixture: the second project was not registered (see $dir/.graphhelm/second-open.json)" >&2; exit 1; }
+    # The Studio is NOT told about proj-two here: the flow's add step registers it through the
+    # Studio's own "Add project folder" form, which needs only the folder, its token and its running
+    # Runtime. Registering it here would make the card exist before the owner adds it.
     folder2=$(cd "$second" && pwd -W 2> /dev/null || pwd)
     (umask 077; printf 'GRAPHHELM_SECRET_proj_two_folder=%s\n' "$folder2" > "$dir/.graphhelm/secrets-second.env")
   fi

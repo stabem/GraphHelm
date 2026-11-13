@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use graphhelm_execution::tasks::{TaskState, TaskStep};
+use graphhelm_execution::tasks::TaskState;
 use serde::Serialize;
 
 use super::tasks::TasksView;
@@ -50,7 +50,7 @@ pub struct Holder {
 
 /// Open: a live slice (not closed) that is neither merged nor released.
 fn open(task: &TaskState) -> bool {
-    task.step != TaskStep::Merged && task.released_by.is_none() && !task.orphaned
+    task.is_open()
 }
 
 impl TasksView {

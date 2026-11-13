@@ -1454,9 +1454,7 @@ fn liveness(
     now: &PersistedTimestamp,
 ) -> Liveness {
     use graphhelm_execution::tasks::TaskEventKind;
-    let open = |slice: &TaskState| {
-        slice.step != graphhelm_execution::tasks::TaskStep::Merged && slice.released_by.is_none()
-    };
+    let open = TaskState::is_open;
     let assigned_at = |reviewer: &str, pr: u64| {
         records
             .iter()
@@ -1772,8 +1770,7 @@ pub(crate) fn holder<'a>(
     let live = |slice: &&TaskState| {
         slice.task_id == task_id
             && slice.pr.is_none()
-            && slice.released_by.is_none()
-            && slice.step != graphhelm_execution::tasks::TaskStep::Merged
+            && slice.is_open()
             && !leases
                 .iter()
                 .any(|lease| lease.key == slice.key && lease.overdue)
@@ -1801,11 +1798,7 @@ pub(crate) fn holder<'a>(
 pub fn claim_leases(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<ClaimLease> {
     tasks
         .iter()
-        .filter(|state| {
-            state.pr.is_none()
-                && state.released_by.is_none()
-                && state.step != graphhelm_execution::tasks::TaskStep::Merged
-        })
+        .filter(|state| state.pr.is_none() && state.is_open())
         .filter_map(|state| {
             let (lane, claim_sequence, claimed_at) = (
                 state.lane.as_ref()?,
@@ -2298,7 +2291,7 @@ pub fn stalled_tasks(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<TaskS
     use graphhelm_execution::tasks::TaskStep;
     tasks
         .iter()
-        .filter(|state| state.released_by.is_none() && state.step != TaskStep::Merged)
+        .filter(|state| state.is_open())
         .filter_map(|state| {
             let pr = state.pr?;
             let idle_since = state

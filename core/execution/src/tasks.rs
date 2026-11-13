@@ -1032,11 +1032,7 @@ pub fn backlog(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec<QueuedIs
     };
     // A slice holds its issue while it is live: not released by its lane (a released claim stays
     // in the fold with `released_by` set) and not merged.
-    let held = |n: u64| {
-        tasks
-            .iter()
-            .any(|t| t.issue == Some(n) && t.is_open())
-    };
+    let held = |n: u64| tasks.iter().any(|t| t.issue == Some(n) && t.is_open());
     let mut out: Vec<QueuedIssue> = newest
         .queued
         .iter()

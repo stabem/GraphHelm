@@ -1798,9 +1798,7 @@ pub(crate) fn holder<'a>(
 pub fn claim_leases(tasks: &[TaskState], now: &PersistedTimestamp) -> Vec<ClaimLease> {
     tasks
         .iter()
-        .filter(|state| {
-            state.pr.is_none() && state.is_open()
-        })
+        .filter(|state| state.pr.is_none() && state.is_open())
         .filter_map(|state| {
             let (lane, claim_sequence, claimed_at) = (
                 state.lane.as_ref()?,

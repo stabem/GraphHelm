@@ -18,11 +18,25 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", no list \"Runs in demo\"",
+      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", no list \"Runs in demo\", no region \"Project proj-two\", no link \"proj-two\"",
       "statesToObserve": [
         "stable"
       ],
       "stepId": "first"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "refused.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows form \"Add project folder\" saying \"That folder is not a GraphHelm project.\", banner \"Top bar\" saying \"demo / demo\", no region \"Project missing-project-folder\", no region \"Project proj-two\"",
+      "statesToObserve": [
+        "error"
+      ],
+      "stepId": "refused"
     },
     {
       "maxEvidenceAgeSeconds": 604800,
@@ -91,6 +105,39 @@
         }
       },
       "stepId": "first"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "error"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen refused not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/App.tsx",
+          "apps/studio/src/sidebar/Sidebar.tsx",
+          "apps/studio/src/login/session.ts",
+          "apps/studio/src/topbar/Topbar.tsx"
+        ],
+        "screenId": "refused",
+        "title": "An invalid folder adds no project"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "button",
+          "strategy": "accessible_name",
+          "value": "Add"
+        }
+      },
+      "stepId": "refused"
     },
     {
       "actorId": "owner",

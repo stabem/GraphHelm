@@ -728,7 +728,7 @@ fn body_with(
     commit: &str,
     liveness: &impl Fn(&Value) -> Liveness,
 ) -> Value {
-    let kind = if flow["status"] == "approved" {
+    let kind = if super::journey_flow::flow_is_approved(flow) {
         "replay"
     } else {
         "preview"
@@ -1066,7 +1066,7 @@ pub(crate) fn start(args: &JourneyPreviewArgs) -> Outcome {
 fn confirm_commands(args: &JourneyPreviewArgs, project: &Path, flow: &Value) -> Result<()> {
     let argv = super::journey_backend::cli_argv(flow);
     if !args.confirm
-        || flow["status"] == "approved"
+        || super::journey_flow::flow_is_approved(flow)
         || argv.is_empty()
         || args.validation_dir.is_some()
     {
@@ -1844,7 +1844,7 @@ struct Run {
 /// An approved flow asked to record into an execution on a Runtime with no sealed keyring: refused,
 /// as `journey open` refuses it. A draft never records, so its execution is ignored, not refused.
 fn unsealed_proof(args: &JourneyPreviewArgs, flow: &Value) -> bool {
-    flow["status"] == "approved"
+    super::journey_flow::flow_is_approved(flow)
         && args.execution.is_some()
         && (args.keyring.is_none() || args.key_id.is_none())
 }
@@ -1856,7 +1856,7 @@ fn proof_args(
     flow: &Value,
     project: &Path,
 ) -> Option<JourneyReplayArgs> {
-    if flow["status"] != "approved" {
+    if !super::journey_flow::flow_is_approved(flow) {
         return None;
     }
     Some(JourneyReplayArgs {
@@ -1987,7 +1987,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     };
     // #1911: the reviewed check runs on the bytes just parsed, before anything plays. Only a
     // draft with commands needs it, so other runs never touch the network.
-    let reviewed = flow["status"] != "approved"
+    let reviewed = !super::journey_flow::flow_is_approved(&flow)
         && !super::journey_backend::cli_argv(&flow).is_empty()
         && reviewed_on_main(
             std::env::var(REVIEWED_REMOTE_ENV).ok().as_deref(),
@@ -2008,7 +2008,7 @@ fn run(args: &JourneyPreviewArgs) -> Outcome {
     if state["digest"] != digest.as_str() || state["state"] != "running" {
         state = new_run_state(&project, &digest, &commit);
     }
-    state["kind"] = if flow["status"] == "approved" {
+    state["kind"] = if super::journey_flow::flow_is_approved(&flow) {
         "replay"
     } else {
         "preview"
@@ -2274,7 +2274,7 @@ fn play(
     // #1662: a draft's commands run only when the owner's store confirms this exact content and
     // argv list; the held state names both, so the owner sees what a confirm would allow.
     let argv = super::journey_backend::cli_argv(flow);
-    let approved = flow["status"] == "approved";
+    let approved = super::journey_flow::flow_is_approved(flow);
     let digest = super::journey_flow::approval_digest(flow);
     let cli_confirmed = !approved
         && !argv.is_empty()

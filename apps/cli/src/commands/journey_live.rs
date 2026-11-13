@@ -720,7 +720,7 @@ fn walk(args: &JourneyOpenArgs, data: &mut Value) -> Result<(Session, Option<Fai
     // here: `read_for_watch` refuses it), so it is played whole.
     let mut guarded: Vec<Value> = Vec::new();
     if args.watch {
-        if flow["status"] != "approved" {
+        if !super::journey_flow::flow_is_approved(&flow) {
             for id in path_edges.as_array().unwrap() {
                 let id = id.as_str().unwrap();
                 // #518: the owner marked this edge safe, and it is still the edge that was
@@ -1941,7 +1941,7 @@ pub(crate) fn live_tool_act_allowed(
     if declared.peek().is_none() {
         return Err("live.act_refused_destructive");
     }
-    if flow["status"] == "approved" || host_started_app || declared.any(edge_safe) {
+    if super::journey_flow::flow_is_approved(flow) || host_started_app || declared.any(edge_safe) {
         Ok(())
     } else {
         Err("live.act_refused_destructive")

@@ -31,6 +31,27 @@ describe("Graph requests and Kanban", () => {
     }
   });
 
+  // #2895: the Proof view calls a preview pass "not proof" and a pass of an older flow "changed
+  // since last run"; the Graph must not call either Proven.
+  it("keeps a merged slice out of Proven when its journey's pass is not a replay of the current flow", () => {
+    const passed = (id: string, over: Partial<NonNullable<JourneyFlow["lastRun"]>>): JourneyFlow => {
+      const base = flow(id, "passed");
+      return { ...base, lastRun: { ...base.lastRun!, ...over } };
+    };
+    const flows = [
+      passed("j-replay", {}),
+      passed("j-preview", { kind: "preview" }),
+      passed("j-no-kind", { kind: null }),
+      passed("j-changed", { flowChanged: true }),
+    ];
+    const none = new Set<string>();
+    expect(kanbanColumn(task({ step: "merged", journeys: ["j-replay"] }), none, flows)).toBe("proven");
+    for (const journey of ["j-preview", "j-no-kind", "j-changed"]) {
+      expect(kanbanColumn(task({ step: "merged", journeys: [journey] }), none, flows), journey).toBe("merged");
+      expect(kanbanColumn(task({ step: "merged", journeys: ["j-replay", journey] }), none, flows), journey).toBe("merged");
+    }
+  });
+
   it("narrows cards to one journey and leaves released slices out", () => {
     const b = board([
       task({ key: "a", issue: 1, journeys: ["j1"] }),

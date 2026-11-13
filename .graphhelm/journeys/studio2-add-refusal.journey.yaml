@@ -1,0 +1,49 @@
+schema: graphhelm.journey-flow/1
+id: studio2-add-refusal
+title: The Studio refuses to add a project when the request has no session
+name: Studio add refusal
+feature: Studio
+purpose: "POST /__studio/add, the route that joins a project folder to a running Studio, is refused as session_required when it carries no session cookie, and as foreign_origin when it names a foreign Origin; all from loopback, so this proves those two checks on the live wiring and not a refusal from an off-loopback peer."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [client]
+secrets: []
+risks: [authentication]
+viewports: [web]
+screens:
+  - id: foreign-origin
+    title: The add route answers a POST that names a foreign Origin
+    url: /__studio/add
+    state: stable
+    expect: [{role: status, name: "403", because: the Studio middleware refuses an Origin that is not its own authority}, {role: json, name: reason=foreign_origin, because: the refusal names the foreign origin check and not a missing session}]
+    scope: [apps/studio/dev-session.ts]
+  - id: no-session
+    title: The add route answers a request that has no session cookie
+    url: /__studio/add
+    state: stable
+    expect: [{role: status, name: "403", because: the Studio middleware refuses a protected path without the session cookie before any add handler runs}]
+    scope: [apps/studio/dev-session.ts]
+  - id: post-no-session
+    title: The add route answers a POST that has no session cookie
+    url: /__studio/add
+    state: stable
+    expect: [{role: status, name: "403", because: a mutating request to the add route is refused before the handler so it is never the 422 not_a_project of a handled add}, {role: json, name: reason=session_required, because: the refusal names the missing session and is not a transport failure}]
+    scope: [apps/studio/dev-session.ts]
+edges:
+  - id: no-session.foreign-origin
+    from: no-session
+    to: foreign-origin
+    why: "A POST that also claims a foreign Origin is refused for that origin, so the origin check on the add route is separate from the missing session."
+    acts:
+      - {kind: http, role: POST, name: /__studio/add, headers: {origin: http://foreign.example}}
+  - id: no-session.post-no-session
+    from: no-session
+    to: post-no-session
+    why: "A POST to the add route with no cookie and no Origin is refused for the missing session, the same as the read, so the refusal covers the method that adds a project."
+    acts:
+      - {kind: http, role: POST, name: /__studio/add}
+paths:
+  main: [no-session.post-no-session]
+  origin: [no-session.foreign-origin]
+drift: []

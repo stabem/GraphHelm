@@ -513,7 +513,9 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     for (code, pointer, message) in super::journey_backend::findings(value) {
         findings.push(Finding::new(code, pointer, message));
     }
-    if flow_is_approved(value) && !value["drift"].as_array().unwrap().is_empty() {
+    // The schema requires `drift` to be an array; a value that is not one cannot be called free
+    // of drift, so it is refused here as an approved flow carrying drift (it used to panic).
+    if flow_is_approved(value) && value["drift"].as_array().is_none_or(|d| !d.is_empty()) {
         findings.push(Finding::new(
             "flow.approved_with_drift",
             "/drift/0",
@@ -1855,7 +1857,8 @@ fn flow_entry(file: &Path, project: &Path, studio: bool) -> Value {
     let settled = flow_is_approved(&flow) && !stale && !drifted;
     // #1287 follow-up: an approved flow that does not say what it proves is not settled:
     // `weak` with no approved digest, so no replay cached under that digest reads as proof.
-    let weak = flow_is_approved(&flow) && !weak_journey(&flow, true).is_empty();
+    let strict = true;
+    let weak = flow_is_approved(&flow) && !weak_journey(&flow, strict).is_empty();
     let settled = settled && !weak;
     // #1972: `approvable` is `accepted && !settled`, so a settled flow skips the checks
     // (and `preview_gate`'s `git log`) whose answer it would discard.

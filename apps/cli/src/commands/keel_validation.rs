@@ -525,7 +525,7 @@ pub(crate) fn run(repo: &Path) -> Outcome {
                 // The concrete cause stays the reason; a draft adds `flow_not_approved` beside it,
                 // never in its place, because a draft is never proof.
                 let mut reasons = vec!["execution_failed"];
-                if flow["status"] != "approved" {
+                if !super::journey_flow::flow_is_approved(flow) {
                     reasons.push("flow_not_approved");
                 }
                 let mut failure = json!({"flow":id,"reason":"execution_failed","reasons":reasons,"status":flow["status"],"result":result["result"],"detail":result["reason"]});

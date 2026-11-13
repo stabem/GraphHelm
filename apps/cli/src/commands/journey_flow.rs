@@ -342,7 +342,7 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
             }
         }
         if !edge["safe"].is_null() {
-            if value["status"] != "draft" {
+            if !flow_is_draft(value) {
                 findings.push(Finding::new(
                     "flow.safe_not_draft",
                     format!("/edges/{i}/safe"),
@@ -513,14 +513,16 @@ fn semantic(file: &Path, value: &Value, project: &Path) -> Vec<Finding> {
     for (code, pointer, message) in super::journey_backend::findings(value) {
         findings.push(Finding::new(code, pointer, message));
     }
-    if value["status"] == "approved" && !value["drift"].as_array().unwrap().is_empty() {
+    // The schema requires `drift` to be an array; a value that is not one cannot be called free
+    // of drift, so it is refused here as an approved flow carrying drift (it used to panic).
+    if flow_is_approved(value) && value["drift"].as_array().is_none_or(|d| !d.is_empty()) {
         findings.push(Finding::new(
             "flow.approved_with_drift",
             "/drift/0",
             "approved flow carries drift",
         ));
     }
-    if value["status"] == "approved"
+    if flow_is_approved(value)
         && value["approved"]["digest"].as_str() != Some(approval_digest(value).as_str())
     {
         findings.push(Finding::new(
@@ -1013,7 +1015,7 @@ fn mark_signature(flow: &Value, edge: &Value, index: usize, project: &Path) -> V
 /// project's owner store. Without the record the flow is unsigned (an agent could have written
 /// the YAML); without a readable store the approval cannot be verified at all.
 fn owner_signature(value: &Value, project: &Path, studio: bool) -> Vec<Finding> {
-    if value["status"] != "approved" {
+    if !flow_is_approved(value) {
         return vec![];
     }
     let (Some(id), Some(digest)) = (value["id"].as_str(), value["approved"]["digest"].as_str())
@@ -1044,6 +1046,18 @@ fn owner_signature(value: &Value, project: &Path, studio: bool) -> Vec<Finding> 
     }
 }
 
+/// True when the flow's stored `status` is exactly `approved`. A missing, null, non-string or
+/// differently spelled status is not approved. The one place the commands read this rule.
+pub(crate) fn flow_is_approved(flow: &Value) -> bool {
+    flow["status"] == "approved"
+}
+
+/// True when the flow's stored `status` is exactly `draft`. A missing, null, non-string or
+/// differently spelled status is not a draft. The one place the commands read this rule.
+pub(crate) fn flow_is_draft(flow: &Value) -> bool {
+    flow["status"] == "draft"
+}
+
 pub(crate) fn approval_digest(flow: &Value) -> String {
     graphhelm_protocols::hash::wire_sha256(canonical(flow, true).as_bytes())
 }
@@ -1066,7 +1080,9 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
     if !findings.is_empty() {
         return Err(findings);
     }
-    if flow["status"] != "draft" || !flow["approved"].is_null() {
+    // The `approved` half stays a null check: it asks whether an approval record is present, not
+    // what the status says, so a draft that kept an old record is still refused as stale.
+    if !flow_is_draft(flow) || !flow["approved"].is_null() {
         return Err(vec![Finding::new(
             "flow.approval_stale",
             "/approved",
@@ -1114,7 +1130,7 @@ pub(crate) fn check(file: &Path, project: &Path, studio: bool) -> Vec<Finding> {
             let mut findings = check_snapshot(file, &text, &value, project, studio);
             // #1955: a draft must explain itself before it is approved; an approved flow written
             // before the rule keeps its `flow.unexplained` warning.
-            if value["status"] != "approved" {
+            if !flow_is_approved(&value) {
                 findings.retain(|f| f.code != "flow.unexplained");
                 findings.extend(unexplained(&value, true));
             }
@@ -1176,7 +1192,7 @@ pub(crate) fn read_for_preview_source(
 pub(crate) fn read_for_replay(file: &Path, project: &Path) -> Result<Value, Vec<Finding>> {
     let (text, value) = read(file)?;
     let mut findings = check_snapshot(file, &text, &value, project, false);
-    if value["status"] != "approved" {
+    if !flow_is_approved(&value) {
         findings.push(Finding::new(
             "flow.not_approved",
             "/status",
@@ -1222,7 +1238,7 @@ fn check_snapshot(
             let path = project
                 .join(".graphhelm/journeys")
                 .join(format!("{id}.json"));
-            if (value["status"] == "approved" || path.exists())
+            if (flow_is_approved(value) || path.exists())
                 && output_bytes(&path).ok().as_deref() != Some(contract_bytes(&contract).as_slice())
             {
                 findings.push(Finding::new(
@@ -1384,7 +1400,7 @@ pub(crate) fn projected_flows(project: &Path) -> ProjectedFlows {
         let id = flow["id"].as_str().unwrap_or_default().to_owned();
         // #534: an approval with no owner record for its digest is a draft to keel plan too.
         // #1287 follow-up: a weak approved flow is not proof to keel either; it plans as a draft.
-        if flow["status"] != "approved"
+        if !flow_is_approved(&flow)
             || owner_signature(&flow, project, false)
                 .iter()
                 .any(|f| !f.is_warning())
@@ -1589,7 +1605,7 @@ pub(crate) fn run_compile(args: &crate::args::JourneyCompileArgs) -> Outcome {
                     if args.fmt {
                         writes.insert(file.clone(), canonical(&flow, false).into_bytes());
                     }
-                    if flow["status"] == "draft" && !args.include_draft {
+                    if flow_is_draft(&flow) && !args.include_draft {
                         skipped.push(json!({"id":flow["id"],"reason":"draft"}));
                     } else {
                         let contracts = match compile(&flow) {
@@ -1838,10 +1854,11 @@ fn flow_entry(file: &Path, project: &Path, studio: bool) -> Value {
     };
     let stale = findings.iter().any(|f| f.code == "flow.approval_stale");
     let drifted = flow["drift"].as_array().is_some_and(|d| !d.is_empty());
-    let settled = flow["status"] == "approved" && !stale && !drifted;
+    let settled = flow_is_approved(&flow) && !stale && !drifted;
     // #1287 follow-up: an approved flow that does not say what it proves is not settled:
     // `weak` with no approved digest, so no replay cached under that digest reads as proof.
-    let weak = flow["status"] == "approved" && !weak_journey(&flow, true).is_empty();
+    let strict = true;
+    let weak = flow_is_approved(&flow) && !weak_journey(&flow, strict).is_empty();
     let settled = settled && !weak;
     // #1972: `approvable` is `accepted && !settled`, so a settled flow skips the checks
     // (and `preview_gate`'s `git log`) whose answer it would discard.
@@ -1961,7 +1978,7 @@ pub(crate) fn run_sign_legacy(args: &crate::args::JourneySignLegacyArgs) -> Outc
         let Ok((text, flow)) = read(&file) else {
             continue;
         };
-        if flow["status"] != "approved" {
+        if !flow_is_approved(&flow) {
             continue;
         }
         let id = flow["id"].as_str().unwrap_or_default().to_owned();
@@ -2077,7 +2094,7 @@ fn draft_digest(command: &'static str, id: &str, project: &Path) -> Result<Strin
     };
     let (_, flow) =
         read(&files[0]).map_err(|findings| report(command, vec![], findings, json!({})))?;
-    if flow["status"] == "approved" {
+    if flow_is_approved(&flow) {
         return Err(input_error(command, "the flow is already approved"));
     }
     Ok(approval_digest_of(&flow))
@@ -2115,9 +2132,7 @@ pub(crate) fn write_draft(
     // #2811: the posted text is validated in memory; a refusal writes nothing, so the existing
     // flow (it can be the approved one) is never replaced by bytes that were not checked.
     let flow = match parse_flow(yaml) {
-        Ok(flow) if flow["id"] == id && flow["status"] == "draft" && flow["approved"].is_null() => {
-            flow
-        }
+        Ok(flow) if flow["id"] == id && flow_is_draft(&flow) && flow["approved"].is_null() => flow,
         Ok(_) => {
             return input_error(
                 COMMAND,
@@ -2470,7 +2485,7 @@ pub(crate) fn mark_safe_owned(id: &str, edge: &str, project: std::path::PathBuf)
     let mut findings = approval_findings(file, &text, &flow, &project);
     // A stale mark is what a new mark replaces.
     findings.retain(|f| f.code != "flow.safe_stale");
-    if flow["status"] != "draft" {
+    if !flow_is_draft(&flow) {
         findings.push(Finding::new(
             "flow.safe_not_draft",
             "/status",

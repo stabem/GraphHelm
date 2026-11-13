@@ -321,3 +321,22 @@ fn malformed_oversized_and_directory_cache_are_preserved_and_refused() {
     );
     assert!(cache.is_dir());
 }
+
+/// #2904: the stored status is read exactly. A status spelled `Approved` or left out is not an
+/// approved flow: replay refuses it (the schema check on `/status` comes first, so
+/// `flow.not_approved` is never the answer for a file) before any driver starts.
+#[test]
+fn a_status_that_is_not_exactly_approved_is_refused_by_replay() {
+    let dir = project(false);
+    let flow = dir.path().join(".graphhelm/journeys/checkout.journey.yaml");
+    let text = std::fs::read_to_string(&flow).unwrap();
+    for replacement in ["status: Approved\n", ""] {
+        std::fs::write(&flow, text.replace("status: draft\n", replacement)).unwrap();
+        refuses(
+            dir.path(),
+            &["replay", "checkout"],
+            2,
+            "flow.schema_invalid",
+        );
+    }
+}

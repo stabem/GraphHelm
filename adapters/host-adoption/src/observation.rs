@@ -123,10 +123,7 @@ fn verify_at(
     let mut record = store.active()?.ok_or_else(invalid)?;
     if record.transaction_id != initial.transaction_id
         || record.sequence != initial.sequence
-        || !matches!(
-            record.state,
-            TransactionState::InstalledUnverified | TransactionState::Verified
-        )
+        || !record.state.is_installed()
         || record.plan_digest != plan["digest"].as_str().ok_or_else(invalid)?
         || record.transaction_id != receipt["spec"]["transactionId"]
         || plan["spec"]["rootBindings"]

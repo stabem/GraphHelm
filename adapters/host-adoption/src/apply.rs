@@ -130,10 +130,7 @@ fn apply_engine(
         if previous.project != project.record || previous.home != home.record {
             return Err(storage::failed());
         }
-        if matches!(
-            previous.state,
-            TransactionState::InstalledUnverified | TransactionState::Verified
-        ) {
+        if previous.state.is_installed() {
             crate::hosts::verify_installed(&store, &previous)?;
             for entry in &previous.entries {
                 let root = if entry.root == "project" {
@@ -306,10 +303,7 @@ fn apply_engine(
         Err(error) => {
             // Re-read durable intent: the in-memory state may be ahead of a failed sync.
             if let Some(mut durable) = store.read(&record.transaction_id)?
-                && !matches!(
-                    durable.state,
-                    TransactionState::InstalledUnverified | TransactionState::Verified
-                )
+                && !durable.state.is_installed()
                 && compensate(&store, &project, &home, &mut durable, hook).is_err()
             {
                 return Err(storage::failed());
@@ -357,10 +351,7 @@ fn recover_engine(
     if record.restore.is_some() {
         return crate::restore::resume(&store, &project, &home, &mut record, hook);
     }
-    if matches!(
-        record.state,
-        TransactionState::InstalledUnverified | TransactionState::Verified
-    ) {
+    if record.state.is_installed() {
         return record.receipt.ok_or_else(storage::failed);
     }
     compensate(&store, &project, &home, &mut record, hook)

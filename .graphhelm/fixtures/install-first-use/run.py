@@ -3,7 +3,8 @@
 
 The commands come from INSTALL.md itself (`init`, `serve`), so a flag the page still shows but the
 CLI no longer accepts turns this run red. Prints `version=ok init=ok runtime=ok validate=ok` on success.
-It first checks that the CLI reports the commit of this checkout's head; otherwise it exits 75 with
+It first checks that the CLI reports the commit of this checkout's head, or of an ancestor of it such that
+every path changed since lies under `BINARY_NEUTRAL`; otherwise it exits 75 with
 `UNOBSERVED: cli not built from head: <why>` and walks nothing.
 """
 
@@ -13,6 +14,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import socket
@@ -28,6 +30,18 @@ STEP_SECONDS = 60
 SERVE_SECONDS = 30
 EXIT_UNOBSERVED = 75
 REPO = Path(__file__).resolve().parents[3]
+
+# Paths that neither enter the `graphhelm` binary nor are read by this walk (#2896). A change that
+# touches only these leaves a CLI built from an older commit a faithful build of the head. Whole path
+# segments, so `docs/` never matches `docs-x/`. Fail safe: anything not listed is unobserved. Keep it
+# short; INSTALL.md, examples/, schemas/, every workspace crate, Cargo.toml/Cargo.lock, plugins/ and
+# this fixture's own directory must stay out (they are compiled in, or read by the walk).
+BINARY_NEUTRAL = (
+    ".graphhelm/journeys/",
+    "docs/",
+    "apps/studio/",
+    "tools/studio-journey-fixture/",
+)
 
 
 class StepFailed(Exception):
@@ -49,17 +63,54 @@ def graphhelm() -> str:
     return binary
 
 
+def git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
+                          timeout=STEP_SECONDS, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+
+
 def head_commit() -> str | None:
     try:
-        done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True,
-                              timeout=STEP_SECONDS, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        done = git("rev-parse", "HEAD")
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip() if done.returncode == 0 else None
 
 
+def neutral(path: str) -> bool:
+    """True when `path` lies under an entry of BINARY_NEUTRAL, compared by whole segments."""
+    parts = path.split("/")
+    if "" in parts or ".." in parts or "." in parts:
+        return False
+    return any(parts[:len(entry)] == list(entry) and len(parts) > len(entry)
+               for entry in (item.strip("/").split("/") for item in BINARY_NEUTRAL))
+
+
+def ancestor_gap(reported: str, head: str) -> str | None:
+    """Why a CLI built from `reported` is not a build of `head`, or None when it is: `reported` is an
+    ancestor of `head` and every path changed between them is binary-neutral. Any doubt is a gap."""
+    who = f"built from {reported[:8]}, the head is {head[:8]}"
+    if not re.fullmatch(r"[0-9a-f]{40}", reported):
+        return f"{who}: the reported commit is not a 40-digit hash"
+    try:
+        ancestry = git("merge-base", "--is-ancestor", reported, head)
+        if ancestry.returncode == 1:
+            return f"{who}: that commit is not an ancestor of the head"
+        if ancestry.returncode:
+            return f"{who}: that commit is not in this checkout ({ancestry.stderr.strip()[:100]})"
+        changed = git("diff", "--name-only", "--no-renames", "-z", reported, head)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"{who}: git did not answer ({type(error).__name__})"
+    if changed.returncode:
+        return f"{who}: git diff failed ({changed.stderr.strip()[:100]})"
+    for path in filter(None, changed.stdout.split("\0")):
+        if not neutral(path):
+            return f"{who}: {path} changed since and may enter the binary or the walk"
+    return None
+
+
 def provenance_gap() -> str | None:
-    """Why the CLI cannot be taken for a build of the head, or None when it reports the head's commit."""
+    """Why the CLI cannot be taken for a build of the head, or None when it reports the head's commit
+    or an ancestor's with only binary-neutral paths changed since."""
     path = graphhelm()
     done = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=STEP_SECONDS,
                           stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
@@ -78,9 +129,10 @@ def provenance_gap() -> str | None:
     head = head_commit()
     if head is None:
         return "the head commit cannot be read from this checkout"
-    if reported != head:
-        return f"{path} was built from {reported[:8]}, the head is {head[:8]}"
-    return None
+    if reported == head:
+        return None
+    gap = ancestor_gap(reported, head)
+    return f"{path} {gap}" if gap else None
 
 
 def documented(page: str, verb: str, must_have: str, must_lack: str = "") -> list[str]:

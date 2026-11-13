@@ -14,6 +14,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "fixture.sh")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# On Windows a bare `bash` can be the WSL launcher, which cannot read a native path.
+SHELL = r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else "bash"
 
 
 def free_port():
@@ -36,7 +38,7 @@ class Health(http.server.BaseHTTPRequestHandler):
 def run_up(rport, sport):
     with tempfile.TemporaryDirectory() as d:
         r = subprocess.run(
-            ["bash", SCRIPT, "up", os.path.join(d, "fx"), str(rport), str(sport)],
+            [SHELL, SCRIPT, "up", os.path.join(d, "fx"), str(rport), str(sport)],
             capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW,
         )
     return r.returncode, r.stderr

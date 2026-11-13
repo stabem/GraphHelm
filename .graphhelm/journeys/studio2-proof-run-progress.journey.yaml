@@ -1,0 +1,52 @@
+schema: graphhelm.journey-flow/1
+id: studio2-proof-run-progress
+title: A running journey shows its first step's frame and mark before it ends
+name: Watch a run's progress
+feature: Studio
+purpose: "Pressing Run on the fixture's report-slow journey, which plays for several seconds, shows step 1's frame and its web pass mark while the run is still going and step 2 has not finished, and then the run ends Passed with both steps marked."
+status: draft
+approved: null
+base: http://127.0.0.1:5184
+actors: [owner]
+secrets: []
+risks: [critical_ux]
+viewports: [web, mobile]
+screens:
+  - id: journeys
+    title: The slow report journey is selected and has not run
+    url: /?session=studio-fixture&run=demo&view=proof&journey=report-slow
+    ignoreQuery: [session, project]
+    state: stable
+    expect: [{role: button, name: Run, because: "the selected journey offers Run, the one press that starts it"}, {role: listitem, name: Step 1, text: web not run, because: "before the press no viewport has played step 1, so the card says not run"}, {role: listitem, name: Step 2, text: web not run, because: "before the press step 2 has not run either, so the next screen's change can only come from this run"}, {role: heading, name: Open the weekly report, because: "the Proof view's heading names the journey it shows, so this flow fails if the entry URL selected, or the run that started, was any journey other than report-slow"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+  - id: midrun
+    title: Step 1 has its frame and mark while the run is still going
+    url: /?session=studio-fixture&run=demo&view=proof&journey=report-slow
+    ignoreQuery: [session, project]
+    state: loading
+    expect: [{role: button, name: Running…, because: "the Run control reads Running… while the run is going, so this screen cannot be a finished run"}, {role: img, name: Step 1 frame, because: "step 1 is done, and its card already shows the frame the run captured, though the run has not ended"}, {role: listitem, name: Step 1, text: web ✓, because: step 1 passed at the web width and the card says so before the run ends}, {role: listitem, name: Step 2, text: web not run, because: "the report button appears only after the page's own wait, so step 2 has no result yet"}, {role: status, name: Passed, absent: true, because: "the run bar has no verdict until the run ends, so the Passed of the last screen is not already there"}, {role: heading, name: Open the weekly report, because: "the Proof view's heading names the journey it shows, so this flow fails if the run that started was any journey other than report-slow"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+  - id: ran
+    title: The run ended and both steps hold their marks
+    url: /?session=studio-fixture&run=demo&view=proof&journey=report-slow
+    ignoreQuery: [session, project]
+    state: success
+    expect: [{role: status, name: Passed, because: the run bar gives the run's verdict once the report button appeared and step 2 finished}, {role: listitem, name: Step 1, text: web ✓, because: step 1 keeps the pass it showed while the run was going}, {role: listitem, name: Step 2, text: web ✓, because: "step 2 passed when the report button appeared, and its card now marks web with a check instead of not run"}, {role: img, name: Step 2 frame, because: "the finished run captured step 2, and its card shows that frame"}, {role: button, name: Run again, because: "the control is Run again once the run ended, so the run is not still going"}, {role: heading, name: Open the weekly report, because: "the Proof view's heading names the journey it shows, so this flow fails if the run that ended was any journey other than report-slow"}]
+    scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/steps.ts, apps/studio/src/proof/use-journey-run.ts]
+edges:
+  - id: journeys.midrun
+    from: journeys
+    to: midrun
+    why: "Run starts a journey that takes several seconds, and the owner sees step 1 done with its frame and mark while it still plays, so he does not wait for the whole run to learn how it is going."
+    acts:
+      - {kind: activate, role: button, name: Run}
+      - {kind: wait_for, role: img, name: Step 1 frame}
+  - id: midrun.ran
+    from: midrun
+    to: ran
+    why: "The run ends on its own, and the owner then reads Passed with both steps marked, so the progress he watched was the start of a real result."
+    acts:
+      - {kind: wait_for, role: status, name: Passed}
+paths:
+  main: [journeys.midrun, midrun.ran]
+drift: []

@@ -1,0 +1,159 @@
+{
+  "actors": [
+    {
+      "actorId": "owner",
+      "goal": "A running journey shows its first step's frame and mark before it ends",
+      "name": "owner"
+    }
+  ],
+  "contractId": "studio2-proof-run-progress",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "journeys.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Run\", listitem \"Step 1\" saying \"web not run\", listitem \"Step 2\" saying \"web not run\", heading \"Open the weekly report\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "journeys"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "midrun.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows button \"Running…\", img \"Step 1 frame\", listitem \"Step 1\" saying \"web ✓\", listitem \"Step 2\" saying \"web not run\", no status \"Passed\", heading \"Open the weekly report\"",
+      "statesToObserve": [
+        "loading"
+      ],
+      "stepId": "midrun"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "ran.visible",
+      "requiredEvidenceKinds": [
+        "visual_capture"
+      ],
+      "requiredFact": "content_rendered",
+      "requiredObserverCapability": "browser",
+      "statement": "shows status \"Passed\", listitem \"Step 1\" saying \"web ✓\", listitem \"Step 2\" saying \"web ✓\", img \"Step 2 frame\", button \"Run again\", heading \"Open the weekly report\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "ran"
+    }
+  ],
+  "riskSignals": [
+    "critical_ux"
+  ],
+  "steps": [
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen journeys not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts",
+          "apps/studio/src/proof/use-journey-run.ts"
+        ],
+        "screenId": "journeys",
+        "title": "The slow report journey is selected and has not run"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/?session=studio-fixture&run=demo&view=proof&journey=report-slow"
+        }
+      },
+      "stepId": "journeys"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "loading"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen midrun not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts",
+          "apps/studio/src/proof/use-journey-run.ts"
+        ],
+        "screenId": "midrun",
+        "title": "Step 1 has its frame and mark while the run is still going"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "img",
+          "strategy": "accessible_name",
+          "value": "Step 1 frame"
+        }
+      },
+      "stepId": "midrun"
+    },
+    {
+      "actorId": "owner",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen ran not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/src/proof/ProofView.tsx",
+          "apps/studio/src/proof/steps.ts",
+          "apps/studio/src/proof/use-journey-run.ts"
+        ],
+        "screenId": "ran",
+        "title": "The run ended and both steps hold their marks"
+      },
+      "semanticAction": {
+        "kind": "wait_for",
+        "target": {
+          "geometryClaim": false,
+          "role": "status",
+          "strategy": "accessible_name",
+          "value": "Passed"
+        }
+      },
+      "stepId": "ran"
+    }
+  ],
+  "taskScope": "journey-flow studio2-proof-run-progress path main",
+  "title": "A running journey shows its first step's frame and mark before it ends",
+  "version": 1
+}

@@ -10,6 +10,7 @@ base: http://127.0.0.1:5184
 actors: [client]
 secrets: []
 risks: [authentication]
+viewports: [web]
 screens:
   - id: foreign-origin
     title: The same route answers a request that names a foreign Origin

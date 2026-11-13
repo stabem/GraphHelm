@@ -757,3 +757,154 @@ fn a_cli_only_flow_judges_its_start_screen_keeps_text_frames_and_replays() {
     );
     assert_eq!(broken["data"]["paths"][0]["outcome"], "drift", "{broken}");
 }
+
+/// An `http`-only flow: a start screen, one request with credential headers, and one request for
+/// a body longer than the kept bound.
+const HTTP_ONLY: &str = "schema: graphhelm.journey-flow/1
+id: answers
+title: Answers journey
+purpose: A client reads what the service answers, with credentials in its request.
+status: draft
+approved: null
+base: http://127.0.0.1:8765
+actors: [client]
+secrets: []
+risks: []
+screens:
+  - id: start
+    title: The service status before any request
+    url: /status.json
+    state: stable
+    expect: [{role: status, name: \"200\", because: a running service answers its status route with HTTP 200}]
+    scope: unknown
+  - id: items
+    title: The items the service answered
+    url: /items.json
+    state: success
+    expect: [{role: status, name: \"200\", because: the items route answers a GET with HTTP 200}, {role: text, name: apple, because: the fixture holds one item named apple}]
+    scope: unknown
+  - id: long
+    title: A body longer than the kept bound
+    url: /long.txt
+    state: success
+    expect: [{role: status, name: \"200\", because: the long route answers a GET with HTTP 200}]
+    scope: unknown
+edges:
+  - id: items
+    from: start
+    to: items
+    why: The client asks for the items with credentials in the request.
+    acts:
+      - {kind: http, role: GET, name: /items.json, headers: {authorization: \"Bearer request-token-canary\", cookie: \"session=request-cookie-canary\"}}
+  - id: long
+    from: start
+    to: long
+    why: The client asks for a long text.
+    acts:
+      - {kind: http, role: GET, name: /long.txt}
+paths:
+  main: [items]
+  long: [long]
+drift: []
+";
+
+/// #2875: a screen an `http` act reached keeps a text frame, as a `cli` screen does: the status,
+/// the content type and the body (masked, and cut to the last 4096 bytes with a mark), plus the
+/// sha256 of the raw body. A request's credentials never reach it. Defects named: the frame is
+/// absent (`frame: false`, nothing to look at), a long body is dropped or cut without a mark, the
+/// request's Authorization or Cookie is kept, and a result kept before the frame still reads.
+/// Cost: a few seconds of Python fixture and CLI; no browser.
+#[test]
+fn an_http_screen_keeps_a_text_frame_with_status_content_type_and_a_bounded_body() {
+    let dir = project("answers", HTTP_ONLY);
+    let root = dir.path();
+    let long = format!("HEAD-MARK{}TAIL-MARK", "x".repeat(6000));
+    std::fs::write(root.join("site/long.txt"), &long).unwrap();
+    let read = || {
+        graphhelm(
+            &["journey", "preview", "answers", "--read", "--project"],
+            root,
+            &[],
+        )
+        .1
+    };
+    let (code, started) = graphhelm(&["journey", "preview", "answers", "--project"], root, &[]);
+    assert_eq!(code, 0, "{started}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let played = loop {
+        let seen = read();
+        if seen["data"]["state"] != "running" && seen["data"]["ranAt"].is_string() {
+            break seen["data"].clone();
+        }
+        assert!(std::time::Instant::now() < deadline, "never ended: {seen}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    assert_eq!(played["result"], "pass", "{played}");
+
+    let items = &played["screens"]["items"];
+    assert_eq!(
+        (items["frame"].clone(), items["kind"].clone()),
+        (true.into(), "text".into()),
+        "{played}"
+    );
+    assert_eq!(items["status"], 200, "{played}");
+    assert!(
+        items["contentType"]
+            .as_str()
+            .unwrap()
+            .starts_with("application/json"),
+        "{played}"
+    );
+    assert!(
+        items["body"].as_str().unwrap().contains("apple"),
+        "{played}"
+    );
+    assert_eq!(items["bodyTruncated"], false, "{played}");
+    assert_eq!(items["bodySha256"].as_str().unwrap().len(), 64, "{played}");
+
+    // The start screen is reached by the run's own GET, and keeps that response.
+    let start = &played["screens"]["start"];
+    assert_eq!(
+        (start["frame"].clone(), start["status"].clone()),
+        (true.into(), 200.into()),
+        "{played}"
+    );
+
+    let kept = played["screens"]["long"].clone();
+    let body = kept["body"].as_str().unwrap();
+    assert!(body.len() <= 4096, "unbounded body: {}", body.len());
+    assert!(
+        body.ends_with("TAIL-MARK") && !body.contains("HEAD-MARK"),
+        "{kept}"
+    );
+    assert_eq!(kept["bodyTruncated"], true, "{kept}");
+
+    // Nothing of the request, and no response header but the content type, is kept anywhere.
+    let all = played["screens"].to_string();
+    for leaked in ["request-token-canary", "request-cookie-canary", "Bearer"] {
+        assert!(!all.contains(leaked), "{leaked} was kept: {all}");
+    }
+    for key in [
+        "authorization",
+        "cookie",
+        "headers",
+        "set-cookie",
+        "Set-Cookie",
+    ] {
+        assert!(items.get(key).is_none(), "{key} kept: {items}");
+    }
+
+    // A result kept before this change has no frame for these screens and still reads.
+    let state = root.join(".graphhelm/journey-previews/answers/state.json");
+    let mut old: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+    for screen in ["start", "items", "long"] {
+        old["screens"][screen] = serde_json::json!({"frame": false, "result": "pass"});
+    }
+    std::fs::write(&state, serde_json::to_vec(&old).unwrap()).unwrap();
+    let reread = read();
+    assert_eq!(reread["data"]["result"], "pass", "{reread}");
+    assert_eq!(
+        reread["data"]["screens"]["items"]["frame"], false,
+        "{reread}"
+    );
+}

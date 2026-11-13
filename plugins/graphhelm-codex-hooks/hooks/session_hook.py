@@ -462,6 +462,25 @@ def _waiter_started_path(pid_path: Path) -> Path:
     return pid_path.with_suffix(".started")
 
 
+def _recorded_waiter_start(pid_path: Path) -> str:
+    """The creation time recorded at the waiter's start; "" when none was (an older waiter, or one
+    whose creation time could not be read)."""
+    try:
+        return _waiter_started_path(pid_path).read_text(encoding="ascii").strip()
+    except OSError:
+        return ""
+
+
+def _waiter_alive(pid_path: Path, pid: int) -> bool:
+    """The one answer to "is the recorded waiter alive": its PID is alive and, when a creation time was
+    recorded, it is still that process's. A reused PID is not the waiter. No record keeps the PID alone
+    deciding, as it did before the record existed."""
+    if not _pid_alive(pid):
+        return False
+    recorded = _recorded_waiter_start(pid_path)
+    return not recorded or recorded == _process_identity(pid)
+
+
 def _heartbeat_path(payload: dict, bound: tuple[str, str, str, str, str | None], host: str) -> Path:
     return state_path(bound[0], _session(payload), host, bound[3]).with_suffix(".waiter.alive")
 
@@ -527,7 +546,7 @@ def sweep_dead_waiters(limit: int = SWEEP_LIMIT) -> int:
             if removed >= limit:
                 break
             try:
-                if _pid_alive(int(pid_path.read_text(encoding="ascii"))):
+                if _waiter_alive(pid_path, int(pid_path.read_text(encoding="ascii"))):
                     continue
                 pid_path.unlink()
                 _waiter_started_path(pid_path).unlink(missing_ok=True)
@@ -581,7 +600,7 @@ def start_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None
     pid_path = _waiter_path(payload, bound, host)
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
-        if _pid_alive(pid):
+        if _waiter_alive(pid_path, pid):
             return
     except (FileNotFoundError, ValueError, OSError):
         pass
@@ -725,11 +744,8 @@ def stop_lane_waiter(payload: dict, bound: tuple[str, str, str, str, str | None]
     # time recorded at the waiter's start is signalled; a waiter left alone ends once its heartbeat is gone.
     try:
         pid = int(pid_path.read_text(encoding="ascii"))
-        try:
-            recorded = started_path.read_text(encoding="ascii").strip()
-        except OSError:
-            recorded = ""
-        if _pid_alive(pid) and recorded and recorded == _process_identity(pid):
+        # Stricter than the start and the sweep: a signal needs the record, not only the absence of a mismatch.
+        if _recorded_waiter_start(pid_path) and _waiter_alive(pid_path, pid):
             os.kill(pid, signal.SIGTERM)
     except (FileNotFoundError, ValueError, OSError):
         pass

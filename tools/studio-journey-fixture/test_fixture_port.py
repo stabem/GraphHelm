@@ -21,7 +21,7 @@ class FixturePortTest(unittest.TestCase):
             result = subprocess.run(
                 [shell, str(root / "tools/studio-journey-fixture/fixture.sh"),
                  "up", str(fixture), "8793", "5184"],
-                cwd=root, capture_output=True, text=True, timeout=10, check=False, creationflags=NO_WINDOW
+                cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=10, check=False, creationflags=NO_WINDOW
             )
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertIn("unsafe Runtime port", result.stderr)
@@ -41,7 +41,7 @@ class FixturePortTest(unittest.TestCase):
         )
         started = time.monotonic()
         result = subprocess.run(
-            [shell, "-c", script], capture_output=True, text=True, timeout=25, check=False,
+            [shell, "-c", script], capture_output=True, text=True, encoding="utf-8", timeout=25, check=False,
             creationflags=NO_WINDOW,
         )
         self.assertEqual(result.stdout.strip(), "2", result.stderr)
@@ -107,7 +107,7 @@ class FixturePortTest(unittest.TestCase):
         def missing(project):
             reply = subprocess.run(
                 [cli, "--json", "journey", "flows", "--project", str(project)],
-                capture_output=True, text=True, timeout=120, check=False, creationflags=NO_WINDOW,
+                capture_output=True, text=True, encoding="utf-8", timeout=120, check=False, creationflags=NO_WINDOW,
             )
             return {
                 flow["id"]
@@ -128,7 +128,7 @@ class FixturePortTest(unittest.TestCase):
 
             copied = subprocess.run(
                 [node, str(root / "tools/studio-journey-fixture/copy_scope.mjs"), str(root), str(project)],
-                capture_output=True, text=True, timeout=60, check=False, creationflags=NO_WINDOW,
+                capture_output=True, text=True, encoding="utf-8", timeout=60, check=False, creationflags=NO_WINDOW,
             )
             self.assertEqual(copied.returncode, 0, copied.stderr)
             self.assertIn("skipped (outside the project): ../escape.txt", copied.stderr)
@@ -162,7 +162,7 @@ class FixturePortTest(unittest.TestCase):
             fixture = pathlib.Path(parent) / "fixture"
             try:
                 up = subprocess.run([shell, script, "up", str(fixture), str(free_port()), str(free_port())],
-                                    cwd=root, env=env, capture_output=True, text=True, timeout=600,
+                                    cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", timeout=600,
                                     check=False, creationflags=NO_WINDOW)
                 self.assertEqual(up.returncode, 0, up.stdout[-2000:] + up.stderr[-2000:])
                 project = fixture / "project"
@@ -173,13 +173,13 @@ class FixturePortTest(unittest.TestCase):
                 resolved = subprocess.run(
                     [node, "-e", "console.log(require.resolve('@playwright/test', {paths: [process.argv[1]]}))",
                      str(project)],
-                    capture_output=True, text=True, timeout=60, check=False, creationflags=NO_WINDOW)
+                    capture_output=True, text=True, encoding="utf-8", timeout=60, check=False, creationflags=NO_WINDOW)
                 self.assertEqual(resolved.returncode, 0, resolved.stderr)
                 self.assertIn(str(project.resolve()).lower(), resolved.stdout.strip().lower(),
                               "@playwright/test must resolve inside the fixture project, not from a parent")
             finally:
                 subprocess.run([shell, script, "down", str(fixture)], cwd=root, env=env, capture_output=True,
-                               text=True, timeout=120, check=False, creationflags=NO_WINDOW)
+                               text=True, encoding="utf-8", timeout=120, check=False, creationflags=NO_WINDOW)
 
 
 if __name__ == "__main__":

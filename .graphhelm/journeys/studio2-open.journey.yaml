@@ -4,8 +4,8 @@ title: Open the Studio on a project
 name: Open the Studio
 feature: Studio
 purpose: "A saved proof link opens the demo project on this machine without a ticket, and switching to Graph keeps the demo run in view."
-status: draft
-approved: null
+status: approved
+approved: {revision: e76ee50a753134bb0d9484f27343ee7de64e77c9, digest: sha256:1939244836d2bfa7f71cb503dced5c8edda5fbb3ada960ff68eb6cb06df73da5}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []

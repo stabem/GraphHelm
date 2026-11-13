@@ -4,8 +4,8 @@ title: Switch between two projects
 name: Switch projects
 feature: Studio
 purpose: "The owner adds a second project folder, proj-two, within the local browser session; it appears as its own sidebar card in the same Studio with its own team run, second-run, and switching back to demo opens demo's run again, with no run list; an invalid folder adds nothing. Refusing a caller with no session is not promised here: that is studio2-auth-refusal."
-status: draft
-approved: null
+status: approved
+approved: {revision: e76ee50a753134bb0d9484f27343ee7de64e77c9, digest: sha256:5fe4caebb4692bd284d0d2abcb016a1d0d4b23eaf91fca2b619f091689aff209}
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: [proj_two_folder]

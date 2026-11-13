@@ -289,6 +289,12 @@ pub fn synthesize_with(
     Ok(chosen)
 }
 
+/// True when a refused draft at `round` has no repair left: the refusal ends the loop there, at
+/// every exit that can refuse (not JSON, invalid, judge diagnostics), with `round` in the refusal.
+fn repairs_exhausted(round: u8) -> bool {
+    round > MAX_REPAIR_ROUNDS
+}
+
 /// The single-draft loop: draft, compile, judge, repair; at most [`MAX_REPAIR_ROUNDS`] repairs.
 /// Returns the accepted document and the loaded graph it validated as, for the ranking hook.
 /// `seed` (the `adapt` road) rides every round's prompt.
@@ -327,7 +333,7 @@ fn single_draft(
                         judgment::nodes::read(&judged, &compiled.graph, catalog);
                     if !diagnostics.is_empty() {
                         sort_diagnostics(&mut diagnostics);
-                        if round > MAX_REPAIR_ROUNDS {
+                        if repairs_exhausted(round) {
                             return Err(ArchitectRefusal::Invalid {
                                 rounds: round,
                                 diagnostics,
@@ -361,14 +367,14 @@ fn single_draft(
             }
             Err(RoundFailure::Refused(refusal)) => return Err(refusal),
             Err(RoundFailure::NotJson(message)) => {
-                if round > MAX_REPAIR_ROUNDS {
+                if repairs_exhausted(round) {
                     return Err(ArchitectRefusal::NotJson { round, message });
                 }
                 let diagnostic = Diagnostic::error(NOT_JSON_CODE, message, "/", DRAFT_SOURCE);
                 previous = Some((reply.text, vec![diagnostic]));
             }
             Err(RoundFailure::Invalid(diagnostics)) => {
-                if round > MAX_REPAIR_ROUNDS {
+                if repairs_exhausted(round) {
                     return Err(ArchitectRefusal::Invalid {
                         rounds: round,
                         diagnostics,
@@ -945,6 +951,13 @@ fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_repair_bound_is_the_round_after_the_last_repair() {
+        // A refused draft is repaired while `round <= MAX`; the draft of round MAX + 1 is the refusal.
+        assert!(!repairs_exhausted(MAX_REPAIR_ROUNDS));
+        assert!(repairs_exhausted(MAX_REPAIR_ROUNDS + 1));
+    }
 
     #[test]
     fn a_spec_key_is_unwrapped_and_a_bare_object_is_taken_whole() {

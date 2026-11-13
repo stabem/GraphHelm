@@ -2517,6 +2517,9 @@ impl Guard {
     }
 }
 
+/// #2890: a browser path never carries an `http` act, so no owner mark applies to it.
+const NOT_OWNER_MARKED: bool = false;
+
 /// #2890: the edges of a draft the owner marked safe at their current content. The digest alone
 /// is not enough (whoever writes the file can compute it): the owner's store must hold the mark.
 fn owner_marked_edges<'a>(flow: &'a Value, project: &Path) -> std::collections::BTreeSet<&'a str> {
@@ -2611,7 +2614,7 @@ fn play_path(
             let edge = edges[id];
             let to = edge["to"].as_str().unwrap();
             for act in edge["acts"].as_array().unwrap() {
-                if let Some(reason) = guard.stops_before(act, false) {
+                if let Some(reason) = guard.stops_before(act, NOT_OWNER_MARKED) {
                     run.edge(id, "skipped", Some(reason));
                     if matches!(reason, "confirm_needed" | "review_needed") {
                         run.state["held"] = json!({"edge":id,"act":act["name"],"base":base});

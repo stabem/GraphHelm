@@ -97,10 +97,10 @@ function withoutOne(list: readonly string[], id: string): readonly string[] {
 /** #2939: `runtime`, with each start or confirm of a journey run told to `tell` when it is sent and
  * again when it is answered or refused. The request outlives the panel that sent it, so the telling
  * rides on the request, not on the panel. Every other call goes to `runtime` unchanged. */
-function tellingStarts(runtime: Runtime, tell: (flowId: string, isInFlight: boolean) => void): Runtime {
+function tellingStarts(runtime: Runtime, tell: (flowId: string, moment: "sent" | "settled") => void): Runtime {
   const held = <T,>(flowId: string, send: () => Promise<T>): Promise<T> => {
-    tell(flowId, true);
-    return send().finally(() => tell(flowId, false));
+    tell(flowId, "sent");
+    return send().finally(() => tell(flowId, "settled"));
   };
   return new Proxy(runtime, {
     get(target, key) {
@@ -125,8 +125,8 @@ export function ProofView({ projectKey, runtime, journeys, error, executionId, o
   // are held here, not in the panel, so picking another journey does not forget a request still open.
   const [cardStarting, setCardStarting] = useState<string | null>(null);
   const [panelStarts, setPanelStarts] = useState<readonly string[]>([]);
-  const panelRuntime = useMemo(() => tellingStarts(runtime, (flowId, isInFlight) => {
-    setPanelStarts((before) => (isInFlight ? [...before, flowId] : withoutOne(before, flowId)));
+  const panelRuntime = useMemo(() => tellingStarts(runtime, (flowId, moment) => {
+    setPanelStarts((before) => (moment === "sent" ? [...before, flowId] : withoutOne(before, flowId)));
   }), [runtime]);
   // A list read again carries the result; a run still playing stays until its next answer.
   // #1953: a journey the list says is running is seeded, so a reload still shows it running.

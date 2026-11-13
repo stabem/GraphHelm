@@ -526,6 +526,18 @@ pub struct CapturedProcess {
     pub cancelled: bool,
 }
 
+impl CapturedProcess {
+    /// Whether the bytes this call reports cannot be trusted: a descendant escaped the kill and
+    /// kept a pipe (`readers_abandoned`), or a reader thread died holding output (`reader_lost`).
+    ///
+    /// The one place the two causes are joined (#790). Callers that need to tell them apart read
+    /// the fields; callers that only need to know the capture is untrustworthy call this.
+    #[must_use]
+    pub fn capture_lost(&self) -> bool {
+        self.readers_abandoned || self.reader_lost
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum HostError {
     #[error("the program failed to spawn")]
@@ -1756,6 +1768,37 @@ mod tests {
         assert_eq!(super::stop_cause(true, true), (false, true));
         assert_eq!(super::stop_cause(true, false), (true, false));
         assert_eq!(super::stop_cause(false, true), (false, true));
+    }
+
+    /// A capture is lost when a reader was abandoned OR lost, and in no other case: every one of
+    /// the four combinations, through the real record.
+    #[test]
+    fn a_capture_is_lost_when_either_reader_cause_is_set() {
+        for (readers_abandoned, reader_lost, lost) in [
+            (false, false, false),
+            (true, false, true),
+            (false, true, true),
+            (true, true, true),
+        ] {
+            let record = CapturedProcess {
+                exit_code: Some(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_truncated: true,
+                stderr_truncated: true,
+                truncated: true,
+                timed_out: true,
+                cancelled: true,
+                readers_abandoned,
+                reader_lost,
+                tree_kill: None,
+            };
+            assert_eq!(
+                record.capture_lost(),
+                lost,
+                "readers_abandoned={readers_abandoned} reader_lost={reader_lost}"
+            );
+        }
     }
 
     use super::{

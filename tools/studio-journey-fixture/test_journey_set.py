@@ -17,10 +17,10 @@ LIST = HERE / "journeys.list"
 SHELL = r"C:\Program Files\Git\bin\bash.exe" if os.name == "nt" else "bash"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # #2869: a studio2 flow whose own journey is never shown in Proof is not listed, so the total that
-# flows pin ("1 of 24 journeys") does not move for it; it runs a journey of its own that fixture.sh
-# seeds for that flow only.
+# flows pin ("1 of 24 journeys") does not move for it. Each flow below is exempt for its own reason.
 UNLISTED = {
     "studio2-proof-run-progress": "it presses Run on report-slow, which fixture.sh seeds for this flow alone",
+    "studio2-add-refusal": "it is HTTP-only and needs no journey card seeded in Proof; listing it would move the pinned total",
 }
 
 

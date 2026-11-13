@@ -808,6 +808,38 @@ class SessionHookTests(unittest.TestCase):
                 marker.unlink(missing_ok=True)
                 started.unlink(missing_ok=True)
 
+    def test_an_unreadable_live_identity_is_not_a_different_one(self):
+        """A record exists and the PID is alive but the live process's creation time cannot be read
+        (another user's process, a hidden /proc): the start and the sweep keep trusting the PID, as they
+        did before the record existed, while the stop signals nothing, as it needs a record that matches."""
+        hook = self.load_hook()
+        events = Path(self.temp.name) / "events-unreadable"
+        events.mkdir()
+        state = Path(self.temp.name) / "unreadable-state"
+        state.mkdir()
+        bound = ("run-test", str(self.token_file),
+                 f"http://127.0.0.1:{self.server.server_port}",
+                 f"http://127.0.0.1:{self.server.server_port}", None)
+        payload = {"session_id": "session-unreadable"}
+        env = {**self.env, "GRAPHHELM_EVENTS_DIR": str(events), "GRAPHHELM_ACTOR": "gh-lane-1",
+               "GRAPHHELM_HOOK_STATE_DIR": str(state)}
+        with patch.dict(os.environ, env), patch.object(hook, "_process_identity", return_value=None):
+            marker = hook._waiter_path(payload, bound, "codex")
+            started = hook._waiter_started_path(marker)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(str(os.getpid()), encoding="ascii")
+            started.write_text("1", encoding="ascii")
+            spawned = []
+            with patch.object(hook.subprocess, "Popen",
+                              side_effect=lambda argv, **_kw: spawned.append(argv) or type("C", (), {"pid": 424242})()),                     patch.object(hook, "arm_lane_wake", return_value=5):
+                hook.start_lane_waiter(payload, bound, "codex")
+            self.assertEqual(spawned, [], "an unreadable identity must not start a second waiter")
+            self.assertEqual(hook.sweep_dead_waiters(), 0)
+            self.assertTrue(marker.exists() and started.exists())
+            with patch.object(hook.os, "kill") as kill, patch.object(hook, "arm_lane_wake", return_value=5):
+                hook.stop_lane_waiter(payload, bound, "codex")
+            kill.assert_not_called()
+
     @unittest.skipUnless(os.name == "nt", "job objects are a Windows host contract")
     def test_start_lane_waiter_leaves_the_hook_job_and_falls_back_when_refused(self):
         """#919: a waiter started inside the hook's job died with it, so no lane held a lease."""

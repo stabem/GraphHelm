@@ -31,6 +31,18 @@ pub enum TransactionState {
     RecoveryRequired,
 }
 
+impl TransactionState {
+    /// Whether the transaction's changes are installed: `InstalledUnverified` or `Verified`, and
+    /// nothing else. `InstalledUnverified` is file-state evidence only (see the type's warning),
+    /// so this does not mean the host observed the result. `Restored` is excluded on purpose:
+    /// the changes were removed again. Callers that also accept `Restored` (the journal's
+    /// active-transaction check) keep their own wider set.
+    #[must_use]
+    pub const fn is_installed(self) -> bool {
+        matches!(self, Self::InstalledUnverified | Self::Verified)
+    }
+}
+
 #[must_use]
 pub fn coverage_complete(scopes: &[Coverage]) -> bool {
     !scopes.is_empty() && scopes.iter().all(|scope| *scope == Coverage::Complete)
@@ -128,6 +140,34 @@ mod tests {
             Coverage::Unsupported
         ]));
         assert!(coverage_complete(&[Coverage::Complete]));
+    }
+
+    /// The installed set feeds data-loss decisions (reuse a journal, skip compensation, accept a
+    /// restore). The match below has no wildcard, so a new variant fails to compile here until
+    /// someone answers deliberately whether it counts as installed.
+    #[test]
+    fn exactly_installed_unverified_and_verified_are_installed() {
+        let expected = |state: TransactionState| match state {
+            TransactionState::InstalledUnverified | TransactionState::Verified => true,
+            TransactionState::Planned
+            | TransactionState::BackedUp
+            | TransactionState::Applying
+            | TransactionState::Restoring
+            | TransactionState::Restored
+            | TransactionState::RecoveryRequired => false,
+        };
+        for state in [
+            TransactionState::Planned,
+            TransactionState::BackedUp,
+            TransactionState::Applying,
+            TransactionState::InstalledUnverified,
+            TransactionState::Verified,
+            TransactionState::Restoring,
+            TransactionState::Restored,
+            TransactionState::RecoveryRequired,
+        ] {
+            assert_eq!(state.is_installed(), expected(state), "{state:?}");
+        }
     }
 
     #[test]

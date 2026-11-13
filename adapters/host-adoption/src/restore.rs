@@ -80,10 +80,7 @@ fn chain_with_empty(
         if record.restore.is_some() {
             return Err(storage::failed());
         }
-        if !matches!(
-            record.state,
-            TransactionState::InstalledUnverified | TransactionState::Verified
-        ) {
+        if !record.state.is_installed() {
             return Err(storage::failed());
         }
         result.push(record);

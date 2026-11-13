@@ -86,8 +86,6 @@ export function runAllJourneyNotice(journey: RunAllJourneyState | undefined, rea
   return `This run finished, but the batch remainder was not resumed. ${detail}`;
 }
 
-/** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
- * journey's run bar, console, step grid and the selected step's compare and Action panel. */
 /** #2939: `list` without one occurrence of `id`. */
 function withoutOne(list: readonly string[], id: string): readonly string[] {
   const at = list.indexOf(id);
@@ -112,6 +110,8 @@ function tellingStarts(runtime: Runtime, tell: (flowId: string, moment: "sent" |
   });
 }
 
+/** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
+ * journey's run bar, console, step grid and the selected step's compare and Action panel. */
 export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked, initialPast = null, onPast }: ProofViewProps) {
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
   const [picked, setPickedState] = useState<string | null>(initial);

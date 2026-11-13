@@ -338,7 +338,16 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
       return { ok: true };
     },
   }]);
-  const runAll = async () => {
+  // #2901: Run all and Approve N take the same single-flight as the single Run, and release it in `finally`,
+  // so no early return or thrown error inside the action can leave the column locked.
+  const exclusive = async (action: () => Promise<void>) => {
+    if (starting.current) return;
+    starting.current = true;
+    try { await action(); } finally { starting.current = false; }
+  };
+  const runAll = () => exclusive(runAllAction);
+  const approveAll = () => exclusive(approveAllAction);
+  const runAllAction = async () => {
     const generation = viewGeneration.current;
     const isCurrentView = () => mounted.current && runAllViewIsCurrent(generation, viewGeneration.current);
     setRefusal(null);
@@ -475,7 +484,7 @@ function JourneysColumn({ projectKey, runtime, journeys, selected, executionId, 
       }
     }
   };
-  const approveAll = async () => {
+  const approveAllAction = async () => {
     setRefusal(null);
     try {
       for (const [index, flow] of approvable.entries()) {

@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::Path;
 
 use graphhelm_events::{EvidenceOpener, EvidenceRead};
-use graphhelm_execution::tasks::valid_repo;
+use graphhelm_execution::tasks::{Verdict, valid_repo};
 use graphhelm_protocols::{EventKind, EvidenceId, OpaqueId, PersistedActor};
 use graphhelm_tool_host::documents::{DocumentError, ProjectDocuments};
 use serde::{Deserialize, Serialize};
@@ -563,10 +563,10 @@ pub(crate) fn validate_task_event(
             count("pr")
                 && sha("headSha")
                 && is_actor("reviewer")
-                && matches!(
-                    document["verdict"].as_str(),
-                    Some("APPROVE" | "APPROVE-WITH-RISK" | "BLOCK")
-                )
+                && document["verdict"]
+                    .as_str()
+                    .and_then(Verdict::from_word)
+                    .is_some()
                 && short("commentUrl", 512),
             &["pr", "headSha", "reviewer", "verdict", "commentUrl"],
         ),

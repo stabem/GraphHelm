@@ -18,6 +18,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use graphhelm_execution::tasks::Verdict;
 use graphhelm_protocols::{
     ActorId, EventKind, NewEvent, OpaqueId, PersistedActor, PersistedActorType, Sensitivity,
     WakeConsumeReason, WakeLeaseConsumed,
@@ -350,16 +351,18 @@ fn trigger_for(
             ),
             None => Trigger::Nothing,
         },
-        ("task.review_verdict", Some(pr), Some(head)) => match document["verdict"].as_str() {
-            Some("BLOCK") => match authors.get(&pr) {
-                Some(author) => step(author, "fix", "implement", head, Reason::BlockVerdict),
-                None => Trigger::NoAuthor(pr),
-            },
-            Some("APPROVE" | "APPROVE-WITH-RISK") => {
-                step(actor, "merge", "merge", head, Reason::Approved)
+        ("task.review_verdict", Some(pr), Some(head)) => {
+            match document["verdict"].as_str().and_then(Verdict::from_word) {
+                Some(Verdict::Block) => match authors.get(&pr) {
+                    Some(author) => step(author, "fix", "implement", head, Reason::BlockVerdict),
+                    None => Trigger::NoAuthor(pr),
+                },
+                Some(Verdict::Approve | Verdict::ApproveWithRisk) => {
+                    step(actor, "merge", "merge", head, Reason::Approved)
+                }
+                _ => Trigger::Nothing,
             }
-            _ => Trigger::Nothing,
-        },
+        }
         ("task.merged", Some(pr), _) => match (authors.get(&pr), document["mergeSha"].as_str()) {
             (Some(author), Some(sha)) => {
                 step(author, "next", "graphhelm-resume", sha, Reason::Merged)

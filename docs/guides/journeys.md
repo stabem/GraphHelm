@@ -365,6 +365,12 @@ credential only, and the agent's own flow writer refuses a flow that carries one
 (`flow.safe_owner_only`). The digest proves the acts are unchanged since the mark; it does not by
 itself prove who wrote it, so an agent never writes `safe` by hand.
 
+A mark also frees a mutating `http` act (any method but GET, HEAD or OPTIONS) in a draft's
+`journey preview`, which otherwise refuses it (`guard_refused`). It plays only when the preview
+launched the app itself and the owner's store holds the mark at the edge's current digest; a
+digest written without the owner's record, a stale digest, an app the preview did not launch, a
+`cli` act and an approved flow behave as before.
+
 Compatibility: `safe` is optional (flow schema document version 1.1.0). A flow without it is
 byte-identical to before, and no existing approval digest changes.
 

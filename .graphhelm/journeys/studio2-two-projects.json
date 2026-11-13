@@ -18,7 +18,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", no list \"Runs in demo\", no region \"Project proj-two\", no link \"proj-two\"",
+      "statement": "shows region \"Project demo\" saying \"demo · 0 agents\", banner \"Top bar\" saying \"demo / demo\", region \"Graph\" saying \"RUN demo STATUS\", region \"Request graph\" saying \"No owner request is recorded on this run yet.\", no list \"Runs in demo\", no region \"Project proj-two\", no link \"proj-two\"",
       "statesToObserve": [
         "stable"
       ],
@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows region \"Project proj-two\" saying \"second-run\", banner \"Top bar\" saying \"proj-two / second-run\", region \"Graph\" saying \"RUN second-run STATUS\", link \"demo\", no list \"Runs in proj-two\", no region \"Error\"",
+      "statement": "shows region \"Project proj-two\" saying \"second-run\", banner \"Top bar\" saying \"proj-two / second-run\", region \"Graph\" saying \"RUN second-run STATUS\", region \"Request graph\" saying \"No owner request is recorded on this run yet.\", link \"demo\", no list \"Runs in proj-two\", no region \"Error\"",
       "statesToObserve": [
         "stable"
       ],

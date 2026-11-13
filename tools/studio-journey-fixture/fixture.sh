@@ -456,7 +456,12 @@ FLOW
   # observer preview (its runner records into a run of its own) and the seeded demo run.
   empty=0
   if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ]; then empty=1; fi
-  if [ "$empty" = 0 ]; then
+  # The seed preview records a second run (graphhelm-owner), and with two runs the Studio's Graph shows
+  # "all runs" instead of the demo run. studio2-open and studio2-two-projects look at Graph with no run
+  # named and need the demo run alone, so they get no seed preview (they read no recorded run).
+  seedpreview=1
+  case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-open|studio2-two-projects) seedpreview=0 ;; esac
+  if [ "$empty" = 0 ] && [ "$seedpreview" = 1 ]; then
   # The seed flow reads the Runtime (its own `base`), not the Studio, which is not started yet:
   # the Studio override would end this run watch.app_down and leave Proof with no recorded run.
   env -u GRAPHHELM_FIXTURE_BASE "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true

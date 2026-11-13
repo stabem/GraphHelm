@@ -206,7 +206,7 @@ fn disposition_for(captured: &CapturedProcess) -> ToolDisposition {
     // `reader_lost` says a reader thread died holding output. A consumer that needs to tell them
     // apart reads the record; a consumer that only needs to know the capture is untrustworthy
     // reads this code.
-    if captured.readers_abandoned || captured.reader_lost {
+    if captured.capture_lost() {
         ToolDisposition::HostError {
             code: CAPTURE_LOST_CODE.to_owned(),
         }
@@ -888,7 +888,7 @@ impl ToolHost {
             Some(&self.cancel),
         )
         .ok()?;
-        if captured.exit_code != Some(0) || captured.readers_abandoned || captured.reader_lost {
+        if captured.exit_code != Some(0) || captured.capture_lost() {
             return None;
         }
         object_id_from_rev_parse(&captured.stdout)
@@ -939,7 +939,7 @@ impl ToolHost {
             &self.config.limits,
             Some(&self.cancel),
         )?;
-        if captured.exit_code == Some(0) && !captured.readers_abandoned && !captured.reader_lost {
+        if captured.exit_code == Some(0) && !captured.capture_lost() {
             Ok(())
         } else {
             Err(HostError::Config {
@@ -1151,8 +1151,7 @@ impl ToolHost {
         root: &std::path::Path,
         captured: CapturedProcess,
     ) -> Result<Executed, HostError> {
-        let completed =
-            captured.exit_code == Some(0) && !captured.readers_abandoned && !captured.reader_lost;
+        let completed = captured.exit_code == Some(0) && !captured.capture_lost();
         if !completed {
             return Ok(Executed::from(captured));
         }

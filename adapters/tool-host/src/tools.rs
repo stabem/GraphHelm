@@ -51,7 +51,7 @@ fn first_stage_is_final(captured: &CapturedProcess) -> bool {
     // way a capture goes missing (#790): an exit code of 0 whose bytes were never read looks like
     // success rather than like an error, and it does not matter to that argument WHETHER the bytes
     // were lost to an escaped descendant or to a reader thread that died holding them.
-    captured.exit_code != Some(0) || captured.readers_abandoned || captured.reader_lost
+    captured.exit_code != Some(0) || captured.capture_lost()
 }
 
 /// A synthesized in-process result shaped like a captured child, so every tool produces the

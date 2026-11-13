@@ -22,9 +22,11 @@ export function actionErrorDetails(title: string, failure: unknown, cause: strin
   };
 }
 
+/** `onDismiss` is left out only where nothing usable sits behind the alert (#2913): there the alert
+ * is the whole panel and Retry is its one action. */
 export function ActionError({ error, onDismiss, onRetry }: {
   error: ActionErrorDetails;
-  onDismiss: () => void;
+  onDismiss?: () => void;
   onRetry?: () => void;
 }) {
   const titleId = useId();
@@ -32,7 +34,7 @@ export function ActionError({ error, onDismiss, onRetry }: {
     <div role="alert" aria-labelledby={titleId} className="action-error">
       <div className="action-error-head">
         <strong id={titleId} className="action-error-title">{error.title}</strong>
-        <button type="button" className="b ghost action-error-dismiss" onClick={onDismiss}>Dismiss</button>
+        {onDismiss !== undefined && <button type="button" className="b ghost action-error-dismiss" onClick={onDismiss}>Dismiss</button>}
       </div>
       <span className="mono action-error-code">{error.code ?? "Code not supplied"}</span>
       <p className="action-error-cause">{error.cause}</p>

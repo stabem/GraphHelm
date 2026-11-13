@@ -35,6 +35,16 @@ describe("shared action error (#2445)", () => {
     expect(html).toMatch(new RegExp(`<strong[^>]*id="${id!.replace(/[:]/g, "\\:")}"[^>]*>Decision could not be recorded</strong>`));
   });
 
+  it("has no Dismiss button where the caller gives no way to dismiss, and still offers Retry (#2913)", () => {
+    const html = renderToStaticMarkup(<ActionError
+      error={{ title: "Journeys could not be read", code: null, cause: "The Runtime did not answer.", nextStep: "Retry reading the journeys." }}
+      onRetry={() => undefined}
+    />);
+
+    expect(html).not.toContain("Dismiss");
+    expect(html).toContain(">Retry</button>");
+  });
+
   it("says Runtime code is unavailable for a legacy failure without inventing one", () => {
     const html = renderToStaticMarkup(<ActionError
       error={{ title: "Action failed", code: null, cause: "The Runtime refused.", nextStep: "Try the action again." }}

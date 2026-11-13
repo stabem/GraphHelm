@@ -89,7 +89,6 @@ export function runAllJourneyNotice(journey: RunAllJourneyState | undefined, rea
 /** The Proof region (docs/design/studio/Proof.dc.html): the journeys column, then the selected
  * journey's run bar, console, step grid and the selected step's compare and Action panel. */
 export function ProofView({ projectKey, runtime, journeys, error, executionId, onRan, initial = null, onPicked, initialPast = null, onPast }: ProofViewProps) {
-  const [journeyReadErrorDismissed, setJourneyReadErrorDismissed] = useState(false);
   // The journey a deep link named (`studio open --journey`), until the owner picks another.
   const [picked, setPickedState] = useState<string | null>(initial);
   const setPicked = (id: string) => { setPickedState(id); onPicked?.(id); };
@@ -131,7 +130,9 @@ export function ProofView({ projectKey, runtime, journeys, error, executionId, o
     }, WATCH_POLL_MS);
     return () => { on = false; clearInterval(timer); };
   }, [watched, runtime]);
-  if (error !== null && journeys === null && !journeyReadErrorDismissed) return <section id="panel-proof" aria-label="Proof" className="view"><ActionError error={actionErrorDetails("Journeys could not be read", error, error, "Retry reading the journeys.")} onDismiss={() => setJourneyReadErrorDismissed(true)} onRetry={() => { setJourneyReadErrorDismissed(false); onRan(); }} /></section>;
+  // #2913: with no journeys there is nothing behind this alert, so it has Retry and no Dismiss: a
+  // failed read stays a failure until a read succeeds, never a loading panel with no read in flight.
+  if (error !== null && journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><ActionError error={actionErrorDetails("Journeys could not be read", error, error, "Retry reading the journeys.")} onRetry={onRan} /></section>;
   if (journeys === null) return <section id="panel-proof" aria-label="Proof" className="view"><Loading text="Reading the journeys…" /></section>;
   const selected = journeys.find((flow) => flow.id === picked) ?? journeys[0] ?? null;
   const started = (id: string) => {

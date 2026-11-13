@@ -518,10 +518,17 @@ pub struct JourneyReplayArgs {
     /// Internal contained worker; the ordinary supervisor supplies its start handshake.
     #[arg(long, hide = true)]
     pub replay_worker: bool,
-    /// #1777, internal: the viewport this worker replays when the flow names `viewports`; the
-    /// supervisor runs one worker per viewport.
-    #[arg(long, hide = true, value_parser = ["web", "mobile"])]
+    /// Replay only this declared viewport (#2903). On a flow that declares several viewports such
+    /// a replay never records proof, never publishes the cache and never heals, and says so in
+    /// the reply (`recording`); it cannot be combined with `--heal`. An undeclared name is refused.
+    /// A flow that declares one viewport replays as without the flag. (A worker receives its
+    /// viewport through this same field, #1777.)
+    #[arg(long, value_parser = ["web", "mobile"])]
     pub viewport: Option<String>,
+    /// Internal, set by the supervisor on a worker of a viewport-limited replay (#2903): it
+    /// publishes no cache.
+    #[arg(long, hide = true)]
+    pub viewport_limited: bool,
     /// On drift, hand only the broken edge to the model door (at most eight acts) and keep the
     /// repair only when the edge's original destination is observed. Needs a model source.
     #[arg(long)]

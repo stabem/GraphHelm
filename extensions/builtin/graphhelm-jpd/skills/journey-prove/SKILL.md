@@ -122,9 +122,21 @@ graphhelm --json journey replay <id> --project <root> \
 ```
 
 with `GRAPHHELM_EVENTS_KEY` (the fixture's `serve.key`) and every `GRAPHHELM_SECRET_<NAME>` in the
-environment of that process only. A runner script (`replay-all.sh`) loops the flows and prints
-one line per flow: `rc`, each path's `outcome` and capture count, and the diagnostic code with its
-JSON pointer.
+environment of that process only. A runner script (`replay-all.sh <fixture dir|-> <output dir>
+[flow ...]`) loops the flows and prints one line per flow: `rc`, each path's `outcome` and capture
+count, and the diagnostic code with its JSON pointer.
+
+A flow that declares several `viewports` replays mobile first and web last, so a flow that
+changes state (Run, Start, Approve) leaves the "after" state for the viewport that plays next, and
+on one fixture the later viewport fails falsely. `journey replay <id> --viewport <name>` plays
+only that declared viewport (an undeclared name is refused with `replay.viewport_undeclared`),
+and `replay-all.sh` uses it: for such a flow it starts a fresh fixture per viewport (Runtime port
+`REPLAY_RUNTIME_PORT`, default 8811; Studio 5184), replays, and stops it, and the flow is green
+only when every viewport is. Such a limited replay records nothing: no proof, no cache, no healing
+(`--heal` with it is refused, `replay.viewport_limit_heal`), and the reply says
+`recording: "withheld_viewport_limited"`. Proof for the flow still comes from the full replay
+above. `replay-all.sh` stops `<fixture dir>` before the first such flow, because the Studio port is
+the flows' fixed base.
 
 Order matters because replay mutates the fixture: read-only flows first (open a tab, open a
 window), then flows that record something (send a message, name a bot), then flows that change

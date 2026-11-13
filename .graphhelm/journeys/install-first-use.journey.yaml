@@ -2,8 +2,8 @@ schema: graphhelm.journey-flow/1
 id: install-first-use
 title: Install GraphHelm from INSTALL.md and run the first commands
 purpose: "A new user follows INSTALL.md in an empty project and the CLI answers, the project is provisioned, the Runtime answers on its own port and graph validate passes."
-status: draft
-approved: null
+status: approved
+approved: {revision: 7b0c42be4c50a35c8c2c579c3f72bdb18ec3179f, digest: sha256:4c17d9ddadda87b9a1240ae3656626118043b3d5760d548a6c2c3dab1806e78d}
 base: http://127.0.0.1:1
 actors: [new-user]
 secrets: []

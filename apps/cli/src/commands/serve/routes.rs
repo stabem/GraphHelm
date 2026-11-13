@@ -3288,8 +3288,12 @@ async fn preview_status(response: Response) -> Response {
             Outcome::internal("journey.preview", "the preview answer could not be read").output,
         );
     };
-    let running = serde_json::from_slice::<serde_json::Value>(&bytes)
-        .is_ok_and(|value| value["data"]["state"] == "running");
+    let running = serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|value| {
+        crate::commands::journey_preview::run_is(
+            &value["data"],
+            crate::commands::journey_preview::RunState::Running,
+        )
+    });
     if running {
         parts.status = StatusCode::ACCEPTED;
     }

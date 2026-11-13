@@ -679,11 +679,8 @@ pub fn attention(projection: &ExecutionProjection, inputs: &AttentionInputs) -> 
     // approval work: inventing a digest would make the owner approve bytes nobody can verify.
     // Rejection and application are independent terminal outcomes per draft; one terminal
     // draft must never clear a different pending draft.
-    for draft_id in &projection.proposed_drafts {
-        let sealed = projection.proposed_draft_sha256.contains_key(draft_id);
-        let rejected = projection.rejected_drafts.iter().any(|id| id == draft_id);
-        let applied = projection.applied_drafts.iter().any(|id| id == draft_id);
-        if sealed && !rejected && !applied {
+    for draft_id in projection.pending_drafts() {
+        if projection.proposed_draft_sha256.contains_key(draft_id) {
             reasons.push(AttentionReason::PendingDraft {
                 draft_id: draft_id.clone(),
             });

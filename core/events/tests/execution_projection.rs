@@ -2664,3 +2664,88 @@ fn the_identity_registry_folds_deterministically_and_revocation_removes() {
         first.clearance_registry
     );
 }
+
+fn proposed(draft: &str, sealed: bool) -> EventKind {
+    EventKind::DraftProposed(graphhelm_protocols::DraftProposed {
+        draft_id: OpaqueId::parse(draft).unwrap(),
+        expected_version: 1,
+        expected_hash: Some(WireHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap()),
+        expected_safe_hash: None,
+        operation_count: 1,
+        proposal_sha256: sealed.then(|| RawSha256::parse("b".repeat(64)).unwrap()),
+    })
+}
+
+fn rejected(draft: &str) -> EventKind {
+    EventKind::DraftRejected(graphhelm_protocols::DraftRejected {
+        draft_id: OpaqueId::parse(draft).unwrap(),
+        reason_code: graphhelm_protocols::SafeCode::parse("stale_rendezvous").unwrap(),
+        diagnostics: vec![
+            graphhelm_protocols::PersistedDiagnostic::new(
+                "GHGV001_STALE_VERSION".to_owned(),
+                graphhelm_protocols::Severity::Error,
+                graphhelm_protocols::DiagnosticDomainPath::parse("").unwrap(),
+                graphhelm_protocols::DiagnosticComponent::Governor,
+                None,
+                None,
+            )
+            .unwrap(),
+        ],
+        detail_evidence_id: None,
+    })
+}
+
+fn applied(draft: &str) -> EventKind {
+    EventKind::DraftApplied(graphhelm_protocols::DraftApplied {
+        draft_id: OpaqueId::parse(draft).unwrap(),
+        graph_version: 2,
+        graph_hash: WireHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
+    })
+}
+
+fn pending_after(kinds: Vec<(&str, EventKind)>) -> Vec<String> {
+    let events = append(
+        kinds
+            .into_iter()
+            .map(|(key, kind)| event(key, kind))
+            .collect(),
+    );
+    let projection = replay(&scope(), STREAM, &events).unwrap();
+    projection.pending_drafts().cloned().collect()
+}
+
+/// A draft is pending while it is proposed and has no terminal outcome. One terminal draft never
+/// clears a different pending one, and the answer keeps proposal order.
+#[test]
+fn a_terminal_draft_does_not_clear_a_different_pending_one() {
+    let pending = pending_after(vec![
+        ("p-a", proposed("draft-a", true)),
+        ("p-b", proposed("draft-b", true)),
+        ("p-c", proposed("draft-c", true)),
+        ("p-d", proposed("draft-d", true)),
+        ("p-e", proposed("draft-e", true)),
+        ("r-a", rejected("draft-a")),
+        ("ap-b", applied("draft-b")),
+        ("r-e", rejected("draft-e")),
+        ("ap-e", applied("draft-e")),
+    ]);
+    // draft-e holds both terminal outcomes and is not pending either.
+    assert_eq!(pending, ["draft-c", "draft-d"]);
+}
+
+/// A legacy proposal event without a digest can repeat an id and replay cleanly; each proposal
+/// is listed, as the stored list holds it. (A repeated sealed id is `Corrupt` on replay.)
+#[test]
+fn a_repeated_legacy_proposal_is_listed_each_time_until_terminal() {
+    let pending = pending_after(vec![
+        ("p-1", proposed("draft-a", false)),
+        ("p-2", proposed("draft-a", false)),
+    ]);
+    assert_eq!(pending, ["draft-a", "draft-a"]);
+    let done = pending_after(vec![
+        ("p-1", proposed("draft-a", false)),
+        ("p-2", proposed("draft-a", false)),
+        ("r-a", rejected("draft-a")),
+    ]);
+    assert!(done.is_empty());
+}

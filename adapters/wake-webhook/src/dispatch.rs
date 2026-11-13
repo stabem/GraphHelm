@@ -40,14 +40,94 @@ fn safe_lane(lane: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-fn outcome_code(outcome: &Outcome) -> String {
-    match outcome {
-        Outcome::Accepted => "accepted".to_owned(),
-        Outcome::Duplicate => "duplicate".to_owned(),
-        Outcome::Rejected(code) => format!("rejected-{code}"),
-        Outcome::Failed(_) => "failed".to_owned(),
-        Outcome::GaveUp => "gave-up".to_owned(),
+/// What a logged code means to the readers of the log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Meaning {
+    /// The step is done: delivered, or given up. It is never sent again.
+    Final,
+    /// A failed attempt: counted for the backoff and for the give-up limit.
+    Retryable,
+    /// Written for the record only: a rejection or a skip. Neither final nor counted.
+    Other,
+}
+
+/// The code on a log line: the one place its text is made and read back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LogCode {
+    Accepted,
+    Duplicate,
+    Rejected(u16),
+    Failed,
+    GaveUp,
+    SkippedNoUrl,
+    SkippedNoSecret,
+    SkippedNoAuthor,
+}
+
+impl LogCode {
+    fn text(self) -> String {
+        match self {
+            Self::Accepted => "accepted".to_owned(),
+            Self::Duplicate => "duplicate".to_owned(),
+            Self::Rejected(code) => format!("rejected-{code}"),
+            Self::Failed => "failed".to_owned(),
+            Self::GaveUp => "gave-up".to_owned(),
+            Self::SkippedNoUrl => "skipped-no-url".to_owned(),
+            Self::SkippedNoSecret => "skipped-no-secret".to_owned(),
+            Self::SkippedNoAuthor => "skipped-no-author".to_owned(),
+        }
     }
+
+    /// The code a log line carries, or `None` for a word this log never writes.
+    fn parse(text: &str) -> Option<Self> {
+        match text {
+            "accepted" => Some(Self::Accepted),
+            "duplicate" => Some(Self::Duplicate),
+            "failed" => Some(Self::Failed),
+            "gave-up" => Some(Self::GaveUp),
+            "skipped-no-url" => Some(Self::SkippedNoUrl),
+            "skipped-no-secret" => Some(Self::SkippedNoSecret),
+            "skipped-no-author" => Some(Self::SkippedNoAuthor),
+            other => other
+                .strip_prefix("rejected-")
+                .and_then(|status| status.parse().ok())
+                .map(Self::Rejected),
+        }
+    }
+
+    fn meaning(self) -> Meaning {
+        match self {
+            Self::Accepted | Self::Duplicate | Self::GaveUp => Meaning::Final,
+            Self::Failed => Meaning::Retryable,
+            Self::Rejected(_)
+            | Self::SkippedNoUrl
+            | Self::SkippedNoSecret
+            | Self::SkippedNoAuthor => Meaning::Other,
+        }
+    }
+}
+
+impl From<&Outcome> for LogCode {
+    fn from(outcome: &Outcome) -> Self {
+        match outcome {
+            Outcome::Accepted => Self::Accepted,
+            Outcome::Duplicate => Self::Duplicate,
+            Outcome::Rejected(code) => Self::Rejected(*code),
+            Outcome::Failed(_) => Self::Failed,
+            Outcome::GaveUp => Self::GaveUp,
+        }
+    }
+}
+
+/// The lines of the log for delivery `id`: the time word and the parsed code (a line whose code
+/// is not one this log writes is skipped).
+fn lines_for<'a>(log: &'a str, id: &'a str) -> impl Iterator<Item = (&'a str, LogCode)> {
+    log.lines().filter_map(move |line| {
+        let mut parts = line.split_whitespace();
+        let at = parts.next()?;
+        (parts.next()? == id).then_some(())?;
+        Some((at, LogCode::parse(parts.next()?)?))
+    })
 }
 
 fn clock() -> (u64, String) {
@@ -80,13 +160,8 @@ impl Dispatcher {
 
     /// True when `step`'s delivery id is already in the log as final (delivered, or given up).
     fn delivered(&self, id: &str) -> bool {
-        std::fs::read_to_string(self.dir.join(LOG_FILE)).is_ok_and(|log| {
-            log.lines().any(|line| {
-                let mut parts = line.split_whitespace();
-                parts.nth(1) == Some(id)
-                    && matches!(parts.next(), Some("accepted" | "duplicate" | "gave-up"))
-            })
-        })
+        std::fs::read_to_string(self.dir.join(LOG_FILE))
+            .is_ok_and(|log| lines_for(&log, id).any(|(_, code)| code.meaning() == Meaning::Final))
     }
 
     /// How many times `id` failed so far, and the unix time of the last failure.
@@ -94,19 +169,12 @@ impl Dispatcher {
         let log = std::fs::read_to_string(self.dir.join(LOG_FILE)).unwrap_or_default();
         let mut count = 0;
         let mut last = 0;
-        for line in log.lines() {
-            let mut parts = line.split_whitespace();
-            let (Some(at), Some(line_id), Some("failed")) =
-                (parts.next(), parts.next(), parts.next())
-            else {
-                continue;
-            };
-            if line_id == id {
-                count += 1;
-                last = chrono::DateTime::parse_from_rfc3339(at).map_or(last, |moment| {
-                    u64::try_from(moment.timestamp()).unwrap_or(last)
-                });
-            }
+        for (at, _) in lines_for(&log, id).filter(|(_, code)| code.meaning() == Meaning::Retryable)
+        {
+            count += 1;
+            last = chrono::DateTime::parse_from_rfc3339(at).map_or(last, |moment| {
+                u64::try_from(moment.timestamp()).unwrap_or(last)
+            });
         }
         (count, last)
     }
@@ -157,11 +225,11 @@ impl Dispatcher {
         let id = delivery_id(step);
         // A lane that is off says so in the log (the answer to "why did it not wake?").
         let Some(url) = self.config.url(&step.lane) else {
-            self.log(&id, "skipped-no-url");
+            self.log(&id, &LogCode::SkippedNoUrl.text());
             return None;
         };
         let Some(secret) = self.secret(&step.lane) else {
-            self.log(&id, "skipped-no-secret");
+            self.log(&id, &LogCode::SkippedNoSecret.text());
             return None;
         };
         if self.delivered(&id) {
@@ -169,7 +237,7 @@ impl Dispatcher {
         }
         let (failures, last_failure) = self.failures(&id);
         if failures >= MAX_FAILED_PASSES {
-            self.log(&id, &outcome_code(&Outcome::GaveUp));
+            self.log(&id, &LogCode::GaveUp.text());
             return Some(Outcome::GaveUp);
         }
         if failures > 0
@@ -179,7 +247,7 @@ impl Dispatcher {
             return Some(Outcome::Failed("backing off".to_owned()));
         }
         let outcome = send(&self.client, url, &secret, step);
-        self.log(&id, &outcome_code(&outcome));
+        self.log(&id, &LogCode::from(&outcome).text());
         Some(outcome)
     }
 }
@@ -415,6 +483,61 @@ mod tests {
         assert!(seen.borrow().is_empty(), "nothing was sent");
         let log = std::fs::read_to_string(dir.path().join(LOG_FILE)).unwrap();
         assert_eq!(log.matches("gave-up").count(), 1, "{log}");
+    }
+
+    #[test]
+    fn every_logged_code_has_one_text_and_one_meaning() {
+        let table = [
+            ("accepted", Meaning::Final),
+            ("duplicate", Meaning::Final),
+            ("gave-up", Meaning::Final),
+            ("failed", Meaning::Retryable),
+            ("rejected-401", Meaning::Other),
+            ("rejected-404", Meaning::Other),
+            ("skipped-no-url", Meaning::Other),
+            ("skipped-no-secret", Meaning::Other),
+            ("skipped-no-author", Meaning::Other),
+        ];
+        for (text, meaning) in table {
+            let code = LogCode::parse(text).unwrap_or_else(|| panic!("{text} must parse"));
+            assert_eq!(code.text(), text, "round trip");
+            assert_eq!(code.meaning(), meaning, "{text}");
+        }
+        assert_eq!(LogCode::parse("rejected-"), None);
+        assert_eq!(LogCode::parse("rejected-x"), None);
+        assert_eq!(LogCode::parse("whatever"), None);
+        // Every outcome is written as the code the readers parse back to the same meaning.
+        for (outcome, meaning) in [
+            (Outcome::Accepted, Meaning::Final),
+            (Outcome::Duplicate, Meaning::Final),
+            (Outcome::GaveUp, Meaning::Final),
+            (Outcome::Failed("x".into()), Meaning::Retryable),
+            (Outcome::Rejected(401), Meaning::Other),
+        ] {
+            let text = LogCode::from(&outcome).text();
+            assert_eq!(LogCode::parse(&text).unwrap().meaning(), meaning, "{text}");
+        }
+    }
+
+    #[test]
+    fn the_readers_follow_the_meaning_of_each_logged_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dispatcher(dir.path(), &["openbot-neji"]);
+        let id = delivery_id(&step("openbot-neji"));
+        let at = "2000-01-01T00:00:00Z";
+        for (code, delivered, failed) in [
+            ("accepted", true, 0),
+            ("duplicate", true, 0),
+            ("gave-up", true, 0),
+            ("failed", false, 1),
+            ("rejected-401", false, 0),
+            ("skipped-no-url", false, 0),
+            ("garbage", false, 0),
+        ] {
+            std::fs::write(dir.path().join(LOG_FILE), format!("{at} {id} {code}\n")).unwrap();
+            assert_eq!(d.delivered(&id), delivered, "{code}");
+            assert_eq!(d.failures(&id).0, failed, "{code}");
+        }
     }
 
     #[test]

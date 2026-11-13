@@ -346,6 +346,17 @@ pub(super) fn masked_tail_cut(
         MaskWindow::Complete => bytes,
         MaskWindow::AfterPrefix(slack) => &bytes[slack.min(bytes.len())..],
     };
+    let text = masked_full_text(bytes, secrets);
+    let start = text.len().saturating_sub(DRIVER_LOG_TAIL);
+    let start = (start..=text.len())
+        .find(|index| text.is_char_boundary(*index))
+        .unwrap_or(text.len());
+    (text[start..].to_owned(), start > 0)
+}
+
+/// The whole text, lossily decoded, with every secret and the user's home masked and no cut. A
+/// digest of it (#2879) reveals nothing the masked text does not.
+pub(super) fn masked_full_text(bytes: &[u8], secrets: &[String]) -> String {
     let mut text = String::from_utf8_lossy(bytes).into_owned();
     for secret in secrets.iter().filter(|secret| !secret.is_empty()) {
         text = text.replace(secret.as_str(), "***");
@@ -355,11 +366,7 @@ pub(super) fn masked_tail_cut(
             text = text.replace(&home, "~");
         }
     }
-    let start = text.len().saturating_sub(DRIVER_LOG_TAIL);
-    let start = (start..=text.len())
-        .find(|index| text.is_char_boundary(*index))
-        .unwrap_or(text.len());
-    (text[start..].to_owned(), start > 0)
+    text
 }
 
 pub(super) fn masked_complete_output(bytes: &[u8], secrets: &[String]) -> String {

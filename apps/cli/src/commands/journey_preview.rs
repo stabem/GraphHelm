@@ -2692,7 +2692,7 @@ pub(super) fn origin_frame() -> Value {
 /// An `http` screen's frame (#2875): the response that reached it, as the run keeps it, in the
 /// shape of a `cli` text frame. It holds the status, the content type, the body masked like
 /// command output and cut to its last 4096 bytes (`bodyTruncated` says so) and the sha256 of the
-/// raw body. No request header and no other response header is read into it. `act` is the request
+/// masked body before the cut (#2879). No request header and no other response header is read into it. `act` is the request
 /// that was sent (`None` for a start screen's own GET).
 pub(super) fn http_frame(seen: &super::journey_backend::Observation, act: Option<&Value>) -> Value {
     let mut secrets: Vec<String> = std::env::vars_os()
@@ -2704,6 +2704,23 @@ pub(super) fn http_frame(seen: &super::journey_backend::Observation, act: Option
     masked_http_frame(seen, &secrets)
 }
 
+/// A request header whose name contains one of these (case-insensitive) carries a credential: its
+/// value is masked wherever a response echoes it. The one place the list lives.
+const CREDENTIAL_HEADER_MARKERS: [&str; 12] = [
+    "auth",
+    "cookie",
+    "token",
+    "secret",
+    "key",
+    "session",
+    "password",
+    "passwd",
+    "credential",
+    "signature",
+    "apikey",
+    "api-key",
+];
+
 /// The values of the act's credential-bearing request headers: what a response must not echo.
 fn credential_header_values(act: Option<&Value>) -> Vec<String> {
     act.and_then(|act| act["headers"].as_object())
@@ -2711,16 +2728,9 @@ fn credential_header_values(act: Option<&Value>) -> Vec<String> {
         .flatten()
         .filter(|(name, _)| {
             let name = name.to_ascii_lowercase();
-            [
-                "authorization",
-                "cookie",
-                "token",
-                "secret",
-                "key",
-                "session",
-            ]
-            .iter()
-            .any(|marker| name.contains(marker))
+            CREDENTIAL_HEADER_MARKERS
+                .iter()
+                .any(|marker| name.contains(marker))
         })
         .filter_map(|(_, value)| value.as_str())
         .flat_map(|value| {
@@ -2735,8 +2745,15 @@ fn credential_header_values(act: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-fn masked_http_frame(seen: &super::journey_backend::Observation, secrets: &[String]) -> Value {
+/// The sha256 of the whole text after masking and before any cut (#2879): it tells two different
+/// outputs apart and, unlike a digest of the raw text, cannot confirm a guess of a masked secret.
+fn masked_digest(text: &str, secrets: &[String]) -> String {
     use sha2::{Digest, Sha256};
+    let masked = super::journey_replay::masked_full_text(text.as_bytes(), secrets);
+    hex::encode(Sha256::digest(masked.as_bytes()))
+}
+
+fn masked_http_frame(seen: &super::journey_backend::Observation, secrets: &[String]) -> Value {
     let (body, cut) = super::journey_replay::masked_tail_cut(
         seen.body.as_bytes(),
         super::journey_replay::MaskWindow::Complete,
@@ -2748,7 +2765,7 @@ fn masked_http_frame(seen: &super::journey_backend::Observation, secrets: &[Stri
         "status": seen.status,
         "body": body,
         "bodyTruncated": cut,
-        "bodySha256": hex::encode(Sha256::digest(seen.body.as_bytes())),
+        "bodySha256": masked_digest(&seen.body, secrets),
     });
     if let Some(content_type) = &seen.content_type {
         frame["contentType"] =
@@ -2762,7 +2779,6 @@ fn masked_output(
     seen: &super::journey_backend::Observation,
     secrets: &[String],
 ) -> Value {
-    use sha2::{Digest, Sha256};
     // The whole output is kept (no cut window), then its tail is bounded by `masked_tail`.
     let keep = |text: &str| super::journey_replay::masked_complete_output(text.as_bytes(), secrets);
     json!({
@@ -2770,8 +2786,8 @@ fn masked_output(
         "exit": seen.exit,
         "stdout": keep(&seen.body),
         "stderr": keep(&seen.stderr),
-        "stdoutSha256": hex::encode(Sha256::digest(seen.body.as_bytes())),
-        "stderrSha256": hex::encode(Sha256::digest(seen.stderr.as_bytes())),
+        "stdoutSha256": masked_digest(&seen.body, secrets),
+        "stderrSha256": masked_digest(&seen.stderr, secrets),
     })
 }
 
@@ -5114,7 +5130,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
     }
 
     /// #2875: an `http` screen's frame holds the status, the content type, a masked and bounded
-    /// body with a mark when it was cut, and the digest of the raw body; a declared secret, or a
+    /// body with a mark when it was cut, and the digest of the masked body; a declared secret, or a
     /// request credential the response echoes, never survives in it, and nothing of the request
     /// or any other response header is a field. Cost: in memory.
     #[test]
@@ -5173,6 +5189,75 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
             kept.contains("text/html"),
             "a non-credential header value is not masked"
         );
+    }
+
+    /// #2879: the digest a kept frame holds covers the masked full text, so it cannot confirm a
+    /// guess of a masked secret, and still tells two different bodies apart. Cost: in memory.
+    #[test]
+    fn a_frame_digest_covers_the_masked_text_not_the_raw_one() {
+        use sha2::{Digest, Sha256};
+        let digest = |text: &str| hex::encode(Sha256::digest(text.as_bytes()));
+        let secret = "pw1234".to_owned();
+        let body = format!("{{\"reason\":\"{secret}\"}}");
+        let seen = super::super::journey_backend::Observation {
+            status: Some(403),
+            body: body.clone(),
+            ..Default::default()
+        };
+        let kept = super::masked_http_frame(&seen, std::slice::from_ref(&secret));
+        assert_eq!(
+            kept["bodySha256"],
+            digest("{\"reason\":\"***\"}"),
+            "digest is of the masked text: {kept}"
+        );
+        assert_ne!(kept["bodySha256"], digest(&body), "digest of the raw body");
+
+        let other = super::super::journey_backend::Observation {
+            status: Some(403),
+            body: "{\"reason\":\"other\"}".into(),
+            ..Default::default()
+        };
+        let other = super::masked_http_frame(&other, std::slice::from_ref(&secret));
+        assert_ne!(kept["bodySha256"], other["bodySha256"]);
+
+        // The digest is taken before the cut, so two long bodies differing only in the cut-off head differ.
+        let long = |head: &str| super::super::journey_backend::Observation {
+            body: format!("{head}{}", "x".repeat(5000)),
+            ..Default::default()
+        };
+        assert_ne!(
+            super::masked_http_frame(&long("A"), &[])["bodySha256"],
+            super::masked_http_frame(&long("B"), &[])["bodySha256"]
+        );
+
+        // A cli frame's digests follow the same rule.
+        let out = super::super::journey_backend::Observation {
+            exit: Some(0),
+            body: secret.clone(),
+            stderr: format!("e {secret}"),
+            ..Default::default()
+        };
+        let cli = super::masked_output(&json!("sh x"), &out, std::slice::from_ref(&secret));
+        assert_eq!(cli["stdoutSha256"], digest("***"));
+        assert_eq!(cli["stderrSha256"], digest("e ***"));
+    }
+
+    /// #2879: a request header named `X-Auth` (or another credential-looking name) has its value
+    /// masked where the response echoes it, whatever the name's case.
+    #[test]
+    fn an_echoed_auth_style_request_header_is_masked() {
+        let act = json!({"kind":"http","role":"GET","name":"/x","headers":{
+            "X-Auth":"auth-value-1","Proxy-Authorization":"proxy-value-2","X-API-Key":"apik-value-3",
+            "X-Signature":"sig-value-4","X-Password":"pass-value-5","x-credential":"cred-value-6",
+            "accept":"text/html"}});
+        let echo = super::super::journey_backend::Observation {
+            status: Some(200),
+            body: "auth-value-1 proxy-value-2 apik-value-3 sig-value-4 pass-value-5 cred-value-6 text/html"
+                .into(),
+            ..Default::default()
+        };
+        let kept = super::http_frame(&echo, Some(&act));
+        assert_eq!(kept["body"], "*** *** *** *** *** *** text/html", "{kept}");
     }
 
     /// #519 slice 3: only an approved flow with all four recording arguments records proof; a

@@ -4,8 +4,8 @@ title: Find a journey in Proof by searching
 name: Search the journeys
 feature: Studio
 purpose: "In Proof, typing in Search journeys narrows the list to the journeys whose name, id or group holds the text and says how many of all journeys are shown; a text that matches none says so, and clearing the field brings every journey back."
-status: approved
-approved: {revision: 055a133a58b50c96c92c5df3ca108628137d0e19, digest: sha256:9b14c3b1dce1fc3c9db8aa612ddf945efd9e53d50f2ad0f126faf000ec4dc28a}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -31,14 +31,14 @@ screens:
     url: /?session=studio-fixture&run=demo&view=proof
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: Reply to an agent, because: "its id studio2-lanes-reply holds the typed text reply, so its card stays in the list"}, {role: listitem, name: Compare a step, absent: true, because: "neither its name, its id nor its group holds the typed text, so the search hides its card"}, {role: status, name: Journeys shown, text: 1 of 29 journeys, because: "exactly one of the fixture's 29 journeys matches, so the line reads 1 of 29 journeys; the text check only looks for that text, so it would also pass for 11 of 29 or 21 of 29, and the two absent cards below rule those out; the flow goes red when the fixture gains or loses a journey"}, {role: listitem, name: Open the Studio, absent: true, because: "its name, id and group hold no reply, so a filter that lets more than one journey through shows it"}, {role: listitem, name: Start from no run, absent: true, because: "its name, id and group hold no reply, so a filter that lets more than one journey through shows it"}, {role: button, name: Clear search, because: "a search is typed, so the field offers to clear it"}]
+    expect: [{role: listitem, name: Reply to an agent, because: "its id studio2-lanes-reply holds the typed text reply, so its card stays in the list"}, {role: listitem, name: Compare a step, absent: true, because: "neither its name, its id nor its group holds the typed text, so the search hides its card"}, {role: status, name: Journeys shown, text: 1 of 24 journeys, because: "exactly one of the fixture's 24 journeys matches, so the line reads 1 of 24 journeys; the 24 is the fixture's fixed set (journeys.list plus its own runtime-health), so it moves only when that set is edited on purpose; the text check only looks for that text, so it would also pass for 11 of 24 or 21 of 24, and the two absent cards below rule those out"}, {role: listitem, name: Open the Studio, absent: true, because: "its name, id and group hold no reply, so a filter that lets more than one journey through shows it"}, {role: listitem, name: Start from no run, absent: true, because: "its name, id and group hold no reply, so a filter that lets more than one journey through shows it"}, {role: button, name: Clear search, because: "a search is typed, so the field offers to clear it"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
   - id: none
     title: Nothing matches the typed text
     url: /?session=studio-fixture&run=demo&view=proof
     ignoreQuery: [session, project]
     state: empty
-    expect: [{role: status, name: Journeys shown, text: 0 of 29 journeys No journey matches “zzz-no-such-journey”., because: "no journey holds the typed text, so the one status region reads its whole text: zero shown of the fixture's 29 journeys, then the no-match message naming the typed text; the flow goes red when the fixture gains or loses a journey"}, {role: listitem, name: Reply to an agent, absent: true, because: "the typed text no longer matches it, so no card is listed"}]
+    expect: [{role: status, name: Journeys shown, text: 0 of 24 journeys No journey matches “zzz-no-such-journey”., because: "no journey holds the typed text, so the one status region reads its whole text: zero shown of the fixture's 24 journeys (its fixed set, which moves only when that set is edited on purpose), then the no-match message naming the typed text"}, {role: listitem, name: Reply to an agent, absent: true, because: "the typed text no longer matches it, so no card is listed"}]
     scope: [apps/studio/src/proof/ProofView.tsx, apps/studio/src/proof/journey-search.ts, apps/studio/src/styles.css]
 edges:
   - id: all.found

@@ -118,6 +118,9 @@ up)
       echo "fixture: port $busy already occupied (busy port; choose another); connect accepted by 127.0.0.1:$busy" >&2; exit 2
     fi
   done
+  # #2863: the journeys the fixture lists are the ids in journeys.list, not every flow in the
+  # repository. A listed id with no flow fails here, by name, before any setup runs.
+  bash "$(dirname "$0")/journey_set.sh" check "$repo/.graphhelm/journeys" "$(dirname "$0")/journeys.list" || exit 3
   # Record the launcher first: down must stop it before it can spawn any more children.
   mkdir -p "$dir/.graphhelm"
   echo "up $$ $(cat /proc/$$/winpid 2> /dev/null || true)" > "$pids"
@@ -138,7 +141,9 @@ up)
   fi
   "$bin" --json init --project "$dir/project" --bind "127.0.0.1:$rport" --harness codex > "$dir/.graphhelm/init.json"
   export GRAPHHELM_FIXTURE_RUNTIME_PORT="$rport" GRAPHHELM_EVENTS_KEY="$(cat "$rt/serve.key")"
-  cp -R "$repo/.graphhelm/journeys" "$dir/project/.graphhelm/"
+  # #2863: only the flows named in journeys.list (byte-for-byte), so the Proof count moves only when
+  # that list is edited; flows added to the repository later are not listed here.
+  bash "$(dirname "$0")/journey_set.sh" copy "$repo/.graphhelm/journeys" "$(dirname "$0")/journeys.list" "$dir/project/.graphhelm/journeys"
   # #1905, #2077: every studio2 flow played on this fixture names this fixture's Studio as its base.
   # #2587: the copied journeys stay byte-identical (their approval digests bind `base`); the Studio
   # port is named at run time for the preview instead, so no tracked flow file is edited.

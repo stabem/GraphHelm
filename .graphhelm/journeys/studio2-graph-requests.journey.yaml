@@ -4,8 +4,8 @@ title: Follow each owner request to its result
 name: Follow a request
 feature: Studio
 purpose: "On the demo run's Graph the owner follows the request Show the work graph for the fixture run to issue #721, its PR #721 and its result, Not merged; picks that request's journey in the left column to see only its work; and switches to Kanban and back to Graph without losing the request."
-status: approved
-approved: {revision: c98569d195a2f61eff7fe8252e31e2c7b5d5a3fd, digest: sha256:5455a06b1b8845cc78028cc963bbe543acee50664449cdae3cbca7d43862514a}
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -17,14 +17,14 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: heading, name: Follow each owner request to its result, because: the work header names the journey the owner picked instead of all journeys}, {role: listitem, name: Show the work graph for the fixture run, because: "this request's issue #721 belongs to the picked journey, so it stays"}, {role: listitem, name: Prove a regression test for the fixture run, absent: true, because: "this request has no issue in the picked journey, so the filter hides it"}, {role: heading, name: "Work in flight, all journeys", absent: true, because: the header no longer claims to show every journey once one is picked}]
+    expect: [{role: heading, name: Follow a request, because: the work header names the journey the owner picked instead of all journeys}, {role: listitem, name: Show the work graph for the fixture run, because: "this request's issue #721 belongs to the picked journey, so it stays"}, {role: listitem, name: Prove a regression test for the fixture run, absent: true, because: "this request has no issue in the picked journey, so the filter hides it"}, {role: heading, name: "Work in flight, all journeys", absent: true, because: the header no longer claims to show every journey once one is picked}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph
     title: "The request is drawn with its issue, PR and result"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: listitem, name: Show the work graph for the fixture run, text: In progress · 0 of 1, because: the fixture records this request with one linked issue that is not delivered yet}, {role: button, name: "Issue #721", text: Observe issue graph and work kanban, because: "issue #721, Observe issue graph and work kanban, is the issue the fixture opened for that request"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the issue's PR #721 is open and nobody has reviewed it yet in the fixture"}, {role: group, name: "Result of #721", text: Not merged, because: "the PR is not merged, so the request has no result yet"}, {role: listitem, name: Prove a regression test for the fixture run, text: no issue opened yet, because: "the fixture's second request has no issue linked, and the graph says so instead of hiding it"}, {role: heading, name: "Work in flight, all journeys", because: before any pick the graph shows the work of every journey}, {role: complementary, name: Journeys with work, text: 1 of 24, because: "the fixture project has 24 journeys and only one, Follow each owner request to its result, has work in flight; the count is read once the journey list has loaded"}]
+    expect: [{role: listitem, name: Show the work graph for the fixture run, text: In progress · 0 of 1, because: the fixture records this request with one linked issue that is not delivered yet}, {role: button, name: "Issue #721", text: Observe issue graph and work kanban, because: "issue #721, Observe issue graph and work kanban, is the issue the fixture opened for that request"}, {role: group, name: "Pull request of #721", text: "PR #721 waits for a reviewer", because: "the issue's PR #721 is open and nobody has reviewed it yet in the fixture"}, {role: group, name: "Result of #721", text: Not merged, because: "the PR is not merged, so the request has no result yet"}, {role: listitem, name: Prove a regression test for the fixture run, text: no issue opened yet, because: "the fixture's second request has no issue linked, and the graph says so instead of hiding it"}, {role: heading, name: "Work in flight, all journeys", because: before any pick the graph shows the work of every journey}, {role: complementary, name: Journeys with work, text: 1 of 24, because: "the fixture project lists its fixed set of 24 journeys (journeys.list plus its own runtime-health), so the total moves only when that set is edited on purpose, and only one, Follow a request, has work in flight; the count is read once the journey list has loaded"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/requests.ts, apps/studio/src/graph/layout.ts, apps/studio/src/views/Views.tsx]
   - id: graph-again
     title: Graph again shows the request and its issue
@@ -52,8 +52,8 @@ edges:
     to: filtered
     why: "Picking a journey in the left column narrows the work to that journey, so the owner can follow one promise without the other requests in the way."
     acts:
-      - {kind: wait_for, role: button, name: Follow each owner request to its result 1 issue · 1 PR planner}
-      - {kind: activate, role: button, name: Follow each owner request to its result 1 issue · 1 PR planner}
+      - {kind: wait_for, role: button, name: Follow a request 1 issue · 1 PR planner}
+      - {kind: activate, role: button, name: Follow a request 1 issue · 1 PR planner}
   - id: kanban.graph-again
     from: kanban
     to: graph-again

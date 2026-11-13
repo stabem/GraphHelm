@@ -1236,16 +1236,7 @@ async fn drive_inner(
 
         // Approve every untouched node — the legal Draft -> Ready route, as 04f does.
         let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
-        let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
-            !projection
-                .applied_drafts
-                .iter()
-                .any(|applied| applied == draft_id)
-                && !projection
-                    .rejected_drafts
-                    .iter()
-                    .any(|rejected| rejected == draft_id)
-        });
+        let pending_proposal = projection.pending_drafts().next().is_some();
         if pending_proposal {
             if projection.simulation_status != Some(SimulationStatus::Paused) {
                 append_plain(
@@ -1784,16 +1775,7 @@ async fn drive_inner(
     // Quiescence: complete when every node is terminal, exactly as 04f's
     // complete_if_quiesced decides it.
     let projection = reread_async(&store_open, &cache, &scope, &stream).await?;
-    let pending_proposal = projection.proposed_drafts.iter().any(|draft_id| {
-        !projection
-            .applied_drafts
-            .iter()
-            .any(|applied| applied == draft_id)
-            && !projection
-                .rejected_drafts
-                .iter()
-                .any(|rejected| rejected == draft_id)
-    });
+    let pending_proposal = projection.pending_drafts().next().is_some();
     if pending_proposal {
         return Ok(projection);
     }

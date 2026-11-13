@@ -753,6 +753,15 @@ pub struct WakeLeaseState {
 }
 
 impl ExecutionProjection {
+    /// The proposed drafts that are neither rejected nor applied, in proposal order. A draft id
+    /// proposed twice appears twice, as in `proposed_drafts`: the lists are stored as the fold
+    /// pushed them, and this reads them without changing what replay accepts.
+    pub fn pending_drafts(&self) -> impl Iterator<Item = &String> {
+        self.proposed_drafts.iter().filter(|draft_id| {
+            !self.rejected_drafts.contains(draft_id) && !self.applied_drafts.contains(draft_id)
+        })
+    }
+
     /// The sequence the newest amendment arrived at, or 0 when none has. Callers name this
     /// as the frontier they computed against, so a stale amendment can be refused.
     #[must_use]

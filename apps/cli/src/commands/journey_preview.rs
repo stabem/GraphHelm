@@ -1871,6 +1871,7 @@ fn proof_args(
         allow_origin: Vec::new(),
         replay_worker: false,
         viewport: None,
+        viewport_limited: false,
         heal: false,
         model: Default::default(),
         allow_act: Vec::new(),

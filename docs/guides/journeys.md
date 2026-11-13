@@ -389,6 +389,15 @@ each screen's `expect`, and with the four recording flags (all or none, else
 Secrets come from `GRAPHHELM_SECRET_<name>` environment variables. Navigation away from `base`
 is refused; `--allow-origin` only permits extra subresource origins.
 
+A flow that declares several `viewports` plays each one in its own browser, mobile first and web
+last, against the one app you started. `--viewport <name>` plays only that declared viewport
+(`replay.viewport_undeclared` if the flow does not declare it); it exists so a caller can start a
+fresh app per viewport for a flow that changes state (`tools/studio-journey-fixture/replay-all.sh`
+does). On a flow that declares several viewports such a replay never records, never publishes the
+cache and never heals: the recording flags are ignored, `--heal` with it is refused
+(`replay.viewport_limit_heal`), and the reply says `recording: "withheld_viewport_limited"` and
+`viewportLimitedTo`. A flow that declares one viewport replays, and records, as without the flag.
+
 Without the observer installed (real output):
 
 ```json

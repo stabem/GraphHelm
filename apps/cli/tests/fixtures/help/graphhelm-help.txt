@@ -3631,6 +3631,11 @@ Options:
       --allow-origin <ALLOW_ORIGIN>
           Exact extra subresource origin; never permits navigation away from the local base
 
+      --viewport <VIEWPORT>
+          Replay only this declared viewport (#2903). On a flow that declares several viewports such a replay never records proof, never publishes the cache and never heals, and says so in the reply (`recording`); it cannot be combined with `--heal`. An undeclared name is refused. A flow that declares one viewport replays as without the flag. (A worker receives its viewport through this same field, #1777.)
+          
+          [possible values: web, mobile]
+
       --heal
           On drift, hand only the broken edge to the model door (at most eight acts) and keep the repair only when the edge's original destination is observed. Needs a model source
 

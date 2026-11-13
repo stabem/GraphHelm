@@ -413,6 +413,9 @@ graphhelm --json setup --project . --install-observer playwright
 graphhelm --json journey replay checkout --project .
 # Recording is a complete bundle; omit all four flags for assertions/cache only.
 graphhelm --json journey replay checkout --project . --events <store> --execution <run> --keyring <file> --key-id <id>
+# One declared viewport of a flow that declares several, e.g. on its own fresh app: never records,
+# never publishes the cache, never heals; the reply says recording: withheld_viewport_limited.
+graphhelm --json journey replay checkout --project . --viewport mobile
 ```
 
 Setup ships both the Python capture observer and Node replay companion. Read-only preview reports

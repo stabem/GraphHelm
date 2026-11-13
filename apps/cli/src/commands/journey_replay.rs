@@ -89,6 +89,12 @@ fn report(mut data: Value, failed: Option<Failure>) -> Outcome {
         "replay.worker_invalid" => {
             "the internal replay worker handshake or bounded response was invalid"
         }
+        "replay.viewport_undeclared" => {
+            "--viewport names a viewport this flow does not declare in `viewports`; name one it declares"
+        }
+        "replay.viewport_limit_heal" => {
+            "--heal cannot be combined with --viewport on a flow that declares several viewports: a limited replay never heals; replay every viewport to heal"
+        }
         _ => "replay refused or could not observe this obligation; earlier observations remain",
     };
     Outcome {
@@ -2158,6 +2164,10 @@ fn replay(args: &JourneyReplayArgs, data: &mut Value) -> Result<()> {
     if healer.as_ref().is_some_and(|h| !h.repaired.is_empty()) {
         return Ok(());
     }
+    // #2903: a replay limited to one viewport of several publishes no cache.
+    if args.viewport_limited {
+        return Ok(());
+    }
     // Unreachable screens/edges are not invented cache observations.
     if !cache_valid(&cache, &flow) {
         return Err(failure("replay.cache_incomplete", "/cache", 2));
@@ -2210,6 +2220,18 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
             Some(failure("replay.recording_incomplete", "/recording", 3)),
         );
     }
+    // #2903: `--viewport` limits a supervisor's replay to one declared viewport; a name the flow
+    // does not declare is refused before anything runs, and a limit cannot heal.
+    let limit = match viewport_limit(args) {
+        Ok(limit) => limit,
+        Err(refused) => return report(data, Some(refused)),
+    };
+    if limit.is_some() && args.heal {
+        return report(
+            data,
+            Some(failure("replay.viewport_limit_heal", "/heal", 3)),
+        );
+    }
     // #2156: a flow of commands has no page for the browser worker; it replays its commands as
     // the preview plays them, under the same guard.
     if !args.replay_worker
@@ -2245,9 +2267,59 @@ pub(crate) fn run(args: &JourneyReplayArgs) -> Outcome {
     // #1777: a flow that names `viewports` replays each one in its own worker, web first; a flow
     // that does not keeps replaying exactly as it was approved (one browser, its declared or
     // cached size), until the owner re-approves it with `viewports`.
+    if let Some(view) = limit {
+        return play_limited(args, view, |one| supervised(one, data.clone()));
+    }
     let views = replay_views(args);
     let outcomes = play_views(args, &views, |one| supervised(one, data.clone()));
     combine_replays(outcomes, views.len())
+}
+
+/// #2903: the replay without what could leave proof behind: no recording bundle, no healing.
+fn unrecorded(mut one: JourneyReplayArgs) -> JourneyReplayArgs {
+    one.record = crate::args::OptionalRecordArgs {
+        events: None,
+        execution: None,
+        keyring: None,
+        key_id: None,
+    };
+    one.heal = false;
+    one
+}
+
+/// #2903: the one viewport a supervisor's `--viewport` limits the replay to, when that limit
+/// matters: `Err` when the flow does not declare the name, `None` when no limit was asked for,
+/// for a worker (which receives its viewport through the same field) and for a flow that declares
+/// one viewport (replayed as without the flag, recording as before).
+fn viewport_limit(args: &JourneyReplayArgs) -> Result<Option<&'static str>> {
+    let Some(name) = args.viewport.as_deref().filter(|_| !args.replay_worker) else {
+        return Ok(None);
+    };
+    let views = replay_views(args);
+    let Some(view) = views.iter().flatten().find(|view| **view == name) else {
+        return Err(failure("replay.viewport_undeclared", "/viewport", 3));
+    };
+    Ok((views.len() > 1).then_some(*view))
+}
+
+/// #2903: plays one viewport of a flow that declares several. It never records, never heals and
+/// its worker publishes no cache, so it cannot leave proof that the other viewports contradict
+/// (#1878); the reply names the limit in `recording` and `viewportLimitedTo`.
+fn play_limited(
+    args: &JourneyReplayArgs,
+    view: &'static str,
+    mut run: impl FnMut(&JourneyReplayArgs) -> Outcome,
+) -> Outcome {
+    let mut one = unrecorded(args.clone());
+    one.viewport = Some(view.to_owned());
+    one.viewport_limited = true;
+    let mut outcome = run(&one);
+    if let Some(data) = outcome.output.data.as_mut() {
+        data["recording"] = "withheld_viewport_limited".into();
+        data["viewportLimitedTo"] = view.into();
+        data["cachePublished"] = false.into();
+    }
+    outcome
 }
 
 /// #1878: plays each viewport and decides which run may record proof. Only the first viewport
@@ -2264,13 +2336,7 @@ fn play_views(
         let mut one = args.clone();
         one.viewport = view.map(str::to_owned);
         if !recorded {
-            one.record = crate::args::OptionalRecordArgs {
-                events: None,
-                execution: None,
-                keyring: None,
-                key_id: None,
-            };
-            one.heal = false;
+            one = unrecorded(one);
         }
         one
     };
@@ -2429,6 +2495,9 @@ fn supervise(args: &JourneyReplayArgs, deadline: Instant) -> Outcome {
     for origin in &args.allow_origin {
         command.args(["--allow-origin", origin]);
     }
+    if args.viewport_limited {
+        command.arg("--viewport-limited");
+    }
     if args.heal {
         command.arg("--heal");
         for (flag, value) in [
@@ -2577,6 +2646,7 @@ mod tests {
             allow_origin: Vec::new(),
             replay_worker: false,
             viewport: None,
+            viewport_limited: false,
             heal: false,
             model: Default::default(),
             allow_act: Vec::new(),
@@ -2663,6 +2733,7 @@ mod tests {
             allow_origin: Vec::new(),
             replay_worker: false,
             viewport: None,
+            viewport_limited: false,
             heal: true,
             model: Default::default(),
             allow_act: Vec::new(),
@@ -2709,6 +2780,181 @@ mod tests {
         let data = outcome.output.data.unwrap();
         assert_eq!(data["failsOnlyOn"], Value::Null);
         assert!(data.get("proofWithheldBy").is_none());
+    }
+
+    /// #2903: `--viewport` on a supervisor limits the replay to one declared viewport. A name the
+    /// flow does not declare is refused (argument error, code and path) before anything runs; a
+    /// flow that declares one viewport is not limited (it records as before); a worker, which
+    /// receives its viewport through the same field, is never limited or refused. Defects named:
+    /// an undeclared viewport silently replaying everything, a single-viewport flow losing its
+    /// recording, a worker refused for its own viewport. Cost: one temp directory.
+    #[test]
+    fn a_viewport_limit_names_one_declared_view_and_refuses_an_undeclared_one() {
+        use super::*;
+        let project = tempfile::tempdir().unwrap();
+        let journeys = project.path().join(".graphhelm/journeys");
+        std::fs::create_dir_all(&journeys).unwrap();
+        for (id, body) in [
+            ("both", "id: both\nviewports: [mobile, web]\n"),
+            ("phone", "id: phone\nviewports: [mobile]\n"),
+            ("plain", "id: plain\n"),
+        ] {
+            std::fs::write(journeys.join(format!("{id}.journey.yaml")), body).unwrap();
+        }
+        let args = |id: &str, viewport: Option<&str>, worker: bool| JourneyReplayArgs {
+            id: id.to_owned(),
+            project: Some(project.path().to_path_buf()),
+            record: crate::args::OptionalRecordArgs {
+                events: None,
+                execution: None,
+                keyring: None,
+                key_id: None,
+            },
+            allow_origin: Vec::new(),
+            replay_worker: worker,
+            viewport: viewport.map(str::to_owned),
+            viewport_limited: false,
+            heal: false,
+            model: Default::default(),
+            allow_act: Vec::new(),
+        };
+        assert_eq!(
+            viewport_limit(&args("both", Some("mobile"), false)),
+            Ok(Some("mobile"))
+        );
+        assert_eq!(
+            viewport_limit(&args("both", Some("web"), false)),
+            Ok(Some("web"))
+        );
+        assert_eq!(
+            viewport_limit(&args("both", None, false)),
+            Ok(None),
+            "no flag, no limit"
+        );
+        assert_eq!(
+            viewport_limit(&args("phone", Some("mobile"), false)),
+            Ok(None),
+            "one declared viewport replays as without the flag"
+        );
+        for (id, view) in [("phone", "web"), ("plain", "web"), ("plain", "mobile")] {
+            assert_eq!(
+                viewport_limit(&args(id, Some(view), false)),
+                Err(failure("replay.viewport_undeclared", "/viewport", 3)),
+                "{id} does not declare {view}"
+            );
+        }
+        assert_eq!(
+            viewport_limit(&args("phone", Some("web"), true)),
+            Ok(None),
+            "a worker's own viewport is not a limit"
+        );
+        let refused = run(&args("phone", Some("web"), false));
+        assert!(!refused.output.ok);
+        assert_eq!(refused.exit_code, 3);
+        assert_eq!(
+            refused.output.diagnostics[0].code,
+            "replay.viewport_undeclared"
+        );
+        assert_eq!(refused.output.diagnostics[0].path, "/viewport");
+        assert!(
+            refused.output.data.unwrap()["paths"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let mut healing = args("both", Some("web"), false);
+        healing.heal = true;
+        let refused = run(&healing);
+        assert_eq!(refused.exit_code, 3);
+        assert_eq!(
+            refused.output.diagnostics[0].code,
+            "replay.viewport_limit_heal"
+        );
+        assert_eq!(refused.output.diagnostics[0].path, "/heal");
+        let mut healing_one = args("phone", Some("mobile"), false);
+        healing_one.heal = true;
+        assert_eq!(
+            viewport_limit(&healing_one),
+            Ok(None),
+            "--heal with a flow of one viewport is not a limited replay"
+        );
+    }
+
+    /// #2903: a limited replay of a flow with several viewports plays exactly that one view, with
+    /// no recording bundle and no healing, its worker told to publish no cache, and a reply that
+    /// says nothing was recorded. A flow of one viewport still records and heals as before.
+    /// Defects named: a limited replay leaving proof (#1878), a second viewport played, a reply
+    /// that does not say so. Cost: none (the worker is a closure).
+    #[test]
+    fn a_limited_replay_records_nothing_and_says_so_while_one_viewport_still_records() {
+        use super::*;
+        let args = JourneyReplayArgs {
+            id: "checkout".to_owned(),
+            project: None,
+            record: crate::args::OptionalRecordArgs {
+                events: Some(PathBuf::from("events")),
+                execution: Some("run".to_owned()),
+                keyring: Some(PathBuf::from("keys")),
+                key_id: Some("k".to_owned()),
+            },
+            allow_origin: Vec::new(),
+            replay_worker: false,
+            viewport: Some("mobile".to_owned()),
+            viewport_limited: false,
+            heal: false,
+            model: Default::default(),
+            allow_act: Vec::new(),
+        };
+        let mut runs = Vec::new();
+        let outcome = play_limited(&args, "mobile", |one| {
+            runs.push((
+                one.viewport.clone().unwrap(),
+                one.record.events.is_some() || one.record.key_id.is_some(),
+                one.heal,
+                one.viewport_limited,
+            ));
+            report(
+                json!({"recording":"not_requested","cachePublished":true,"paths":[{"name":"main","outcome":"passed"}]}),
+                None,
+            )
+        });
+        assert_eq!(runs, [("mobile".to_owned(), false, false, true)]);
+        let data = outcome.output.data.unwrap();
+        assert_eq!(data["recording"], "withheld_viewport_limited");
+        assert_eq!(data["viewportLimitedTo"], "mobile");
+        assert_eq!(data["cachePublished"], false);
+        assert!(data.get("viewports").is_none());
+        let mut healing = args.clone();
+        healing.heal = true;
+        let mut runs = Vec::new();
+        let failed = play_limited(&healing, "mobile", |one| {
+            runs.push((one.record.events.is_some(), one.heal));
+            report(
+                json!({"paths":[]}),
+                Some(failure("driver.expectation_failed", "/paths/main", 1)),
+            )
+        });
+        assert_eq!(runs, [(false, false)], "never heals, whatever the outcome");
+        assert!(!failed.output.ok);
+        assert_eq!(
+            failed.output.data.unwrap()["recording"],
+            "withheld_viewport_limited"
+        );
+
+        // A flow that declares one viewport plays through `play_views`, recording and healing.
+        let mut one_view = args.clone();
+        one_view.heal = true;
+        let mut runs = Vec::new();
+        play_views(&one_view, &[Some("mobile")], |one| {
+            runs.push((
+                one.viewport.clone().unwrap(),
+                one.record.events.is_some(),
+                one.heal,
+                one.viewport_limited,
+            ));
+            report(json!({"paths":[]}), None)
+        });
+        assert_eq!(runs, [("mobile".to_owned(), true, true, false)]);
     }
 
     /// #1722: the binary ships its observer files byte for byte, so it must ship the same bytes

@@ -1080,7 +1080,7 @@ pub(super) fn draft_bytes(flow: &Value, project: &Path) -> Result<String, Vec<Fi
     }
     // The `approved` half stays a null check: it asks whether an approval record is present, not
     // what the status says, so a draft that kept an old record is still refused as stale.
-    if !flow_is_draft(&flow) || !flow["approved"].is_null() {
+    if !flow_is_draft(flow) || !flow["approved"].is_null() {
         return Err(vec![Finding::new(
             "flow.approval_stale",
             "/approved",
@@ -1236,7 +1236,7 @@ fn check_snapshot(
             let path = project
                 .join(".graphhelm/journeys")
                 .join(format!("{id}.json"));
-            if (flow_is_approved(&value) || path.exists())
+            if (flow_is_approved(value) || path.exists())
                 && output_bytes(&path).ok().as_deref() != Some(contract_bytes(&contract).as_slice())
             {
                 findings.push(Finding::new(

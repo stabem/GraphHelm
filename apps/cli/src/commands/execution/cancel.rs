@@ -57,10 +57,11 @@ pub(crate) fn execute(
         .execution_id
         .clone()
         .ok_or_else(|| execution_state("no execution has started on this stream", "/execution"))?;
-    if matches!(
-        projection.simulation_status,
-        Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)
-    ) {
+    if projection
+        .simulation_status
+        .as_ref()
+        .is_some_and(SimulationStatus::is_terminal)
+    {
         return Err(execution_state(
             &format!(
                 "the execution is already {}",
@@ -105,10 +106,11 @@ pub(crate) fn execute(
     // #1670: the cancel appends at the head it re-checks here, after its own node outcomes, so a
     // concurrent cancel that finished first is refused instead of cancelling a cancelled run.
     let (latest, observed) = replay_projection_at(&store, &scope, &stream)?;
-    if matches!(
-        latest.simulation_status,
-        Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)
-    ) {
+    if latest
+        .simulation_status
+        .as_ref()
+        .is_some_and(SimulationStatus::is_terminal)
+    {
         return Err(execution_state(
             &format!(
                 "the execution is already {}",

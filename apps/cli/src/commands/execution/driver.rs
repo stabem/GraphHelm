@@ -543,10 +543,10 @@ fn complete_if_quiesced(
     actor: &PersistedActor,
 ) -> Result<(), Failure> {
     let projection = reread(store, scope, stream.as_str())?;
-    let already_terminal = matches!(
-        projection.simulation_status,
-        Some(SimulationStatus::Completed | SimulationStatus::Failed | SimulationStatus::Cancelled)
-    );
+    let already_terminal = projection
+        .simulation_status
+        .as_ref()
+        .is_some_and(SimulationStatus::is_terminal);
     if already_terminal {
         return Ok(());
     }

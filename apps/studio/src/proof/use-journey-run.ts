@@ -80,6 +80,11 @@ export function useJourneyRun(runtime: Runtime, flowId: string, executionId: str
     const fail = (cause: unknown) => {
       if (!live) return;
       setStarting(false);
+      // #2935: opening the journey only reads its run; a failure there is not a refused start.
+      if (!ran) {
+        setError(actionErrorDetails("Run could not be read", cause, "The Runtime could not return this journey's run.", "Try opening this journey again."));
+        return;
+      }
       const code = cause instanceof RuntimeError ? cause.code : null;
       const flowCommand = code?.startsWith("flow.") === true || code?.startsWith("preview.flow_") === true
         ? "graphhelm journey validate --all"

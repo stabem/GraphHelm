@@ -120,6 +120,15 @@ status do not change. Close it with a second path that starts at the act and goe
 example `volta: [item.arrived, delivered.agenda]` ending on the agenda with the item `absent`.
 A button is a command, not an item, so a page opened by a button carries no such duty.
 
+A screen reached by a backend act has no picture, so a preview keeps a text frame for it (`frame: true`,
+`kind: text`). A `cli` screen keeps the command's exit code and masked stdout and stderr; an `http` screen
+keeps the response status, its content type and its body, plus the sha256 of the raw body. Output and body are
+masked like the driver's stderr (every `GRAPHHELM_SECRET_*` value and the home path) and cut to their last
+4096 bytes; an `http` frame says `bodyTruncated: true` when the body was longer. An `http` frame never holds
+request headers, cookies, `Set-Cookie`, `Authorization` or any response header other than the content type.
+A result kept before this carries `frame: false` for those screens and still reads. A frame is evidence: it
+is not part of the flow, so keeping it changes no digest or approval.
+
 A journey also explains itself to whoever approves it (#1955). Every edge carries `why`, and every
 non-obvious expectation carries `because`: one on a screen an `http` or `cli` act leads to, one with
 a backend role (`exit`, `stdout`, `json`), or one that checks `text` or `absent`. The draft writer,

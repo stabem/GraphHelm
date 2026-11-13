@@ -333,6 +333,15 @@ pub(super) enum MaskWindow {
 }
 
 pub(super) fn masked_tail(bytes: &[u8], window: MaskWindow, secrets: &[String]) -> String {
+    masked_tail_cut(bytes, window, secrets).0
+}
+
+/// `masked_tail`, and whether the text was cut to the tail bound (#2875: a kept `http` body says so).
+pub(super) fn masked_tail_cut(
+    bytes: &[u8],
+    window: MaskWindow,
+    secrets: &[String],
+) -> (String, bool) {
     let bytes = match window {
         MaskWindow::Complete => bytes,
         MaskWindow::AfterPrefix(slack) => &bytes[slack.min(bytes.len())..],
@@ -350,7 +359,7 @@ pub(super) fn masked_tail(bytes: &[u8], window: MaskWindow, secrets: &[String]) 
     let start = (start..=text.len())
         .find(|index| text.is_char_boundary(*index))
         .unwrap_or(text.len());
-    text[start..].to_owned()
+    (text[start..].to_owned(), start > 0)
 }
 
 pub(super) fn masked_complete_output(bytes: &[u8], secrets: &[String]) -> String {

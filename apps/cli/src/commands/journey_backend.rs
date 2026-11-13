@@ -30,6 +30,9 @@ pub(super) struct Observation {
     pub(super) body: String,
     /// #1662: a command's stderr, kept with its stdout as the run's evidence.
     pub(super) stderr: String,
+    /// #2875: an `http` response's `Content-Type` value, kept with its status and body as the
+    /// screen's text frame. No other response header is read.
+    pub(super) content_type: Option<String>,
 }
 
 fn acts(flow: &Value) -> impl Iterator<Item = &Value> {
@@ -217,6 +220,12 @@ pub(super) fn request(
     let chunked = headers
         .to_ascii_lowercase()
         .contains("transfer-encoding: chunked");
+    let content_type = headers.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-type")
+            .then(|| value.trim().to_owned())
+    });
     Ok(Observation {
         status: Some(status),
         exit: None,
@@ -226,6 +235,7 @@ pub(super) fn request(
             content.to_owned()
         },
         stderr: String::new(),
+        content_type,
     })
 }
 
@@ -720,6 +730,7 @@ pub(super) fn command(project: &Path, argv: &str) -> Result<Observation, String>
         exit: status.code(),
         body: String::from_utf8_lossy(&bytes).into_owned(),
         stderr: String::from_utf8_lossy(&error_bytes).into_owned(),
+        content_type: None,
     })
 }
 
@@ -822,6 +833,7 @@ mod tests {
             exit: None,
             body: body.to_owned(),
             stderr: String::new(),
+            content_type: None,
         };
         assert_eq!(unmet(&screen, &seen("all good")), None);
         assert_eq!(
@@ -840,6 +852,7 @@ mod tests {
             exit: None,
             body: body.to_owned(),
             stderr: String::new(),
+            content_type: None,
         };
         assert_eq!(unmet(&screen, &seen("total:\n R$\u{a0}246,90")), None);
         assert_eq!(
@@ -930,6 +943,7 @@ mod tests {
             exit: None,
             body: r#"{"item":{"name":"apple","tags":["a","b"]},"count":2}"#.into(),
             stderr: String::new(),
+            content_type: None,
         };
         assert_eq!(unmet(&screen, &seen), None);
         let wrong = Observation {
@@ -942,6 +956,7 @@ mod tests {
             exit: None,
             body: r#"{"item":{"tags":["a","c"]},"count":2}"#.into(),
             stderr: String::new(),
+            content_type: None,
         };
         assert_eq!(
             unmet(&screen, &missing).as_deref(),

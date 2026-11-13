@@ -2689,6 +2689,74 @@ pub(super) fn origin_frame() -> Value {
     json!({"frame":true,"kind":"text","precondition":true,"exit":0,"stdout":"","stderr":""})
 }
 
+/// An `http` screen's frame (#2875): the response that reached it, as the run keeps it, in the
+/// shape of a `cli` text frame. It holds the status, the content type, the body masked like
+/// command output and cut to its last 4096 bytes (`bodyTruncated` says so) and the sha256 of the
+/// raw body. No request header and no other response header is read into it. `act` is the request
+/// that was sent (`None` for a start screen's own GET).
+pub(super) fn http_frame(seen: &super::journey_backend::Observation, act: Option<&Value>) -> Value {
+    let mut secrets: Vec<String> = std::env::vars_os()
+        .filter(|(key, _)| key.to_string_lossy().starts_with("GRAPHHELM_SECRET_"))
+        .filter_map(|(_, value)| value.into_string().ok())
+        .collect();
+    // A body that echoes a credential the request carried is masked as a declared secret is.
+    secrets.extend(credential_header_values(act));
+    masked_http_frame(seen, &secrets)
+}
+
+/// The values of the act's credential-bearing request headers: what a response must not echo.
+fn credential_header_values(act: Option<&Value>) -> Vec<String> {
+    act.and_then(|act| act["headers"].as_object())
+        .into_iter()
+        .flatten()
+        .filter(|(name, _)| {
+            let name = name.to_ascii_lowercase();
+            [
+                "authorization",
+                "cookie",
+                "token",
+                "secret",
+                "key",
+                "session",
+            ]
+            .iter()
+            .any(|marker| name.contains(marker))
+        })
+        .filter_map(|(_, value)| value.as_str())
+        .flat_map(|value| {
+            // The whole value, and its parts (`Bearer <token>`, `name=<value>; name=<value>`).
+            let parts = value
+                .split([' ', ';', '='])
+                .filter(|part| part.len() >= 4)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            std::iter::once(value.to_owned()).chain(parts)
+        })
+        .collect()
+}
+
+fn masked_http_frame(seen: &super::journey_backend::Observation, secrets: &[String]) -> Value {
+    use sha2::{Digest, Sha256};
+    let (body, cut) = super::journey_replay::masked_tail_cut(
+        seen.body.as_bytes(),
+        super::journey_replay::MaskWindow::Complete,
+        secrets,
+    );
+    let mut frame = json!({
+        "frame": true,
+        "kind": "text",
+        "status": seen.status,
+        "body": body,
+        "bodyTruncated": cut,
+        "bodySha256": hex::encode(Sha256::digest(seen.body.as_bytes())),
+    });
+    if let Some(content_type) = &seen.content_type {
+        frame["contentType"] =
+            super::journey_replay::masked_complete_output(content_type.as_bytes(), secrets).into();
+    }
+    frame
+}
+
 fn masked_output(
     argv: &Value,
     seen: &super::journey_backend::Observation,
@@ -2736,10 +2804,18 @@ fn play_backend_path(
         } else {
             let url = screens[first]["url"].as_str().unwrap();
             match backend::request(base, "GET", url, None, None) {
+                // #2875: the start screen's own GET is the response its expectations were judged
+                // against, so it is the frame it keeps.
                 Ok(seen) => match backend::unmet(screens[first], &seen) {
-                    None => run.screen(first, "pass", None, None, None),
+                    None => run.screen(first, "pass", None, Some(http_frame(&seen, None)), None),
                     Some(_) => {
-                        run.screen(first, "drift", Some("expect_missing"), None, None);
+                        run.screen(
+                            first,
+                            "drift",
+                            Some("expect_missing"),
+                            Some(http_frame(&seen, None)),
+                            None,
+                        );
                         return "drift";
                     }
                 },
@@ -2777,7 +2853,11 @@ fn play_backend_path(
                             outputs.push(command_output(&act["name"], &seen));
                             run.state["outputs"][id] = Value::Array(outputs);
                         }
-                        let frame = (act["kind"] == "cli").then(|| text_frame(&act["name"], &seen));
+                        let frame = match act["kind"].as_str() {
+                            Some("cli") => Some(text_frame(&act["name"], &seen)),
+                            Some("http") => Some(http_frame(&seen, Some(act))),
+                            _ => None,
+                        };
                         last = Some((seen, frame));
                     }
                     Err(_) => {
@@ -5018,6 +5098,7 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
                 "x".repeat(10_000)
             ),
             stderr: format!("warn: {secret}"),
+            content_type: None,
         };
         let kept =
             super::masked_output(&json!("sh greet.sh"), &seen, std::slice::from_ref(&secret));
@@ -5030,6 +5111,68 @@ exec bash "$GRAPHHELM_PREVIEW_OBSERVER_REPO/tools/studio-journey-fixture/fixture
         );
         assert_eq!(kept["stdoutSha256"].as_str().unwrap().len(), 64);
         assert_eq!(kept["exit"], 0);
+    }
+
+    /// #2875: an `http` screen's frame holds the status, the content type, a masked and bounded
+    /// body with a mark when it was cut, and the digest of the raw body; a declared secret, or a
+    /// request credential the response echoes, never survives in it, and nothing of the request
+    /// or any other response header is a field. Cost: in memory.
+    #[test]
+    fn an_http_frame_is_masked_bounded_marked_and_holds_no_headers() {
+        let secret = "s3cr3t-token-value".to_owned();
+        let seen = super::super::journey_backend::Observation {
+            status: Some(403),
+            exit: None,
+            body: format!("{{\"reason\":\"{secret}\"}}"),
+            stderr: String::new(),
+            content_type: Some("application/json".into()),
+        };
+        let kept = super::masked_http_frame(&seen, std::slice::from_ref(&secret));
+        assert!(!kept.to_string().contains(&secret), "{kept}");
+        assert_eq!(kept["body"], "{\"reason\":\"***\"}", "{kept}");
+        assert_eq!(
+            (
+                kept["frame"].clone(),
+                kept["kind"].clone(),
+                kept["status"].clone()
+            ),
+            (true.into(), "text".into(), 403.into())
+        );
+        assert_eq!(kept["contentType"], "application/json");
+        assert_eq!(kept["bodyTruncated"], false);
+        assert_eq!(kept["bodySha256"].as_str().unwrap().len(), 64);
+
+        let long = super::super::journey_backend::Observation {
+            status: Some(200),
+            body: format!("HEAD{}TAIL", "x".repeat(10_000)),
+            ..Default::default()
+        };
+        let cut = super::masked_http_frame(&long, &[]);
+        assert!(
+            cut["body"].as_str().unwrap().len() <= 4096,
+            "unbounded body"
+        );
+        assert!(cut["body"].as_str().unwrap().ends_with("TAIL"), "{cut}");
+        assert_eq!(cut["bodyTruncated"], true, "{cut}");
+        assert!(cut.get("contentType").is_none(), "{cut}");
+
+        // A response that echoes the request's credentials is masked as a declared secret is.
+        let act = json!({"kind":"http","role":"GET","name":"/x",
+            "headers":{"Authorization":"Bearer abc123-token","Cookie":"sid=cookie-value-9","accept":"text/html"}});
+        let echo = super::super::journey_backend::Observation {
+            status: Some(200),
+            body: "you sent abc123-token and cookie-value-9 and sid=cookie-value-9 and text/html"
+                .into(),
+            ..Default::default()
+        };
+        let kept = super::http_frame(&echo, Some(&act)).to_string();
+        for echoed in ["abc123-token", "cookie-value-9"] {
+            assert!(!kept.contains(echoed), "{echoed} kept: {kept}");
+        }
+        assert!(
+            kept.contains("text/html"),
+            "a non-credential header value is not masked"
+        );
     }
 
     /// #519 slice 3: only an approved flow with all four recording arguments records proof; a

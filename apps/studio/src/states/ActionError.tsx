@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 import { RuntimeError } from "../runtime/client";
 
 export interface ActionErrorDetails {
@@ -25,10 +27,11 @@ export function ActionError({ error, onDismiss, onRetry }: {
   onDismiss: () => void;
   onRetry?: () => void;
 }) {
+  const titleId = useId();
   return (
-    <div role="alert" className="action-error">
+    <div role="alert" aria-labelledby={titleId} className="action-error">
       <div className="action-error-head">
-        <strong className="action-error-title">{error.title}</strong>
+        <strong id={titleId} className="action-error-title">{error.title}</strong>
         <button type="button" className="b ghost action-error-dismiss" onClick={onDismiss}>Dismiss</button>
       </div>
       <span className="mono action-error-code">{error.code ?? "Code not supplied"}</span>

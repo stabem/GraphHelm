@@ -3,9 +3,9 @@ id: studio2-graph-review-screen
 title: Review a card's screens in the large modal
 name: Review a screen
 feature: Studio
-purpose: "The owner opens issue #721's card, in review, and gets a large modal comparing a screen of its journey, Open the Studio on a project (bad-ticket), before and now: as one frame, side by side, as changes, as an overlay with a slider, and at mobile width; Close shuts it and leaves the card in review."
-status: approved
-approved: {revision: 2e2eb86b49af43f1e71b77403b3bf16d19a9cf95, digest: sha256:d867db2d3cd52afb2c6a98ff1e0cf8a07405e999e5b9b533e243a7682bb0d1bb}
+purpose: "The owner opens issue #721's card, in review, and gets a large modal comparing a screen of its journey, Open the Studio on a project (its graph screen), before and now: as one frame, side by side, as changes, as an overlay with a slider, and at mobile width; Close shuts it and leaves the card in review."
+status: draft
+approved: null
 base: http://127.0.0.1:5184
 actors: [owner]
 secrets: []
@@ -38,14 +38,14 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: group, name: Viewport, text: 390 × 844, because: "the mobile frame is captured at 390 by 844, and the viewport label says so"}, {role: img, name: bad-ticket before, because: "the main run kept a mobile frame of the bad-ticket screen, so the owner checks the phone layout too"}, {role: img, name: bad-ticket now, absent: true, because: "the PR head was captured on web only, so there is no Now frame to show at mobile"}]
+    expect: [{role: group, name: Viewport, text: 390 × 844, because: "the mobile frame is captured at 390 by 844, and the viewport label says so"}, {role: img, name: graph before, because: "the main run kept a mobile frame of the graph screen, so the owner checks the phone layout too"}, {role: img, name: graph now, absent: true, because: "the PR head was captured on web only, so there is no Now frame to show at mobile"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: modal
     title: "The review modal opens on issue #721's journey screen"
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: dialog, name: Review, text: Observe issue graph and work kanban, because: "the modal is for the card the owner opened, issue #721 Observe issue graph and work kanban"}, {role: img, name: bad-ticket before, because: "the modal starts on the first screen of issue #721's journey, Open the Studio on a project: bad-ticket, showing its frame from the last run"}, {role: group, name: Viewport, text: 1280 × 800, because: the frame is shown at the web size it was captured at}]
+    expect: [{role: dialog, name: Review, text: Observe issue graph and work kanban, because: "the modal is for the card the owner opened, issue #721 Observe issue graph and work kanban"}, {role: img, name: graph before, because: "the modal starts on the first screen of issue #721's journey, Open the Studio on a project: graph, showing its frame from the last run"}, {role: group, name: Viewport, text: 1280 × 800, because: the frame is shown at the web size it was captured at}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
   - id: overlay
     title: Overlay lays Now over Before with a slider
@@ -59,7 +59,7 @@ screens:
     url: /?session=studio-fixture&run=demo
     ignoreQuery: [session, project]
     state: stable
-    expect: [{role: img, name: bad-ticket before, because: the left frame is the bad-ticket screen from the main run}, {role: img, name: bad-ticket now, because: "the right frame is the same screen captured at the PR head, so both can be read at once"}, {role: combobox, name: Review screen, text: bad-ticket, because: "both frames are of the screen picked here, studio2-open's bad-ticket"}, {role: region, name: Review frame, text: "Now · PR #721 at 721abcde", because: "the Now frame is the one the fixture recorded for PR #721 at head 721abcde"}]
+    expect: [{role: img, name: graph before, because: the left frame is the graph screen from the main run}, {role: img, name: graph now, because: "the right frame is the same screen captured at the PR head, so both can be read at once"}, {role: combobox, name: Review screen, text: graph, because: "both frames are of the screen picked here, studio2-open's graph"}, {role: region, name: Review frame, text: "Now · PR #721 at 721abcde", because: "the Now frame is the one the fixture recorded for PR #721 at head 721abcde"}]
     scope: [apps/studio/src/graph/RequestsView.tsx, apps/studio/src/graph/ReviewModal.tsx, apps/studio/src/graph/review.ts, apps/studio/src/views/Views.tsx]
 edges:
   - id: board.modal

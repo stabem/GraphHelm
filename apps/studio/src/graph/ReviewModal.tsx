@@ -25,14 +25,18 @@ function useFrame(runtime: Runtime, url: string | null, executionId: string): { 
   useEffect(() => {
     if (url === null) { setState({ src: null, error: null, note: null }); return; }
     let alive = true;
-    let made: string | null = null;
     runtime.frameAt(url, executionId).then((blob) => {
       if (!alive) return;
-      made = blob === null ? null : URL.createObjectURL(blob);
-      setState({ src: made, error: null, note: blob === null ? "That run kept no frame for this screen." : null });
+      setState({ src: blob === null ? null : URL.createObjectURL(blob), error: null, note: blob === null ? "That run kept no frame for this screen." : null });
     }, (error: unknown) => alive && setState({ src: null, note: null, error: actionErrorDetails("Frame could not be read", error, "The Runtime could not return this frame.", "Change screens or reopen the review to retry.") }));
-    return () => { alive = false; if (made !== null) URL.revokeObjectURL(made); };
+    return () => { alive = false; };
   }, [runtime, url, executionId]);
+  // The shown object URL is released only once it is no longer shown (a new frame replaced it, or the
+  // modal closed). Releasing it when the next fetch starts left a broken image on screen meanwhile.
+  useEffect(() => {
+    const shown = state.src;
+    return () => { if (shown !== null) URL.revokeObjectURL(shown); };
+  }, [state.src]);
   return { ...state, dismissError: () => setState((current) => ({ ...current, error: null })) };
 }
 

@@ -191,8 +191,12 @@ up)
     git init -q --bare "$dir/reviewed.git"
   fi
   reviewed_args=(); [ -z "${reviewed_remote:-}" ] || reviewed_args=(--reviewed-remote "$reviewed_remote")
+  # The Studio override (exported above) is for the copied studio2 flows, which name 5184. The
+  # Runtime runs only the fixture's own flows, each with its own `base` (runtime-health reads the
+  # Runtime itself): on the Studio's base its /health answers 403 session_required, so every Run
+  # from the Proof view ended failed. The Runtime therefore starts without the override.
   GRAPHHELM_SECRET_STUDIO_TOKEN="$(head -1 "$rt/events.token")" \
-  nohup "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
+  nohup env -u GRAPHHELM_FIXTURE_BASE "$bin" serve --events "$rt/events" --bind "127.0.0.1:$rport" --project "$dir/project" \
     --keyring "$rt/keyring" --key-id studio --gateway-manifest "$rt/routes.json" --slot-root "$dir/slots" ${reviewed_args[@]+"${reviewed_args[@]}"} \
     > "$dir/.graphhelm/serve.out" 2> "$dir/.graphhelm/serve.err" &
   echo "serve $! $(cat /proc/$!/winpid 2> /dev/null)" >> "$pids"
@@ -245,6 +249,12 @@ FLOW
   # in a second edge, a line after a wait, on two paths: a run long enough to be polled while it
   # plays, shaped like keel-card-accepted (#1912).
   case "${GRAPHHELM_JOURNEY_FLOW:-}" in studio2-proof-confirm)
+    # #2187: a cli act runs a script file inside the project, never inline code (`node -e`), so
+    # the commands are three small scripts; a draft naming inline code is refused before it runs.
+    mkdir -p "$dir/project/.graphhelm/fixtures/cli"
+    printf "console.log('hello-fixture');\n" > "$dir/project/.graphhelm/fixtures/cli/print.js"
+    printf "setTimeout(() => console.log('waited'), 4000);\n" > "$dir/project/.graphhelm/fixtures/cli/wait.js"
+    printf "console.log(process.version);\n" > "$dir/project/.graphhelm/fixtures/cli/version.js"
     cat > "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" <<'FLOW'
 schema: graphhelm.journey-flow/1
 id: cli-hello
@@ -282,13 +292,13 @@ edges:
     to: waited
     why: A second command that waits keeps the run playing long enough to be watched.
     acts:
-      - {kind: cli, role: exec, name: "node -e setTimeout(()=>console.log('waited'),4000)"}
+      - {kind: cli, role: exec, name: node .graphhelm/fixtures/cli/wait.js}
   - id: start.print
     from: start
     to: printed
     why: Node prints the fixed greeting once the owner confirms the command.
     acts:
-      - {kind: cli, role: exec, name: node -e console.log('hello-fixture')}
+      - {kind: cli, role: exec, name: node .graphhelm/fixtures/cli/print.js}
 paths:
   main: [start.print, printed.wait]
   again: [start.print, printed.wait]
@@ -328,7 +338,7 @@ edges:
     to: printed
     why: Node prints its version when the draft runs.
     acts:
-      - {kind: cli, role: exec, name: node --version}
+      - {kind: cli, role: exec, name: node .graphhelm/fixtures/cli/version.js}
 paths:
   main: [start.print]
 drift: []
@@ -338,6 +348,9 @@ FLOW
     git init -q -b main "$reviewed"
     mkdir -p "$reviewed/.graphhelm/journeys"
     cp "$dir/project/.graphhelm/journeys/cli-hello.journey.yaml" "$reviewed/.graphhelm/journeys/"
+    # #2008: a command's script directory must equal main's too, or the run waits for review.
+    mkdir -p "$reviewed/.graphhelm/fixtures"
+    cp -R "$dir/project/.graphhelm/fixtures/cli" "$reviewed/.graphhelm/fixtures/"
     sed 's#^purpose: .*#purpose: "The fixture draft with one command step, as main reviewed it."#' "$dir/project/.graphhelm/journeys/cli-edited.journey.yaml" > "$reviewed/.graphhelm/journeys/cli-edited.journey.yaml"
     git -C "$reviewed" add -A
     git -C "$reviewed" -c user.email=demo@example.com -c user.name=demo commit -qm 'fixture: reviewed main'
@@ -444,7 +457,9 @@ FLOW
   empty=0
   if [ "${GRAPHHELM_FIXTURE_EMPTY:-}" = 1 ] || [ "${GRAPHHELM_JOURNEY_FLOW:-}" = studio2-no-run ]; then empty=1; fi
   if [ "$empty" = 0 ]; then
-  "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
+  # The seed flow reads the Runtime (its own `base`), not the Studio, which is not started yet:
+  # the Studio override would end this run watch.app_down and leave Proof with no recorded run.
+  env -u GRAPHHELM_FIXTURE_BASE "$bin" --json journey preview runtime-health --force --project "$dir/project"     > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
   for _ in $(seq 1 60); do
     "$bin" --json journey preview runtime-health --read --project "$dir/project"       > "$dir/.graphhelm/observer-preview.out" 2>&1 || true
     grep -q '"state":"running"' "$dir/.graphhelm/observer-preview.out" || break
@@ -587,17 +602,22 @@ const records = [
 if (journey[0] === 'studio2-graph-requests') {
   records.push(['request-empty', 'task.request_recorded', { taskId: 'request-empty', requestId: 'empty', ask: 'Prove a regression test for the fixture run', recordedBy: 'planner' }]);
 }
-// #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen the\n// modal opens on, studio2-open's bad-ticket (screens are listed by id).
+// #1808: the review's Now is the PR head's captured frame (#1839); one for the first screen the
+// modal opens on, the first screen of studio2-open (screens are listed by id).
 if (flowId === 'studio2-graph-review-screen') {
-  // #2085/#2108: the bad-ticket screen itself with its top-left quarter tinted blue, so the modal
-  // compares the same screen before and now and the change is visible. A tiny one stops the seed.
+  // #2085/#2108: the same frame Before shows, so the modal compares one screen before and now.
+  // A tiny one stops the seed. The screen is the first one of studio2-open, read from the flow, so
+  // a screen renamed there cannot leave the review modal without its Now frame again.
+  const opened = fs.readFileSync(`${repoDir}/.graphhelm/journeys/studio2-open.journey.yaml`, 'utf8').replace(/\r\n/g, '\n');
+  const first = /\nscreens:\n  - id: ([A-Za-z0-9][A-Za-z0-9._-]*)\n/.exec(opened);
+  if (first === null) throw new Error('fixture: studio2-open names no first screen');
   const bytes = fs.readFileSync(`${repoDir}/tools/studio-journey-fixture/frames/now.png`);
   if (bytes.toString('latin1', 1, 4) !== 'PNG' || bytes.readUInt32BE(16) < 1280 || bytes.readUInt32BE(20) < 800 || bytes.length < 4096) {
     throw new Error('fixture: frames/now.png is not a real captured frame');
   }
   const png = bytes.toString('base64');
   records.push(['now-frames', 'task.journey_frames', { taskId: 'issue-721-open', pr: 721, headSha: '721abcde', journey: journey[0],
-    result: 'pass', ranAt: at, screens: ['bad-ticket'], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
+    result: 'pass', ranAt: at, screens: [first[1]], lane: 'planner' }, [{ mediaType: 'image/png', base64: png }]]);
 }
 const token = fs.readFileSync(tokenFile, 'utf8').trim();
 (async () => {

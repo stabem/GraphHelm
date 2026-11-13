@@ -72,6 +72,22 @@ class FixturePortTest(unittest.TestCase):
                 after = (journeys / name).read_text(encoding="utf-8")
                 self.assertEqual(after, text, f"{name} must not change in the copy")
 
+    def test_the_runtime_and_its_seed_preview_do_not_play_fixture_flows_on_the_studio_base(self):
+        # The seed flow reads the Runtime (its own `base`). The Studio override is exported long
+        # before the Studio starts, so a seed preview that inherited it ended watch.app_down and the
+        # Proof view had no recorded run to approve. The seed preview must run with it unset.
+        root = pathlib.Path(__file__).resolve().parents[2]
+        fixture = (root / "tools/studio-journey-fixture/fixture.sh").read_text(encoding="utf-8")
+        starts = fixture.index('export GRAPHHELM_FIXTURE_BASE="http://127.0.0.1:$sport"')
+        seed = fixture.index("journey preview runtime-health --force")
+        self.assertLess(starts, seed, "control: the override is exported before the seed preview")
+        line = fixture[fixture.rindex("\n", 0, seed) + 1:fixture.index("\n", seed)]
+        self.assertIn("env -u GRAPHHELM_FIXTURE_BASE", line)
+        # The Runtime runs only the fixture's own flows, each with its own base (runtime-health reads
+        # the Runtime; on the Studio's base its /health answers 403), so it starts without it too.
+        serve = fixture.index('"$bin" serve --events "$rt/events"')
+        self.assertIn("env -u GRAPHHELM_FIXTURE_BASE", fixture[fixture.rindex("\n", 0, serve) + 1:serve])
+
     def test_the_fixture_project_carries_every_file_its_flows_scope(self):
         # #1041: fixture.sh copies the journeys into a disposable project (#585) and the Runtime
         # resolves each screen `scope` path against that project, so without the scoped files

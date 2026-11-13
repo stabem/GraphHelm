@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows alert \"Say why the journey is rejected before rejecting it.\", no status \"Rejected\", listitem \"Read the Runtime health\" saying \"preview, not proof 2/2\", button \"Reject\"",
+      "statement": "shows alert \"Decision could not be recorded\" saying \"Say why the journey is rejected before rejecting it.\", no status \"Rejected\", listitem \"Read the Runtime health\" saying \"preview, not proof 2/2\", button \"Reject\"",
       "statesToObserve": [
         "error"
       ],

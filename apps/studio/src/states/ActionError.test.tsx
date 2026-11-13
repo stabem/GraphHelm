@@ -24,6 +24,17 @@ describe("shared action error (#2445)", () => {
     expect(html).toContain(">Dismiss</button>");
   });
 
+  it("names the alert by its title, so a reader of the page can find it by what failed", () => {
+    const html = renderToStaticMarkup(<ActionError
+      error={{ title: "Decision could not be recorded", code: null, cause: "Say why.", nextStep: "Try again." }}
+      onDismiss={() => undefined}
+    />);
+    const labelled = /role="alert"[^>]*aria-labelledby="([^"]+)"|aria-labelledby="([^"]+)"[^>]*role="alert"/.exec(html);
+    const id = labelled?.[1] ?? labelled?.[2];
+    expect(id).toBeDefined();
+    expect(html).toMatch(new RegExp(`<strong[^>]*id="${id!.replace(/[:]/g, "\\:")}"[^>]*>Decision could not be recorded</strong>`));
+  });
+
   it("says Runtime code is unavailable for a legacy failure without inventing one", () => {
     const html = renderToStaticMarkup(<ActionError
       error={{ title: "Action failed", code: null, cause: "The Runtime refused.", nextStep: "Try the action again." }}

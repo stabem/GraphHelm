@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows dialog \"Review\" saying \"Observe issue graph and work kanban\", img \"bad-ticket before\", group \"Viewport\" saying \"1280 × 800\"",
+      "statement": "shows dialog \"Review\" saying \"Observe issue graph and work kanban\", img \"graph before\", group \"Viewport\" saying \"1280 × 800\"",
       "statesToObserve": [
         "stable"
       ],
@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows img \"bad-ticket before\", img \"bad-ticket now\", combobox \"Review screen\" saying \"bad-ticket\", region \"Review frame\" saying \"Now · PR #721 at 721abcde\"",
+      "statement": "shows img \"graph before\", img \"graph now\", combobox \"Review screen\" saying \"graph\", region \"Review frame\" saying \"Now · PR #721 at 721abcde\"",
       "statesToObserve": [
         "stable"
       ],
@@ -88,7 +88,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows group \"Viewport\" saying \"390 × 844\", img \"bad-ticket before\", no img \"bad-ticket now\"",
+      "statement": "shows group \"Viewport\" saying \"390 × 844\", img \"graph before\", no img \"graph now\"",
       "statesToObserve": [
         "stable"
       ],

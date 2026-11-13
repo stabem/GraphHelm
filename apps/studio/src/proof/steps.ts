@@ -269,7 +269,9 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
     const seen = run?.screens?.[screen];
     const walked = edge === null ? undefined : run?.edges?.[edge.id];
     const playing = run?.state === "running" && run.current === screen;
-    const precondition = commandsOnly && edge === null && index === 0 && run?.state === "ready" && seen?.result === undefined && !held;
+    // #2161: the Runtime now keeps that entry screen as a passed text frame marked `precondition`
+    // (before it recorded no result); either way it is the precondition, never a step that ran.
+    const precondition = commandsOnly && edge === null && index === 0 && run?.state === "ready" && (seen?.result === undefined || seen.precondition === true) && !held;
     const status = precondition ? "precondition" : statusIn(seen, walked, playing);
     const viewports: Record<Viewport, StepStatus> = { web: "not run", mobile: "not run" };
     // A Runtime may serve `viewports: null` while a run is still playing; null is no viewport, never a crash.

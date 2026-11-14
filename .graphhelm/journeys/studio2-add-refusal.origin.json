@@ -1,0 +1,109 @@
+{
+  "actors": [
+    {
+      "actorId": "client",
+      "goal": "The Studio refuses to add a project when the request has no session",
+      "name": "client"
+    }
+  ],
+  "contractId": "studio2-add-refusal.origin",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "no-session.visible",
+      "requiredEvidenceKinds": [
+        "http_acceptance"
+      ],
+      "requiredFact": "request_accepted",
+      "requiredObserverCapability": "http",
+      "statement": "shows status \"403\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "no-session"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "foreign-origin.visible",
+      "requiredEvidenceKinds": [
+        "http_acceptance"
+      ],
+      "requiredFact": "request_accepted",
+      "requiredObserverCapability": "http",
+      "statement": "shows status \"403\", json \"reason=foreign_origin\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "foreign-origin"
+    }
+  ],
+  "riskSignals": [
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "client",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen no-session not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/dev-session.ts"
+        ],
+        "screenId": "no-session",
+        "title": "The add route answers a request that has no session cookie"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/__studio/add"
+        }
+      },
+      "stepId": "no-session"
+    },
+    {
+      "actorId": "client",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen foreign-origin not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/dev-session.ts"
+        ],
+        "screenId": "foreign-origin",
+        "title": "The add route answers a POST that names a foreign Origin"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "POST",
+          "strategy": "label",
+          "value": "/__studio/add"
+        }
+      },
+      "stepId": "foreign-origin"
+    }
+  ],
+  "taskScope": "journey-flow studio2-add-refusal path origin",
+  "title": "The Studio refuses to add a project when the request has no session",
+  "version": 1
+}

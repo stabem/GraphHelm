@@ -1,0 +1,109 @@
+{
+  "actors": [
+    {
+      "actorId": "client",
+      "goal": "The Studio refuses a request with no session or a foreign origin",
+      "name": "client"
+    }
+  ],
+  "contractId": "studio2-auth-refusal.site",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "no-session.visible",
+      "requiredEvidenceKinds": [
+        "http_acceptance"
+      ],
+      "requiredFact": "request_accepted",
+      "requiredObserverCapability": "http",
+      "statement": "shows status \"403\", json \"reason=session_required\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "no-session"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "foreign-site.visible",
+      "requiredEvidenceKinds": [
+        "http_acceptance"
+      ],
+      "requiredFact": "request_accepted",
+      "requiredObserverCapability": "http",
+      "statement": "shows status \"403\", json \"reason=foreign_origin\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "foreign-site"
+    }
+  ],
+  "riskSignals": [
+    "authentication"
+  ],
+  "steps": [
+    {
+      "actorId": "client",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen no-session not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/dev-session.ts"
+        ],
+        "screenId": "no-session",
+        "title": "A protected route answers a request that has no session cookie"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/health"
+        }
+      },
+      "stepId": "no-session"
+    },
+    {
+      "actorId": "client",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen foreign-site not reached"
+      },
+      "screen": {
+        "scopePaths": [
+          "apps/studio/dev-session.ts"
+        ],
+        "screenId": "foreign-site",
+        "title": "The same route answers a request marked cross-site by its fetch metadata"
+      },
+      "semanticAction": {
+        "kind": "submit",
+        "target": {
+          "geometryClaim": false,
+          "role": "GET",
+          "strategy": "label",
+          "value": "/health"
+        }
+      },
+      "stepId": "foreign-site"
+    }
+  ],
+  "taskScope": "journey-flow studio2-auth-refusal path site",
+  "title": "The Studio refuses a request with no session or a foreign origin",
+  "version": 1
+}

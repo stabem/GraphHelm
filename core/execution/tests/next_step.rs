@@ -381,7 +381,215 @@ fn the_exported_table_is_exactly_what_the_function_can_say() {
             ("implement", Some("implement")),
             ("review", Some("blind-review")),
             ("merge", Some("merge")),
+            ("journey-qa", Some("keel-journey-qa")),
             ("done", None),
         ]
     );
+}
+
+// ---- #2940: the journey QA hand-off ----
+
+const QA: &str = "qa-1";
+
+fn qa(sequence: u64, by: &str, flow: &str, verdict: &str) -> TaskEventRecord {
+    record(
+        sequence,
+        "task.journey_qa",
+        by,
+        json!({"flow": flow, "verdict": verdict, "by": by}),
+    )
+}
+
+#[test]
+fn a_flow_handed_to_qa_waits_for_the_qa_not_the_author() {
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        qa(3, LANE, "checkout", "requested"),
+    ]);
+    assert_eq!(next.step, "journey-qa");
+    assert_eq!(next.skill, Some("keel-journey-qa"));
+    assert_eq!(actor(&next), None);
+    assert_eq!(next.because, "journey checkout waits for its QA");
+}
+
+#[test]
+fn a_rejected_flow_sends_the_author_back_naming_the_flow() {
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        qa(3, LANE, "checkout", "requested"),
+        qa(4, QA, "checkout", "reject"),
+    ]);
+    assert_eq!(next.step, "implement");
+    assert_eq!(next.skill, Some("implement"));
+    assert_eq!(actor(&next), Some((LANE, "author")));
+    assert_eq!(next.because, "journey QA rejected checkout");
+}
+
+#[test]
+fn a_passed_flow_restores_the_answer_the_task_had() {
+    let before = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+    ]);
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        qa(5, LANE, "checkout", "requested"),
+        qa(6, QA, "checkout", "pass"),
+    ]);
+    assert_eq!(next, before);
+}
+
+#[test]
+fn a_request_after_a_reject_is_waiting_again_and_the_newest_record_per_flow_decides() {
+    let next = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        qa(3, LANE, "checkout", "requested"),
+        qa(4, QA, "checkout", "reject"),
+        qa(5, LANE, "checkout", "requested"),
+    ]);
+    assert_eq!(next.step, "journey-qa");
+    assert_eq!(next.because, "journey checkout waits for its QA");
+}
+
+#[test]
+fn with_several_flows_a_reject_comes_first_then_the_first_flow_by_id_waits() {
+    let waiting = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        qa(3, LANE, "zeta", "requested"),
+        qa(4, LANE, "alpha", "requested"),
+        qa(5, LANE, "mid", "pass"),
+    ]);
+    assert_eq!(waiting.step, "journey-qa");
+    assert_eq!(waiting.because, "journey alpha waits for its QA");
+    let rejected = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        qa(3, LANE, "alpha", "requested"),
+        qa(4, LANE, "zeta", "requested"),
+        qa(5, QA, "zeta", "reject"),
+        qa(6, QA, "mid", "reject"),
+    ]);
+    assert_eq!(rejected.step, "implement");
+    assert_eq!(rejected.because, "journey QA rejected mid");
+}
+
+#[test]
+fn a_flow_waiting_for_qa_is_named_in_review_too_and_a_block_stays_unmoved_after_a_pass() {
+    let reviewing = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        qa(5, LANE, "checkout", "requested"),
+    ]);
+    assert_eq!(reviewing.step, "journey-qa");
+    let blocked = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        verdict(5, REVIEWER, HEAD, "BLOCK"),
+        qa(6, LANE, "checkout", "requested"),
+        qa(7, QA, "checkout", "pass"),
+    ]);
+    assert_eq!(blocked.because, "BLOCK on head by rev-1");
+}
+
+#[test]
+fn qa_records_never_touch_plan_critic_merge_merged_or_released() {
+    let plan = next_of(&[claimed(1), qa(2, LANE, "checkout", "requested")]);
+    assert_eq!(plan.step, "plan");
+    let critic = next_of(&[
+        claimed(1),
+        planned(2, "design"),
+        qa(3, LANE, "checkout", "requested"),
+    ]);
+    assert_eq!(critic.step, "critic");
+    let merge = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        verdict(5, REVIEWER, HEAD, "APPROVE"),
+        qa(6, LANE, "checkout", "requested"),
+    ]);
+    assert_eq!(merge.step, "merge");
+    let released = record(
+        3,
+        "task.released",
+        LANE,
+        json!({"lane": LANE, "claimSequence": 1, "reason": "handing back"}),
+    );
+    let done = next_of(&[claimed(1), qa(2, LANE, "checkout", "requested"), released]);
+    assert_eq!(done.step, "done");
+    assert_eq!(done.because, "released by lane-a");
+    let merged = record(
+        7,
+        "task.merged",
+        REVIEWER,
+        json!({"pr": 70, "mergeSha": "cccccccc", "closes": [7], "merger": REVIEWER}),
+    );
+    let finished = next_of(&[
+        claimed(1),
+        planned(2, "none"),
+        opened(3, HEAD),
+        assigned(4, HEAD),
+        qa(5, LANE, "checkout", "reject"),
+        verdict(6, REVIEWER, HEAD, "APPROVE"),
+        merged,
+    ]);
+    assert_eq!(finished.step, "done");
+    assert_eq!(finished.because, "merged");
+}
+
+#[test]
+fn the_fold_serves_the_newest_record_per_flow_ordered_by_flow_with_who_and_digest() {
+    let with_digest = record(
+        4,
+        "task.journey_qa",
+        QA,
+        json!({"flow": "alpha", "verdict": "pass", "by": QA, "digest": "sha256:abc123"}),
+    );
+    let tasks = fold_task_events(&[
+        claimed(1),
+        qa(2, LANE, "zeta", "requested"),
+        qa(3, LANE, "alpha", "requested"),
+        with_digest,
+    ]);
+    let served = serde_json::to_value(&tasks[0]).unwrap();
+    assert_eq!(
+        served["journeyQa"],
+        json!([
+            {"flow": "alpha", "verdict": "pass", "by": QA, "digest": "sha256:abc123"},
+            {"flow": "zeta", "verdict": "requested", "by": LANE}
+        ])
+    );
+    let none = serde_json::to_value(&fold_task_events(&[claimed(1)])[0]).unwrap();
+    assert!(none.get("journeyQa").is_none());
+}
+
+#[test]
+fn a_qa_record_naming_another_actor_or_a_bad_word_does_not_parse() {
+    let parse = |document: Value| {
+        let mut base = json!({"schema": "graphhelm-task-event-v1", "taskId": TASK, "revision": 1, "at": "2026-10-07T20:00:00Z"});
+        for (key, value) in document.as_object().unwrap() {
+            base[key] = value.clone();
+        }
+        parse_task_event("task.journey_qa", QA, &base.to_string(), 1, None)
+    };
+    assert!(parse(json!({"flow": "a", "verdict": "pass", "by": QA})).is_some());
+    assert!(parse(json!({"flow": "a", "verdict": "pass", "by": LANE})).is_none());
+    assert!(parse(json!({"flow": "a", "verdict": "approve", "by": QA})).is_none());
+    assert!(parse(json!({"flow": "a/b", "verdict": "pass", "by": QA})).is_none());
+    assert!(parse(json!({"flow": "a", "verdict": "pass", "by": QA, "digest": "x y"})).is_none());
+    assert!(parse(json!({"flow": "a", "verdict": "pass", "by": QA, "note": "free"})).is_none());
 }

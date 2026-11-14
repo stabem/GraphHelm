@@ -273,6 +273,7 @@ pub(crate) fn validate_task_event(
         | "task.pr_opened"
         | "task.journey_frames"
         | "task.critic_verdict" => Some("lane"),
+        "task.journey_qa" => Some("by"),
         "task.review_verdict" | "task.review_activity" => Some("reviewer"),
         "task.merged" => Some("merger"),
         "task.request_recorded" => Some("recordedBy"),
@@ -702,6 +703,22 @@ pub(crate) fn validate_task_event(
                 "pr", "headSha", "journey", "result", "ranAt", "screens", "lane",
             ],
         ),
+        // #2940: a flow handed to journey QA, or the QA's answer; `by` is the recorder. Who may
+        // record which verdict is judged against the slice in `validate_journey_qa`.
+        "task.journey_qa" => (
+            document["flow"]
+                .as_str()
+                .is_some_and(|id| OpaqueId::parse(id).is_ok())
+                && graphhelm_execution::tasks::JourneyQaVerdict::parse(
+                    document["verdict"].as_str().unwrap_or_default(),
+                )
+                .is_some()
+                && document
+                    .get("digest")
+                    .is_none_or(|digest| graphhelm_execution::tasks::qa_digest(digest).is_some())
+                && is_actor("by"),
+            &["flow", "verdict", "digest", "by"],
+        ),
         _ => (false, &[]),
     };
     let known = document.as_object().is_some_and(|object| {
@@ -730,6 +747,9 @@ pub(crate) fn validate_task_event(
         }
         if kind == "task.journey_frames" {
             validate_journey_frames(&document, actor_id, history, evidence)?;
+        }
+        if kind == "task.journey_qa" {
+            validate_journey_qa(&document, actor_id, history, evidence)?;
         }
         if kind == "task.request_recorded" {
             validate_request_supersede(&document, actor_id, history, evidence)?;
@@ -1028,6 +1048,48 @@ fn validate_journey_frames(
         ));
     }
     Ok(())
+}
+
+/// #2940: `requested` is the slice author's hand-off; `pass` and `reject` are another session's
+/// answer, never the author's own (the author never judges its own flow). The slice is the one the
+/// fold will put the record on (`journey_qa_slice`), so what is judged here is what is folded.
+fn validate_journey_qa(
+    document: &serde_json::Value,
+    actor_id: &str,
+    history: &[graphhelm_protocols::EventEnvelope],
+    evidence: Option<(
+        &graphhelm_events::LocalEventRepository,
+        &graphhelm_protocols::RepositoryScope,
+        &signal::SignalKeyring,
+    )>,
+) -> Result<(), Failure> {
+    let view = task_view(
+        history,
+        evidence,
+        "journey QA",
+        "/signal/description/taskId",
+    )?;
+    let task_id = document["taskId"].as_str().unwrap_or_default();
+    let Some(at) =
+        graphhelm_execution::tasks::journey_qa_slice(view.tasks.iter().enumerate(), task_id)
+    else {
+        return Err(super::signal_invalid(
+            "journey QA needs an open slice of this task",
+            "/signal/description/taskId",
+        ));
+    };
+    let is_author = view.tasks[at].lane.as_deref() == Some(actor_id);
+    match document["verdict"].as_str() {
+        Some("requested") if !is_author => Err(super::signal_invalid(
+            "only the slice's author records that a flow was handed to journey QA",
+            "/signal/description/verdict",
+        )),
+        Some("pass" | "reject") if is_author => Err(super::signal_invalid(
+            "the slice's author never judges its own flow; the journey QA records pass or reject",
+            "/signal/description/verdict",
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// #1792: a link names a request some earlier `task.request_recorded` recorded, read from the

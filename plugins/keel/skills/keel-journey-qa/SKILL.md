@@ -226,9 +226,9 @@ Confirm the sabotage is gone (point 6). Leave nothing running.
 
 | After this | Next skill | Who acts |
 |---|---|---|
-| Flow passes all seven points, delegation or grant held (APPROVE) | journey-prove (replay, then deliver) | journey QA agent records the approval; the prover runs it |
-| Flow passes all seven points, no delegation or grant (QA-PASS) | wait for the owner's approval; then journey-prove | owner approves; the author reports the task waiting |
-| Flow fails a point | author revises the flow, then keel-journey-qa again | author, then journey QA |
+| Flow passes all seven points, delegation or grant held (APPROVE) | journey-prove (replay, then deliver) | journey QA agent records the approval, then `task_record.py --lane <you> journey_qa --issue <N> --flow <id> --qa-verdict pass`; the prover runs it |
+| Flow passes all seven points, no delegation or grant (QA-PASS) | wait for the owner's approval; then journey-prove | QA records `journey_qa ... --qa-verdict pass`; owner approves; the author reports the task waiting |
+| Flow fails a point | author revises the flow, then keel-journey-qa again | QA records `journey_qa ... --qa-verdict reject`; author, then journey QA |
 
 ## If in doubt
 

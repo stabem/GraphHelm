@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://p50.dev/schemas/task-event.schema.json",
   "title": "Task Event",
-  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, task.request_recorded, task.request_linked, task.journey_frames, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
+  "description": "One graphhelm-task-event-v1 document: the description of a task.* signal a lane records at each delivery step (journey-first spec section 7, #386). The signal type names the kind (task.claimed, task.planned, task.released, task.heartbeat, task.pr_opened, task.review_assigned, task.review_verdict, task.review_activity, task.merged, task.closed, task.critic_verdict, task.queued, task.request_recorded, task.request_linked, task.journey_frames, task.journey_qa, and the owner's task.lane_retired); the identity fields (lane, reviewer, merger) must equal the actor that records it, which the Runtime enforces. The Studio folds the per-task graph from these records alone.",
   "oneOf": [
     {
       "title": "task.review_activity",
@@ -393,6 +393,23 @@
         "ranAt": {"$ref": "#/$defs/at"},
         "screens": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$"}},
         "lane": {"$ref": "#/$defs/actor"}
+      }
+    },
+    {
+      "title": "task.journey_qa",
+      "description": "#2940: a draft flow handed to journey QA (requested, recorded by the slice's author) or the QA's answer (pass or reject, never recorded by the slice's author). It moves no step; the Runtime's next answer reads it. digest is the flow digest the record speaks about: stored and served, never verified by the Runtime. by is the actor that records it.",
+      "type": "object",
+      "required": ["schema", "taskId", "revision", "at", "flow", "verdict", "by"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": {"const": "graphhelm-task-event-v1"},
+        "taskId": {"$ref": "#/$defs/taskId"},
+        "revision": {"$ref": "#/$defs/positive"},
+        "at": {"$ref": "#/$defs/at"},
+        "flow": {"$ref": "#/$defs/taskId"},
+        "verdict": {"enum": ["requested", "pass", "reject"]},
+        "digest": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$"},
+        "by": {"$ref": "#/$defs/actor"}
       }
     }
   ],

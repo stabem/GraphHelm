@@ -228,7 +228,7 @@ LOOPBACK = ("127.0.0.1", "localhost", "::1")
 # #1851: the Runtime's `agentKind` / `agentModel` rule on task.claimed (task-event.schema.json).
 AGENT_KIND = re.compile(r"[a-z][a-z0-9-]{0,31}", re.ASCII)
 AGENT_MODEL = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}", re.ASCII)
-KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked", "journey_frames")
+KINDS = ("claimed", "planned", "released", "heartbeat", "pr_opened", "review_assigned", "review_verdict", "review_activity", "merged", "closed", "critic_verdict", "queued", "lane_retired", "request_recorded", "request_linked", "journey_frames", "journey_qa")
 CLI_KINDS = KINDS + ("proof_recorded", "proofs")
 # #1469: `queued` records the open issues carrying this label that no open PR closes, oldest
 # first, at most QUEUED_MAX (the schema's maxItems), as the Lanes Backlog reads them.
@@ -236,7 +236,7 @@ WAVE_LABEL = "current-wave"
 QUEUED_MAX = 25
 # The default revision is the step's position in the delivery. `planned` (#480) came later and is
 # the claim's companion, so the older steps keep their numbers (and their records' keys).
-REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1, "request_recorded": 1, "request_linked": 1, "journey_frames": 3}
+REVISIONS = {"claimed": 1, "planned": 1, "released": 2, "heartbeat": 1, "pr_opened": 2, "review_assigned": 3, "review_verdict": 4, "review_activity": 1, "merged": 5, "closed": 6, "critic_verdict": 1, "queued": 1, "lane_retired": 1, "request_recorded": 1, "request_linked": 1, "journey_frames": 3, "journey_qa": 1}
 CLASSES = ("docs", "code", "user_visible", "invariant")
 PROOFS = ("none", "tests", "journey", "both")
 # #477: what the naming standard asks (DELIVERY.md "Naming") and what the Runtime accepts.
@@ -564,6 +564,10 @@ def parse(argv):
     p.add_argument("--summary", help="claimed/pr_opened: one sentence; default: the body's 'Summary:' line, read with gh."
                    " planned: the plan in one line (at most 300 characters), required")
     p.add_argument("--journey", help="journey_frames (#1839): the journey id run at the PR head")
+    p.add_argument("--flow", help="journey_qa (#2940): the draft flow's journey id")
+    p.add_argument("--qa-verdict", choices=("requested", "pass", "reject"),
+                   help="journey_qa: requested (the author handed the flow to QA), or the QA's pass or reject")
+    p.add_argument("--digest", help="journey_qa: the flow digest this record speaks about (stored, never verified)")
     p.add_argument("--proof-file", help="proof_recorded: JSON benchmark declaration file")
     p.add_argument("--run", help="proofs: optional benchmark run id")
     p.add_argument("--after", default=None, help="proofs: opaque snapshot cursor")
@@ -770,6 +774,13 @@ def document(args, now):
         # #1839: filled per chunk of at most four screens by journey_frames_records.
         need(args, "pr", "head", "journey")
         doc.update(pr=args.pr, headSha=args.head, journey=args.journey, lane=args.lane)
+    elif args.kind == "journey_qa":
+        # #2940: the Runtime admits `requested` from the slice's author only, `pass`/`reject` from
+        # anyone else; this side only shapes the record, and `by` is the lane that signs it.
+        need(args, "flow", "qa-verdict")
+        doc.update(flow=args.flow, verdict=args.qa_verdict, by=args.lane)
+        if args.digest:
+            doc["digest"] = args.digest
     elif args.kind == "request_linked":
         need(args, "request-id")
         doc.update(requestId=args.request_id, issue=args.issue, linkedBy=args.lane)

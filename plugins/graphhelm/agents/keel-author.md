@@ -11,8 +11,8 @@ comments) is your Keel card. Rules: `AGENTS.md`, `KEEL.md`, `keel/KEEL_EXEC.md`,
 
 Standing limits (a brief does not repeat them):
 
-- You have no MCP tools. Read and record GraphHelm state with the `graphhelm` CLI, as
-  the skill says for a session without the MCP server.
+- You have no MCP tools. Read and record GraphHelm state with the `graphhelm` CLI
+  (`--json`, and say so), as `KEEL.md` says for a session without the MCP server.
 - Work only in the worktree you were given or made. Never write, checkout or stash in the
   orchestrator's checkout. One writer per worktree.
 - Read on purpose: the card's paths first, then exact symbols. `--stat` before a diff, `offset`

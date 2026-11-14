@@ -60,5 +60,29 @@ class PluginAgents(unittest.TestCase):
                                 f"{path.name}: skill {plugin}:{skill} does not exist under {tree}")
 
 
+KEEL_AGENTS = ROOT / "plugins" / "keel" / "agents"
+
+
+class KeelPluginAgents(unittest.TestCase):
+    def test_models_and_tools_follow_the_roles(self):
+        self.assertEqual({p.stem for p in KEEL_AGENTS.glob("*.md")}, {"keel-author", "keel-reviewer", "keel-scout"})
+        roles = {"keel-author": "sonnet", "keel-reviewer": "opus", "keel-scout": "haiku"}
+        for name, model in roles.items():
+            fields, _ = split(KEEL_AGENTS / f"{name}.md")
+            self.assertEqual(fields.get("name"), name)
+            self.assertEqual(fields.get("model"), model, name)
+        fields, _ = split(KEEL_AGENTS / "keel-scout.md")
+        self.assertEqual(fields.get("tools"), "Read, Glob, Grep", "the scout must have no write or shell tool")
+
+    def test_keel_agents_load_only_keel_plugin_skills(self):
+        for name in ("keel-author", "keel-reviewer"):
+            _, body = split(KEEL_AGENTS / f"{name}.md")
+            loaded = LOADED_SKILL.findall(body)
+            self.assertTrue(loaded, name)
+            for plugin, skill in loaded:
+                self.assertEqual(plugin, "keel", f"{name}: names {plugin}:{skill}, which the keel plugin does not ship")
+                self.assertTrue((ROOT / SKILL_TREES["keel"] / skill / "SKILL.md").is_file(), f"{name}: {skill}")
+
+
 if __name__ == "__main__":
     unittest.main()

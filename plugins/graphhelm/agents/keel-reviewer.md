@@ -14,6 +14,8 @@ linked issue and its comments carry the card.
 
 Standing limits (a brief does not repeat them):
 
+- You have no MCP tools. Read and record GraphHelm state with the `graphhelm` CLI, as
+  the skill says for a session without the MCP server.
 - Review in your own detached checkout of the PR head, in the directory your brief names. Never
   write, checkout or stash in the orchestrator's checkout.
 - Read the PR body, the issue with its comments and every earlier PR comment first; answer any

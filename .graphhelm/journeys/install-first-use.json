@@ -1,0 +1,93 @@
+{
+  "actors": [
+    {
+      "actorId": "new-user",
+      "goal": "Install GraphHelm from INSTALL.md and run the first commands",
+      "name": "new-user"
+    }
+  ],
+  "contractId": "install-first-use",
+  "outOfScope": [],
+  "preconditions": [],
+  "promises": [
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "empty-project.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", no stdout \"init=ok\"",
+      "statesToObserve": [
+        "stable"
+      ],
+      "stepId": "empty-project"
+    },
+    {
+      "maxEvidenceAgeSeconds": 604800,
+      "promiseId": "first-use.visible",
+      "requiredEvidenceKinds": [
+        "process_exit"
+      ],
+      "requiredFact": "command_completed",
+      "requiredObserverCapability": "process",
+      "statement": "shows exit \"0\", stdout \"version=ok\", stdout \"init=ok\", stdout \"runtime=ok\", stdout \"validate=ok\"",
+      "statesToObserve": [
+        "success"
+      ],
+      "stepId": "first-use"
+    }
+  ],
+  "riskSignals": [],
+  "steps": [
+    {
+      "actorId": "new-user",
+      "expectedStates": [
+        "stable"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen empty-project not reached"
+      },
+      "semanticAction": {
+        "kind": "navigate",
+        "target": {
+          "geometryClaim": false,
+          "strategy": "label",
+          "value": "/"
+        }
+      },
+      "stepId": "empty-project"
+    },
+    {
+      "actorId": "new-user",
+      "expectedStates": [
+        "success"
+      ],
+      "failureContract": {
+        "prohibitedSideEffects": [],
+        "recoveryAction": null,
+        "safeStop": "stop replay",
+        "timeoutSeconds": 30,
+        "visibleError": "screen first-use not reached"
+      },
+      "semanticAction": {
+        "kind": "activate",
+        "target": {
+          "geometryClaim": false,
+          "role": "exec",
+          "strategy": "label",
+          "value": "python .graphhelm/fixtures/install-first-use/run.py"
+        }
+      },
+      "stepId": "first-use"
+    }
+  ],
+  "taskScope": "journey-flow install-first-use path main",
+  "title": "Install GraphHelm from INSTALL.md and run the first commands",
+  "version": 1
+}

@@ -94,15 +94,15 @@ describe("review modal states how the Now layer is drawn", () => {
   it("reads the blend of Changes and the opacity of Overlay from the drawn image, and follows the slider", async () => {
     const host = await open();
     await press(host, "Changes");
-    expect(facts(host)).toContain("Now layer drawn with blend difference, opacity 1");
+    expect(facts(host)).toContain("Showing only what changed");
     await press(host, "Overlay");
-    expect(facts(host)).toContain("Now layer drawn with blend normal, opacity 0.5");
+    expect(facts(host)).toContain("Now shown at 50% over Before");
     const slider = host.querySelector<HTMLInputElement>('input[type="range"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "25");
       slider.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
-    expect(facts(host)).toContain("Now layer drawn with blend normal, opacity 0.25");
+    expect(facts(host)).toContain("Now shown at 25% over Before");
   });
 
   it("draws the statement out of sight: one clipped pixel, no layout of its own", async () => {

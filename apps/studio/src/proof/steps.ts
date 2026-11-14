@@ -91,6 +91,26 @@ export interface Step {
   cli: boolean;
   /** #1912: what the edge's commands printed in this run, each distinct output once. */
   outputs: CliOutput[];
+  /** #2945: what an `http` step's reply was, as the run kept it; `null` for any step whose screen
+   * recorded no status (a browser or command step, or a Runtime that does not send it yet). */
+  http: HttpReply | null;
+}
+
+/** #2945: the most reply text the Studio draws, whatever the Runtime sent. */
+export const HTTP_BODY_DRAW_LIMIT = 4096;
+const HTTP_TYPE_DRAW_LIMIT = 80;
+
+/** #2945: an `http` screen's frame as the Studio draws it. Text only; every field is bounded. */
+export interface HttpReply {
+  /** The request line: the act's method and path, or `GET <url>` for the start screen's own GET. */
+  request: string;
+  status: number;
+  contentType: string | null;
+  body: string;
+  /** The Runtime cut the body to its last bytes, or the Studio cut it again to draw it. */
+  truncated: boolean;
+  /** First eight hex digits of the masked body's sha256, when the Runtime sent a digest. */
+  sha: string | null;
 }
 
 export const VIEWPORTS: readonly Viewport[] = ["web", "mobile"];
@@ -313,8 +333,29 @@ export function journeySteps(flow: JourneyFlow, run: JourneyRun | null): Step[] 
       viewportReasons,
       cli: (edge?.acts ?? []).some((act) => act.kind === "cli"),
       outputs: edge === null ? [] : distinctOutputs(run?.outputs?.[edge.id]),
+      http: httpReply(seen, edge, url),
     };
   });
+}
+
+/** #2945: the `http` frame a screen kept, or `null` when it kept none (no status: a browser or
+ * command screen, or a Runtime older than the status field). Reply text is data: it is bounded here
+ * and drawn as text, never as markup. */
+function httpReply(seen: NonNullable<JourneyRun["screens"]>[string] | undefined, edge: JourneyEdge | null, url: string): HttpReply | null {
+  if (seen === undefined || seen.frame !== true || seen.kind !== "text" || seen.precondition === true) return null;
+  if (typeof seen.status !== "number" || !Number.isInteger(seen.status)) return null;
+  const act = edge?.acts?.find((each) => each.kind === "http");
+  const request = act !== undefined && typeof act.name === "string" ? `${act.role ?? "GET"} ${act.name}` : `GET ${url}`;
+  const body = typeof seen.body === "string" ? seen.body : "";
+  const cut = body.length > HTTP_BODY_DRAW_LIMIT;
+  return {
+    request,
+    status: seen.status,
+    contentType: typeof seen.contentType === "string" && seen.contentType !== "" ? seen.contentType.slice(0, HTTP_TYPE_DRAW_LIMIT) : null,
+    body: cut ? body.slice(-HTTP_BODY_DRAW_LIMIT) : body,
+    truncated: seen.bodyTruncated === true || cut,
+    sha: typeof seen.bodySha256 === "string" && /^[0-9a-f]{8,}$/i.test(seen.bodySha256) ? seen.bodySha256.slice(0, 8) : null,
+  };
 }
 
 /** #1914: a run walks an edge once per path, and the Runtime keeps the command again each time (its
@@ -332,11 +373,13 @@ export function distinctOutputs(list: CliOutput[] | undefined): CliOutput[] {
 
 /** #1914: what a journey drives. Terminal when every act is a command, Browser when none is, Both
  * when it mixes the two; a flow with no act reads as Browser, the Studio's default. */
-export type JourneyKind = "terminal" | "browser" | "both";
+export type JourneyKind = "terminal" | "browser" | "both" | "http";
 
 export function journeyKind(flow: JourneyFlow): JourneyKind {
   const acts = (flow.edges ?? []).flatMap((edge) => edge.acts ?? []);
   const cli = acts.filter((act) => act.kind === "cli").length;
+  // #2945: a journey whose every act is an HTTP request drives no screen.
+  if (acts.length > 0 && acts.every((act) => act.kind === "http")) return "http";
   if (cli === 0) return "browser";
   return cli === acts.length ? "terminal" : "both";
 }

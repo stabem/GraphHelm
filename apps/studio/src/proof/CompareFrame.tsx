@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import type { JourneyPastRun, Runtime } from "../runtime/client";
 import { changedSentence, diffPixels, type CompareMode, type Pixels } from "./compare";
-import { becauseOf, checkMarks, compareSentence, failsOnlyOn, isProposed, readableName, reasonSentence, type Step } from "./steps";
+import { becauseOf, checkMarks, compareSentence, failsOnlyOn, isProposed, readableName, reasonSentence, HTTP_BODY_DRAW_LIMIT, type HttpReply, type Step } from "./steps";
 import { yamlLines } from "./yaml-view";
 
 const MODES: { mode: CompareMode; label: string }[] = [
@@ -125,7 +125,7 @@ export function CompareFrame({ runtime, flowId, step, steps, now: webNow, mobile
 
   return (
     <div className="compare">
-      {step.cli ? <Terminal step={step} /> : (
+      {step.http !== null ? <HttpReplyPanel step={step} http={step.http} /> : step.cli ? <Terminal step={step} /> : (
       <section aria-label="Compare frame" className="compare-frame">
         <div className="compare-bar">
           <span aria-hidden="true" className="chrome-dots"><span /><span /><span /></span>
@@ -287,6 +287,27 @@ function Terminal({ step }: { step: Step }) {
             )}
           </div>
         ))}
+    </section>
+  );
+}
+
+/** #2945: an `http` step has no screen. In place of the frame it shows the request, the status in the
+ * same pill a command's exit code uses, the content type, and the reply text the run recorded
+ * (masked and cut by the Runtime). Text nodes only, never innerHTML. */
+function HttpReplyPanel({ step, http }: { step: Step; http: HttpReply }) {
+  return (
+    <section aria-label="HTTP reply" className="compare-frame terminal">
+      <div className="compare-bar">
+        <span aria-hidden="true" className="chrome-dots"><span /><span /><span /></span>
+        <span className="mono">http · step {step.n}</span>
+      </div>
+      <div className="terminal-run">
+        <pre aria-label="Request" className="terminal-cmd">{http.request}</pre>
+        <span role="status" aria-label={`Status ${http.status}`} className={`terminal-exit ${step.status === "passed" ? "pass" : "fail"}`}>{http.status}</span>
+        {http.contentType !== null && <span aria-label="Content type" className="mono">{http.contentType}</span>}
+        <pre aria-label="Reply text" className="terminal-out">{http.body || "(empty)"}</pre>
+        <span className="section-label">reply text as recorded, secrets masked{http.truncated ? `; cut to its last ${HTTP_BODY_DRAW_LIMIT} characters` : ""}{http.sha !== null ? ` · sha256 ${http.sha}…` : ""}</span>
+      </div>
     </section>
   );
 }

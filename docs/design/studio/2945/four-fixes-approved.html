@@ -1,0 +1,164 @@
+<title>Studio four screen fixes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column of four numbered proposals; each is a before/after pair drawn with the Studio's own tokens. Single dark look on purpose: it is the Studio's. */
+:root {
+  color-scheme: dark;
+  --bg: #0a0a0b; --rail: #0f0f11; --card: #1e1e22; --raised: #2a2a30; --edge: #2a2a30; --edge-strong: #34343c;
+  --text: #f5f5f6; --muted: #a2a2ad; --faint: #8a8a96; --live: #3ddc97; --accent: #ff8a3d;
+  --fail: #ff7373; --fail-edge: #5a2a2a; --fail-bg: #1a1012; --term: #0d0d0f; --term-text: #e6e4dc; --paper: #f1efe8; --paper-text: #6b6a64;
+  --sans: "Space Grotesk", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+}
+body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); padding-block: var(--s5);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; }
+h2 { font-size: 16px; font-weight: 600; margin: 0; text-wrap: balance; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 65ch; }
+.mono { font-family: var(--mono); }
+section { display: flex; flex-direction: column; gap: var(--s3); }
+.num { font: 11px var(--mono); color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--s4); }
+.side { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.tag { font: 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.tag.after { color: var(--live); }
+.stage { background: var(--rail); border: 1px solid var(--edge); border-radius: 12px; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
+.note { color: var(--muted); font-size: 13px; max-width: 60ch; }
+.note b { color: var(--text); font-weight: 500; }
+
+/* Studio pieces */
+.row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.run { background: var(--accent); color: #1a1005; font-weight: 600; font-size: 12px; padding: 5px 12px; border-radius: 6px; }
+.verdict { font: 12px var(--mono); color: var(--muted); }
+.verdict.pass { color: var(--live); }
+.jtitle { font-weight: 600; font-size: 15px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--edge-strong); color: var(--muted); }
+.tiles { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.tile { width: 132px; border: 1px solid var(--edge-strong); border-radius: 8px; overflow: hidden; background: var(--card); }
+.tile .shot { height: 62px; display: grid; place-items: center; font: 11px var(--mono); }
+.shot.none { background: var(--paper); color: var(--paper-text); }
+.shot.http { background: var(--term); color: var(--term-text); align-content: center; gap: 2px; }
+.shot.http .code { font-size: 18px; font-weight: 500; }
+.shot.http .ct { color: var(--faint); font-size: 10px; }
+.tile .cap { padding: 6px 8px; font: 11px var(--mono); color: var(--muted); display: flex; flex-direction: column; gap: 2px; }
+.tile .cap b { color: var(--text); font-weight: 500; }
+.ok { color: var(--live); }
+.panel { border: 1px solid var(--edge-strong); border-radius: 8px; background: var(--card); overflow: hidden; }
+.panel .bar { padding: 6px 10px; border-bottom: 1px solid var(--edge-strong); font: 11px var(--mono); color: var(--muted); display: flex; gap: var(--s2); flex-wrap: wrap; }
+.panel .body { padding: var(--s3); font-size: 13px; color: var(--muted); }
+.term { margin: 0; background: var(--term); color: var(--term-text); font: 12px/1.6 var(--mono); padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .dim { color: var(--faint); }
+.pill { font: 12px var(--mono); padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; color: #7ed69a; }
+
+.alert { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s3); border: 1px solid var(--fail-edge); border-left: 3px solid #ff6262; border-radius: 8px; background: var(--fail-bg); min-width: 0; }
+.alert .head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2); }
+.alert .t { color: var(--fail); font-weight: 600; }
+.alert .code { font: 11px var(--mono); color: var(--muted); }
+.alert .next { color: var(--muted); }
+.ghost { font: 11px var(--mono); border: 1px solid var(--edge-strong); border-radius: 6px; padding: 3px 8px; color: var(--muted); }
+.ghost.broken { width: 34px; overflow-wrap: anywhere; line-height: 1.3; }
+.ghost.fixed { white-space: nowrap; flex: none; }
+.narrow { max-width: 250px; }
+
+.reader { background: var(--term); border-radius: 8px; padding: 10px 12px; font: 12px/1.6 var(--mono); color: var(--term-text); }
+.reader .who { color: var(--faint); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--edge); vertical-align: top; }
+th { color: var(--faint); font: 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; font-weight: 400; }
+.scroll { overflow-x: auto; }
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:8px">
+    <h1>Studio: four screen fixes, before and after</h1>
+    <p class="lede">Each one keeps the layout, colours and spacing the Studio already has. Nothing here is built yet. Sample data is illustrative.</p>
+  </header>
+
+  <section>
+    <span class="num">Fix A · handoff item 2</span>
+    <h2>Proof shows what an HTTP journey saw</h2>
+    <p class="note">Today a journey that only makes HTTP requests passes, but every step says <b>no frame</b>. The Studio already receives the status and the reply text; it just does not draw them.</p>
+    <div class="pair">
+      <div class="side"><span class="tag">Before · today</span>
+        <div class="stage">
+          <div class="row"><span class="jtitle">Studio auth refusal</span><span class="badge">▭ Browser</span></div>
+          <div class="row"><span class="run">Run again</span><span class="verdict pass">Passed · just now</span></div>
+          <div class="tiles">
+            <div class="tile"><div class="shot none">no frame</div><div class="cap"><span>1 DOES <span class="ok">passed</span></span><b>Opens /health</b></div></div>
+            <div class="tile"><div class="shot none">no frame</div><div class="cap"><span>2 DOES <span class="ok">passed</span></span><b>http "/health"</b></div></div>
+          </div>
+          <div class="panel"><div class="bar"><span>/health</span><span>Web 1280 ✓</span><span>Mobile 390</span></div>
+            <div class="body">This run kept no mobile frame of this step.<br>No frame captured for step 1 in this run.</div></div>
+        </div>
+      </div>
+      <div class="side"><span class="tag after">After · proposed</span>
+        <div class="stage">
+          <div class="row"><span class="jtitle">Studio auth refusal</span><span class="badge">⇄ HTTP</span></div>
+          <div class="row"><span class="run">Run again</span><span class="verdict pass">Passed · just now</span></div>
+          <div class="tiles">
+            <div class="tile"><div class="shot http"><span class="code">403</span><span class="ct">application/json</span></div><div class="cap"><span>1 DOES <span class="ok">passed</span></span><b>Opens /health</b></div></div>
+            <div class="tile"><div class="shot http"><span class="code">403</span><span class="ct">application/json</span></div><div class="cap"><span>2 DOES <span class="ok">passed</span></span><b>http "/health"</b></div></div>
+          </div>
+          <div class="panel"><div class="bar"><span>GET /health</span><span class="pill">403</span><span>application/json</span></div>
+            <pre class="term">{"ok":false,"reason":"session_required"}
+<span class="dim">reply text as recorded, secrets masked · sha256 9878f029…</span></pre></div>
+        </div>
+      </div>
+    </div>
+    <p class="note">The tile and the panel reuse the approved terminal look (dark panel, mono text, the pill that today shows a command's exit code). New: the badge word <b>HTTP</b>, the status in the tile, and no Web / Mobile tabs for a journey that has no screen. A reply cut for size says so in the grey line.</p>
+  </section>
+
+  <section>
+    <span class="num">Fix B · handoff item 4</span>
+    <h2>The refusal box drops "Code not supplied" and keeps Dismiss on one line</h2>
+    <div class="pair">
+      <div class="side"><span class="tag">Before · today, in a narrow column</span>
+        <div class="stage"><div class="alert narrow">
+          <div class="head"><span class="t">Run could not start</span><span class="ghost broken">Dismiss</span></div>
+          <span class="code">Code not supplied</span>
+          <p>The Runtime refused to start the journey run.</p>
+          <p class="next">Fix the cause and try Run again.</p>
+        </div></div>
+      </div>
+      <div class="side"><span class="tag after">After · proposed</span>
+        <div class="stage"><div class="alert narrow">
+          <div class="head"><span class="t">Run could not start</span><span class="ghost fixed">Dismiss</span></div>
+          <p>The Runtime refused to start the journey run.</p>
+          <p class="next">Fix the cause and try Run again.</p>
+        </div></div>
+      </div>
+    </div>
+    <p class="note">When the Runtime gives a code, the code line stays exactly as today. When it gives none, the line is simply absent, as in the mock approved for #2445. The button never wraps; the title wraps instead.</p>
+  </section>
+
+  <section>
+    <span class="num">Fix C · issue 2903</span>
+    <h2>Proof stops flashing "Not run yet" before it knows</h2>
+    <div class="pair">
+      <div class="side"><span class="tag">Before · today, first half second after opening a journey</span>
+        <div class="stage"><div class="row"><span class="run">Run</span><span class="verdict">Not run yet</span></div>
+          <p class="note">Then it jumps to "Passed · 2 min ago". The first text was a guess.</p></div>
+      </div>
+      <div class="side"><span class="tag after">After · proposed</span>
+        <div class="stage"><div class="row"><span class="run">Run</span><span class="verdict">&nbsp;</span></div>
+          <p class="note">Nothing is written until the Runtime answers. Then "Not run yet" or the real result. The row keeps its height, so nothing moves.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="num">Fix D · handoff item 8</span>
+    <h2>The review compare speaks plain words to a screen reader</h2>
+    <p class="note">This text is not visible on screen. A screen reader reads it, and one approved journey checks it to prove the browser really applied the blend.</p>
+    <div class="scroll"><table>
+      <tr><th>Compare mode</th><th>Before · read aloud today</th><th>After · proposed</th></tr>
+      <tr><td>Changes</td><td class="mono">Now layer drawn with blend difference, opacity 1</td><td class="mono">Showing only what changed</td></tr>
+      <tr><td>Overlay at 50%</td><td class="mono">Now layer drawn with blend normal, opacity 0.5</td><td class="mono">Now shown at 50% over Before</td></tr>
+      <tr><td>Overlay at 25%</td><td class="mono">Now layer drawn with blend normal, opacity 0.25</td><td class="mono">Now shown at 25% over Before</td></tr>
+    </table></div>
+    <p class="note">The words are still computed from what the browser applied, not from what was asked. Cost: the journey <b>studio2-graph-review-screen</b> checks the old words, so its flow changes and needs your approval again.</p>
+  </section>
+</main>

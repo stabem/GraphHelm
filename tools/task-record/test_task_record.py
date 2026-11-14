@@ -308,6 +308,32 @@ class TaskRecordTest(unittest.TestCase):
         self.assertEqual(base64.b64decode(bodies[1]["attachments"][0]["base64"]),
                          task_record.PNG_MAGIC + b"frame-4")
 
+    def test_journey_qa_records_the_flow_the_verdict_the_digest_and_who_signs(self):
+        # #2940: the hand-off and the QA's answer are one kind; the lane signs as `by`.
+        code, out = self.run_step("--lane", "lane-a", "journey_qa", "--issue", "9",
+                                  "--flow", "checkout", "--qa-verdict", "requested", "--digest", "sha256:ab12")
+        self.assertEqual(code, 0, out)
+        body = FakeRuntime.seen[-1][1]["signal"]
+        self.assertEqual(body["type"], "task.journey_qa")
+        described = json.loads(body["description"])
+        self.assertEqual((described["flow"], described["verdict"], described["digest"], described["by"],
+                          described["taskId"]), ("checkout", "requested", "sha256:ab12", "lane-a", "issue-9"))
+        code, out = self.run_step("--lane", "lane-a", "journey_qa", "--issue", "9",
+                                  "--flow", "checkout", "--qa-verdict", "reject")
+        self.assertEqual(code, 0, out)
+        described = json.loads(FakeRuntime.seen[-1][1]["signal"]["description"])
+        self.assertNotIn("digest", described)
+        self.assertEqual((described["verdict"], described["by"]), ("reject", "lane-a"))
+
+    def test_journey_qa_needs_a_flow_and_a_verdict_and_refuses_an_unknown_word(self):
+        with self.assertRaises(SystemExit):
+            self.run_step("--lane", "lane-a", "journey_qa", "--issue", "9", "--qa-verdict", "pass")
+        with self.assertRaises(SystemExit):
+            self.run_step("--lane", "lane-a", "journey_qa", "--issue", "9", "--flow", "checkout")
+        with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+            self.run_step("--lane", "lane-a", "journey_qa", "--issue", "9", "--flow", "checkout",
+                          "--qa-verdict", "approve")
+
     def test_release_records_the_exact_claim_sequence_and_reason(self):
         code, out = self.run_step("--lane", "lane-a", "released", "--issue", "86",
                                   "--claim-sequence", "12", "--release-reason", "Work moved elsewhere")

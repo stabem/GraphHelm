@@ -203,8 +203,8 @@ a secret from a file, never the value.
 | After this | Next skill | Who acts |
 |---|---|---|
 | Every approved flow replays green at the reviewed revision | blind-review (the review reads this proof) | prover, then assigned reviewer |
-| Draft flow you wrote or edited, not yet checked by a QA | keel-journey-qa (one blind subagent per flow id, brief in (b2)) | author starts it, journey QA runs it |
-| QA answered REJECT | implement on the same branch, then a new blind keel-journey-qa | author |
+| Draft flow you wrote or edited, not yet checked by a QA | keel-journey-qa (one blind subagent per flow id, brief in (b2)) | author first records the hand-off (`task_record.py --lane <you> journey_qa --issue <N> --flow <id> --qa-verdict requested`) and starts it, journey QA runs it |
+| QA answered REJECT (the QA recorded `reject`; `next` names the flow) | implement on the same branch, then record `requested` again and run a new blind keel-journey-qa | author |
 | QA answered QA-PASS, flow still a draft | wait for the owner's approval (Studio Proof or `journey approve`) | owner |
 | Flow not yet approved by the owner or approver | wait for approval; do not replay as proof | owner or approver |
 | A step fails on replay | implement on the same branch, then journey-prove again | author |

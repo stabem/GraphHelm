@@ -3347,3 +3347,104 @@ fn review_activity_admission_scales_at_fixed_task_and_lane_count() {
         );
     }
 }
+
+/// #2940: the package's two `task.journey_qa` fixtures are admitted from the slice's author
+/// (`requested`) and refused from it (`reject`), and a document that breaks the kind's shape is
+/// refused. Observed through the CLI door that shares its admission with HTTP and MCP. Cost: one
+/// temp store and a handful of CLI calls.
+#[test]
+fn a_journey_qa_record_is_admitted_from_the_author_only_for_requested_and_must_keep_its_shape() {
+    let scratch = tempfile::tempdir().unwrap();
+    let events = start(scratch.path());
+    let claim = as_actor(package_fixture("claimed"));
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "qa-claim",
+        "task.claimed",
+        ACTOR,
+        &claim,
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    let qa = |name: &str| {
+        let mut document = package_fixture(name);
+        document["taskId"] = claim["taskId"].clone();
+        document["by"] = json!(ACTOR);
+        document
+    };
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "qa-requested",
+        "task.journey_qa",
+        ACTOR,
+        &qa("journey-qa-requested"),
+    );
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    // The author never judges its own flow: the reject fixture, signed by the author, is refused.
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "qa-own-reject",
+        "task.journey_qa",
+        ACTOR,
+        &qa("journey-qa-reject"),
+    );
+    assert_eq!(reply["ok"], json!(false), "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/verdict",
+        "{reply}"
+    );
+    for (id, field, value) in [
+        ("qa-bad-word", "verdict", json!("approve")),
+        ("qa-bad-flow", "flow", json!("a/b")),
+        ("qa-bad-digest", "digest", json!("not a digest")),
+        ("qa-free-text", "note", json!("looks fine")),
+    ] {
+        let mut document = qa("journey-qa-requested");
+        document[field] = value;
+        let reply = signal(
+            scratch.path(),
+            &events,
+            id,
+            "task.journey_qa",
+            ACTOR,
+            &document,
+        );
+        assert_eq!(reply["ok"], json!(false), "{id}: {reply}");
+        assert_eq!(
+            reply["diagnostics"][0]["path"], "/signal/description",
+            "{id}: {reply}"
+        );
+    }
+    let mut other = qa("journey-qa-requested");
+    other["by"] = json!("someone-else");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "qa-other-by",
+        "task.journey_qa",
+        ACTOR,
+        &other,
+    );
+    assert_eq!(
+        reply["diagnostics"][0]["code"], "GHCLI038_ACTOR_MISMATCH",
+        "{reply}"
+    );
+    // A record for a task nobody holds open is refused, not folded into nothing.
+    let mut unknown = qa("journey-qa-requested");
+    unknown["taskId"] = json!("issue-99999");
+    let reply = signal(
+        scratch.path(),
+        &events,
+        "qa-no-slice",
+        "task.journey_qa",
+        ACTOR,
+        &unknown,
+    );
+    assert_eq!(reply["ok"], json!(false), "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"], "/signal/description/taskId",
+        "{reply}"
+    );
+}

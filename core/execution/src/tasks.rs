@@ -669,6 +669,10 @@ pub enum TaskEventKind {
     /// the issue's journeys view reads it as Now.
     #[serde(rename = "task.journey_frames")]
     JourneyFrames,
+    /// #2940: a draft flow handed to journey QA, or the QA's answer. It moves no step; it answers
+    /// the task's `next` (`journeyQa` on the slice).
+    #[serde(rename = "task.journey_qa")]
+    JourneyQa,
 }
 
 impl TaskEventKind {
@@ -692,6 +696,7 @@ impl TaskEventKind {
             "task.request_recorded" => Self::RequestRecorded,
             "task.request_linked" => Self::RequestLinked,
             "task.journey_frames" => Self::JourneyFrames,
+            "task.journey_qa" => Self::JourneyQa,
             _ => return None,
         })
     }
@@ -716,6 +721,7 @@ impl TaskEventKind {
             Self::RequestRecorded => "task.request_recorded",
             Self::RequestLinked => "task.request_linked",
             Self::JourneyFrames => "task.journey_frames",
+            Self::JourneyQa => "task.journey_qa",
         }
     }
 }
@@ -927,6 +933,9 @@ pub struct TaskEventRecord {
     /// #1839: the run a `task.journey_frames` states, with its sealed frames.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journey_frames: Option<JourneyFrames>,
+    /// #2940: what a `task.journey_qa` states.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_qa: Option<JourneyQaRecord>,
 }
 
 /// #1851: `^[a-z][a-z0-9-]{0,31}$`, the `agentKind` a lane reports on `task.claimed`.
@@ -998,8 +1007,83 @@ pub struct JourneyFrames {
     pub evidence: Vec<String>,
 }
 
+/// #2940: where a draft flow stands with journey QA.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JourneyQaVerdict {
+    /// The author handed the flow to a QA session; no answer yet.
+    Requested,
+    /// The QA approved the flow.
+    Pass,
+    /// The QA rejected the flow; the author fixes it.
+    Reject,
+}
+
+impl JourneyQaVerdict {
+    #[must_use]
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "requested" => Some(Self::Requested),
+            "pass" => Some(Self::Pass),
+            "reject" => Some(Self::Reject),
+            _ => None,
+        }
+    }
+}
+
+/// #2940: one `task.journey_qa` as the document states it. `digest` is the flow digest the record
+/// speaks about; it is stored and served, never checked here (the Runtime reads no flow files).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneyQaRecord {
+    pub flow: String,
+    pub verdict: JourneyQaVerdict,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// #2940: the newest record about one flow of a slice, as `TaskState.journeyQa` serves it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneyQa {
+    pub flow: String,
+    pub verdict: JourneyQaVerdict,
+    /// The actor that recorded it.
+    pub by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// #2940: the slice a `task.journey_qa` of `task_id` belongs to: the newest open one (greatest
+/// `last_sequence`, the later candidate on a tie). The fold and the Runtime's admission both ask
+/// this, so a record is judged against the slice that will hold it. `candidates` pairs each slice
+/// with any index the caller wants back.
+pub fn journey_qa_slice<'a, I>(candidates: I, task_id: &str) -> Option<usize>
+where
+    I: IntoIterator<Item = (usize, &'a TaskState)>,
+{
+    candidates
+        .into_iter()
+        .filter(|(_, state)| state.task_id == task_id && state.is_open())
+        .max_by_key(|(_, state)| state.last_sequence)
+        .map(|(index, _)| index)
+}
+
 /// The most attachments one signal carries (#313); a run with more screens records several.
 pub const MAX_JOURNEY_FRAMES: usize = 4;
+
+/// #2940: a flow digest, `^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$`; the Runtime only bounds it.
+pub fn qa_digest(value: &serde_json::Value) -> Option<String> {
+    let s = value.as_str()?;
+    let bytes = s.as_bytes();
+    (!bytes.is_empty()
+        && bytes.len() <= 128
+        && bytes[0].is_ascii_alphanumeric()
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-')))
+    .then(|| s.to_owned())
+}
 
 /// A screen id as the preview store names its frame file: `[A-Za-z0-9._-]`, 1 to 128, no leading dot.
 fn screen_id(value: &serde_json::Value) -> Option<String> {
@@ -1098,6 +1182,7 @@ impl TaskEventRecord {
             request_execution_id: None,
             ask: None,
             journey_frames: None,
+            journey_qa: None,
         }
     }
 }
@@ -1549,6 +1634,26 @@ pub fn parse_task_event(
                 ran_at,
                 screens,
                 evidence: Vec::new(),
+            });
+        }
+        TaskEventKind::JourneyQa => {
+            if !document.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "schema" | "taskId" | "revision" | "at" | "flow" | "verdict" | "digest" | "by"
+                )
+            }) || !is_actor("by")
+            {
+                return None;
+            }
+            let digest = match document.get("digest") {
+                None => None,
+                Some(value) => Some(qa_digest(value)?),
+            };
+            record.journey_qa = Some(JourneyQaRecord {
+                flow: task_identity(field("flow"))?,
+                verdict: JourneyQaVerdict::parse(field("verdict").as_str()?)?,
+                digest,
             });
         }
         TaskEventKind::LaneRetired => {
@@ -2093,6 +2198,9 @@ pub struct TaskState {
     /// model. Omitted while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
+    /// #2940: the newest `task.journey_qa` per flow, ordered by flow id. Omitted while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub journey_qa: Vec<JourneyQa>,
 }
 
 impl TaskState {
@@ -2249,6 +2357,7 @@ fn new_state(event: &TaskEventRecord) -> TaskState {
         claimed_at: None,
         lease_seconds: None,
         paths: Vec::new(),
+        journey_qa: Vec::new(),
     }
 }
 
@@ -2705,6 +2814,40 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             }
             continue;
         }
+        if event.kind == TaskEventKind::JourneyQa {
+            // #2940: it moves no step and touches no clock; it lands on the task's newest open
+            // slice, the one admission judged it against.
+            let target = journey_qa_slice(
+                slices
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, slice)| !slice.ended)
+                    .map(|(index, slice)| (index, &slice.state)),
+                &event.task_id,
+            );
+            if let (Some(index), Some(qa)) = (target, &event.journey_qa) {
+                let slice = &mut slices[index];
+                let entry = JourneyQa {
+                    flow: qa.flow.clone(),
+                    verdict: qa.verdict,
+                    by: event.actor_id.clone(),
+                    digest: qa.digest.clone(),
+                };
+                match slice
+                    .state
+                    .journey_qa
+                    .binary_search_by(|known| known.flow.as_str().cmp(&entry.flow))
+                {
+                    Ok(at) => slice.state.journey_qa[at] = entry,
+                    Err(at) => slice.state.journey_qa.insert(at, entry),
+                }
+                routes.push(Route {
+                    sequence: event.sequence,
+                    slice: slice.id,
+                });
+            }
+            continue;
+        }
         if event.kind == TaskEventKind::Heartbeat {
             let claim = slices.iter_mut().rev().find(|s| {
                 s.state.task_id == event.task_id
@@ -3142,6 +3285,7 @@ pub fn fold_task_events_with_routes(records: &[TaskEventRecord]) -> TaskFold {
             | TaskEventKind::RequestRecorded
             | TaskEventKind::RequestLinked
             | TaskEventKind::JourneyFrames
+            | TaskEventKind::JourneyQa
             | TaskEventKind::ReviewActivity => {
                 unreachable!("handled above")
             }

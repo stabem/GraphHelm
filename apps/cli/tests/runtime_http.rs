@@ -8141,3 +8141,107 @@ fn a_detached_drive_that_fails_records_it_for_status_and_briefing() {
     let briefing = get_json(&format!("{status_url}/briefing"), Some(&token));
     assert!(briefing.to_string().contains("drive_failed"), "{briefing}");
 }
+
+/// #2940: the journey QA hand-off moves what the `tasks` reply says comes next. Observer: the real
+/// `serve` binary over HTTP, the records written and read the way an agent does. Failure list:
+/// (a) a request waits for the QA (`journey-qa`, no actor), (b) a reject sends the author back
+/// naming the flow, (c) a new request waits again, (d) a pass restores the answer the slice had,
+/// (e) a request from anyone but the slice's author is refused, (f) a pass or reject from the
+/// slice's author is refused, and a refusal appends nothing.
+#[test]
+fn a_journey_qa_hand_off_moves_next_and_only_the_right_actor_may_record_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = dir.path().join("events");
+    let extra = throwaway_keyring(dir.path());
+    let run = "journey-qa";
+    {
+        let store = graphhelm_events::LocalEventRepository::open(
+            &events,
+            std::sync::Arc::new(SeedClock),
+            std::sync::Arc::new(SeedIds(std::sync::atomic::AtomicU64::new(0))),
+        )
+        .unwrap();
+        seed_stream(&store, run, 1, 1);
+    }
+    let (_server, base, token) = serve_with(&events, &extra);
+    let (lane, qa) = ("lane-a", "lane-b");
+    let opened = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+        "revision": 2, "at": "2026-10-13T12:00:00Z", "pr": 90, "headSha": "aaaaaaa",
+        "journeys": [], "lane": lane, "repo": "stabem/GraphHelm"});
+    for (kind, id, document) in [
+        ("task.claimed", "claim-9", claim_document(lane, 9)),
+        ("task.pr_opened", "pr-9", opened),
+    ] {
+        let (status, reply, _) = task_record(&base, &token, run, lane, kind, id, &document);
+        assert_eq!(status, 200, "{id}: {reply}");
+    }
+    let next = || {
+        let tasks = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
+        assert_eq!(tasks["data"]["rejected"], 0, "{tasks}");
+        tasks["data"]["tasks"][0]["next"].clone()
+    };
+    let qa_record = |id: &str, by: &str, verdict: &str| {
+        let document = serde_json::json!({"schema": "graphhelm-task-event-v1", "taskId": "issue-9",
+            "revision": 1, "at": "2026-10-13T12:00:00Z", "flow": "checkout",
+            "verdict": verdict, "digest": "sha256:0123abcd", "by": by});
+        task_record(&base, &token, run, by, "task.journey_qa", id, &document)
+    };
+    let head = || {
+        get_json(
+            &format!("{base}/v1/executions/{run}/events?after=0&limit=1000"),
+            Some(&token),
+        )["data"]["head"]
+            .clone()
+    };
+    let baseline = next();
+    assert_eq!(baseline["step"], "review", "{baseline}");
+
+    let before = head();
+    for (id, by, verdict) in [
+        ("q-stranger-requests", qa, "requested"),
+        ("q-author-passes", lane, "pass"),
+        ("q-author-rejects", lane, "reject"),
+    ] {
+        let (status, refused, _) = qa_record(id, by, verdict);
+        assert_ne!(status, 200, "{id} must be refused: {refused}");
+        assert_eq!(
+            refused["diagnostics"][0]["code"], "GHCLI003_SIGNAL_INVALID",
+            "{id}: {refused}"
+        );
+        assert_eq!(
+            refused["diagnostics"][0]["path"], "/signal/description/verdict",
+            "{id}: {refused}"
+        );
+    }
+    assert_eq!(head(), before, "a refused record appends nothing");
+
+    let (status, reply, _) = qa_record("q-1", lane, "requested");
+    assert_eq!(status, 200, "{reply}");
+    let waiting = next();
+    assert_eq!(waiting["step"], "journey-qa", "{waiting}");
+    assert_eq!(waiting["skill"], "keel-journey-qa", "{waiting}");
+    assert_eq!(waiting["actor"], Value::Null, "{waiting}");
+    assert_eq!(waiting["because"], "journey checkout waits for its QA");
+
+    let (status, reply, _) = qa_record("q-2", qa, "reject");
+    assert_eq!(status, 200, "{reply}");
+    let rejected = next();
+    assert_eq!(rejected["step"], "implement", "{rejected}");
+    assert_eq!(rejected["actor"]["id"], lane, "{rejected}");
+    assert_eq!(rejected["because"], "journey QA rejected checkout");
+
+    let (status, reply, _) = qa_record("q-3", lane, "requested");
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(next()["step"], "journey-qa");
+
+    let (status, reply, _) = qa_record("q-4", qa, "pass");
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(next(), baseline, "a pass restores the answer the slice had");
+
+    let tasks = get_json(&format!("{base}/v1/executions/{run}/tasks"), Some(&token));
+    assert_eq!(
+        tasks["data"]["tasks"][0]["journeyQa"],
+        serde_json::json!([{"flow": "checkout", "verdict": "pass", "by": qa, "digest": "sha256:0123abcd"}]),
+        "{tasks}"
+    );
+}

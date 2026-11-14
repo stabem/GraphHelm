@@ -7,7 +7,7 @@
 //! that no unblocker resolves a block, so those cannot be derived from records. `because` is a
 //! fixed phrase plus at most one name, never a path, a URL or text copied from a record.
 
-use crate::tasks::{TaskState, TaskStep};
+use crate::tasks::{JourneyQaVerdict, TaskState, TaskStep};
 use serde::Serialize;
 
 /// Who acts on the next step, and in what role.
@@ -37,11 +37,12 @@ const CRITIC: Pair = ("critic", None);
 const IMPLEMENT: Pair = ("implement", Some("implement"));
 const REVIEW: Pair = ("review", Some("blind-review"));
 const MERGE: Pair = ("merge", Some("merge"));
+const JOURNEY_QA: Pair = ("journey-qa", Some("keel-journey-qa"));
 const DONE: Pair = ("done", None);
 
 /// Every `(step, skill)` pair [`next_step`] can emit, so a test can check each skill exists and
 /// agrees with the guide's State table.
-pub const NEXT_TABLE: &[Pair] = &[PLAN, CRITIC, IMPLEMENT, REVIEW, MERGE, DONE];
+pub const NEXT_TABLE: &[Pair] = &[PLAN, CRITIC, IMPLEMENT, REVIEW, MERGE, JOURNEY_QA, DONE];
 
 fn answer((step, skill): Pair, actor: Option<NextActor>, because: String) -> NextStep {
     NextStep {
@@ -78,6 +79,26 @@ pub fn next_step(task: &TaskState) -> NextStep {
         && let Some(who) = &task.released_by
     {
         return answer(DONE, None, format!("released by {who}"));
+    }
+    // #2940: while the work is being written or reviewed, a flow handed to journey QA comes first:
+    // a reject sends the author back, a request waits for the QA (a blind session, never the
+    // author). `journey_qa` is ordered by flow id, so the first match is stable.
+    if matches!(task.step, TaskStep::Implement | TaskStep::Review) {
+        let newest = |verdict| task.journey_qa.iter().find(|qa| qa.verdict == verdict);
+        if let Some(qa) = newest(JourneyQaVerdict::Reject) {
+            return answer(
+                IMPLEMENT,
+                author(task),
+                format!("journey QA rejected {}", qa.flow),
+            );
+        }
+        if let Some(qa) = newest(JourneyQaVerdict::Requested) {
+            return answer(
+                JOURNEY_QA,
+                None,
+                format!("journey {} waits for its QA", qa.flow),
+            );
+        }
     }
     match task.step {
         TaskStep::Merged => answer(DONE, None, "merged".to_owned()),

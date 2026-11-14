@@ -65,7 +65,7 @@ stateDiagram-v2
 
 Read the diagram as the flow: each arrow is a transition between two `next` answers, and its label is the record that causes it. State ids match the `step` names above, except `cleanup` and `diagnose`, which `next` does not answer yet; the conformance test in `apps/cli/tests/skill_transitions.rs` checks the step skills' transition tables against this diagram and the declared detours below.
 
-Who acts at each state (the author never reviews or merges their own work). `plan`, `critic`, `implement`, `review`, `merge` and `done` are what `next` answers today; the conformance test checks each against the skill `next` names. The skills live in the plugin and extension folders:
+Who acts at each state (the author never reviews or merges their own work). `plan`, `critic`, `implement`, `review`, `merge`, `journey-qa` and `done` are what `next` answers today; the conformance test checks each against the skill `next` names. The skills live in the plugin and extension folders:
 
 | State | Acts | Skill |
 |---|---|---|
@@ -74,6 +74,7 @@ Who acts at each state (the author never reviews or merges their own work). `pla
 | `implement` | the author writes and pushes the change | `implement` |
 | `review` | one blind reviewer on the pinned head | `blind-review` |
 | `merge` | the approving reviewer merges the pinned head | `merge` |
+| `journey-qa` | one blind QA subagent checks the draft flow the author handed over (never the author) | `keel-journey-qa` |
 | `cleanup` | the merger removes the PR's worktrees and local branch | `merge` |
 | `diagnose` | the owner decides why the task is stuck | none; owner decides |
 | `done` | the task is finished or was released | none; stop and report |
@@ -87,7 +88,7 @@ Declared detours: skill-to-skill rows of the step skills' transition tables that
 | `implement` | `journey-prove` | the proof kind is journey or both |
 | `journey-prove` | `blind-review` | every approved flow replays green |
 | `journey-prove` | `implement` | a step fails on replay, or the QA rejected a draft flow |
-| `journey-prove` | `keel-journey-qa` | a draft flow the author wrote or edited goes to one blind QA subagent |
+| `journey-prove` | `keel-journey-qa` | a draft flow the author wrote or edited goes to one blind QA subagent; the author records `journey_qa --qa-verdict requested`, and `next` answers `journey-qa` until the QA records `pass` or `reject` (a `reject` sends the author back to `implement` naming the flow) |
 | `merge` | `blind-review` | the head moved after approval |
 
 A blocked task names its unblocker (`cause`, `unblocker`, `where`, from the owner heartbeat). The unblocker's step becomes the next step, so a BLOCK on a PR sends the author back to `implement` on the same branch with the named defect, and a stall that only the owner can clear goes to `diagnose`.

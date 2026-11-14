@@ -32,7 +32,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows dialog \"Review\" saying \"Observe issue graph and work kanban\", img \"graph before\", group \"Viewport\" saying \"1280 × 800\"",
+      "statement": "shows dialog \"Review\" saying \"/v1/journey-flows/studio2-open/screens/graph/frame\", img \"graph before\", group \"Viewport\" saying \"1280 × 800\"",
       "statesToObserve": [
         "stable"
       ],
@@ -46,7 +46,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows img \"graph before\", img \"graph now\", combobox \"Review screen\" saying \"graph\", region \"Review frame\" saying \"Now · PR #721 at 721abcde\"",
+      "statement": "shows img \"graph before\", img \"graph now\", combobox \"Review screen\" saying \"graph\", dialog \"Review\" saying \"Observe issue graph and work kanban\", region \"Review frame\" saying \"Now · PR #721 at 721abcde\"",
       "statesToObserve": [
         "stable"
       ],

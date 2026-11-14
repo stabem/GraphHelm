@@ -193,7 +193,8 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
               {(shown === "overlay" || shown === "changes") && before.src !== null && now.src !== null && (
                 <figure style={{ position: "relative" }}>
                   <figcaption>{shown === "overlay" ? `Now over Before at ${opacity}%` : "Changes: Now against Before (unchanged pixels are black)"}</figcaption>
-                  <img src={before.src} alt={`${screen ?? "screen"} before`} />
+                  {/* #2952: a block image has no inline baseline gap, so Now, placed at the figure's bottom, covers exactly Before's box. */}
+                  <img src={before.src} alt={`${screen ?? "screen"} before`} style={{ display: "block" }} />
                   <img ref={nowLayer} src={now.src} alt={`${screen ?? "screen"} now`}
                     style={{ position: "absolute", left: 0, bottom: 0, opacity: shown === "overlay" ? opacity / 100 : 1, mixBlendMode: shown === "changes" ? "difference" : "normal" }} />
                   {/* Read by screen readers and by journey checks; clipped to one pixel, so nothing is drawn. */}

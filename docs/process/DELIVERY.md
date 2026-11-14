@@ -227,6 +227,7 @@ review-start-to-merge intervals. Record unavailable timestamps as unobserved.
   runs the long builds and tests when a subagent reviews, is
   [`keel/KEEL_REVIEW.md`](../../keel/KEEL_REVIEW.md).
 - Load probes, and whether a reviewer may create load, follow [LANES.md](LANES.md) §3.
+- An orchestrator spawns the plugin's `keel-author`, `keel-reviewer` and `keel-journey-qa` agent types instead of a general-purpose agent: a general-purpose subagent started at about 87 thousand tokens, a tool-restricted one at about 31 thousand.
 - The review's first line names the reviewer and the head sha it read:
   `Session: <ListAgents name [ref]> · Head: <sha8>`, with `(blind subagent)` after the session
   name when a subagent reviews.

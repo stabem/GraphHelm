@@ -98,6 +98,19 @@ and listed as `to build` until its check exists.
 | `keel.audit.sha` | Proof | An audit, review or live run names the commit it observed; a run during which that commit changed is not evidence. | review | review |
 | `keel.flow.self_report` | Proof | A delivery-flow step that should have run on its own and did not (workaround, stale record, uncaught check, failed tool) gets its own issue at once, after a search for a duplicate; see `KEEL_EXEC.md`. | review | review |
 
+## Model roles
+
+The strongest model decides, the middle one builds, the strongest checks and the cheapest reads.
+
+- **Read wide: the scout.** A read or search over many files goes to a read-only agent on the
+  cheapest model that returns paths and line numbers; the builder opens only those lines.
+- **Build: the author.** The author writes the change inside the card's paths.
+- **Check: the blind reviewer**, on the strongest model, who did not write the change.
+- **Advisor.** When the session has an advisor configured, the builder consults it at three
+  moments: before the plan is fixed, when the same error comes back a second time, and before
+  reporting the work done. With no advisor configured, this rule asks nothing. The owner turns an
+  advisor on; Keel never writes the setting.
+
 ## Talking to GraphHelm
 
 - **State goes through the GraphHelm MCP tools.** Read the run with `status`, `briefing`, `tasks`,

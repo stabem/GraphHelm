@@ -36,7 +36,7 @@ export function ActionError({ error, onDismiss, onRetry }: {
         <strong id={titleId} className="action-error-title">{error.title}</strong>
         {onDismiss !== undefined && <button type="button" className="b ghost action-error-dismiss" onClick={onDismiss}>Dismiss</button>}
       </div>
-      <span className="mono action-error-code">{error.code ?? "Code not supplied"}</span>
+      {error.code !== null && <span className="mono action-error-code">{error.code}</span>}
       <p className="action-error-cause">{error.cause}</p>
       <p className="action-error-next">{error.nextStep}{error.command !== undefined && <> <code>{error.command}</code></>}</p>
       {onRetry !== undefined && <button type="button" className="b ghost action-error-retry" onClick={onRetry}>Retry</button>}

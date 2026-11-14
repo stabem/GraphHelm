@@ -45,13 +45,20 @@ describe("shared action error (#2445)", () => {
     expect(html).toContain(">Retry</button>");
   });
 
-  it("says Runtime code is unavailable for a legacy failure without inventing one", () => {
+  it("renders no code line for a legacy failure, and the code line as before when there is one (#2946)", () => {
     const html = renderToStaticMarkup(<ActionError
       error={{ title: "Action failed", code: null, cause: "The Runtime refused.", nextStep: "Try the action again." }}
       onDismiss={() => undefined}
     />);
 
-    expect(html).toContain("Code not supplied");
+    // Owner-approved text removal (#2946): the "Code not supplied" line is gone, not reworded.
+    expect(html).not.toContain("Code not supplied");
+    expect(html).not.toContain("action-error-code");
     expect(html).not.toContain("preview.");
+
+    const withCode = renderToStaticMarkup(<ActionError
+      error={{ title: "Action failed", code: "RT042_X", cause: "The Runtime refused.", nextStep: "Try the action again." }}
+    />);
+    expect(withCode).toContain('<span class="mono action-error-code">RT042_X</span>');
   });
 });

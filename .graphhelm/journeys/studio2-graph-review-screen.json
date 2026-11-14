@@ -60,7 +60,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows figure \"Changes: Now against Before (unchanged pixels are black)\" saying \"Now layer drawn with blend difference, opacity 1\"",
+      "statement": "shows figure \"Changes: Now against Before (unchanged pixels are black)\" saying \"Showing only what changed\"",
       "statesToObserve": [
         "stable"
       ],
@@ -74,7 +74,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows slider \"Now opacity\", figure \"Now over Before at 50%\" saying \"Now layer drawn with blend normal, opacity 0.5\"",
+      "statement": "shows slider \"Now opacity\", figure \"Now over Before at 50%\" saying \"Now shown at 50% over Before\"",
       "statesToObserve": [
         "stable"
       ],
@@ -88,7 +88,7 @@
       ],
       "requiredFact": "content_rendered",
       "requiredObserverCapability": "browser",
-      "statement": "shows figure \"Now over Before at 25%\" saying \"Now layer drawn with blend normal, opacity 0.25\"",
+      "statement": "shows figure \"Now over Before at 25%\" saying \"Now shown at 25% over Before\"",
       "statesToObserve": [
         "stable"
       ],

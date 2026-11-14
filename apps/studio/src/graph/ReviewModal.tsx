@@ -40,6 +40,13 @@ function useFrame(runtime: Runtime, url: string | null, executionId: string): { 
   return { ...state, dismissError: () => setState((current) => ({ ...current, error: null })) };
 }
 
+/** Plain words for what the browser applied to the Now layer (read from its computed style, never from state). */
+function describeNowLayer(blend: string, opacity: string): string {
+  if (blend === "difference") return "Showing only what changed";
+  if (blend === "normal") return `Now shown at ${Math.round(Number(opacity) * 100)}% over Before`;
+  return `Now layer drawn with blend ${blend}, opacity ${opacity}`;
+}
+
 /** The screens to pick from: Before's in its order, then any only Now kept. */
 function screensOf(journey: IssueJourney | null): string[] {
   const names = (journey?.before?.screens ?? []).map((row) => row.screen);
@@ -75,7 +82,7 @@ export function ReviewModal({ runtime, executionId, task, onClose }: Props) {
     const facts = nowFacts.current;
     if (layer === null || facts === null) return;
     const applied = getComputedStyle(layer);
-    facts.textContent = `Now layer drawn with blend ${applied.mixBlendMode}, opacity ${applied.opacity}`;
+    facts.textContent = describeNowLayer(applied.mixBlendMode, applied.opacity);
   });
 
   useEffect(() => {

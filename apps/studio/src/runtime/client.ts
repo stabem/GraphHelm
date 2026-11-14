@@ -200,11 +200,16 @@ export interface JourneyLastRun {
 /** #1777: what one viewport of a run recorded. */
 export interface JourneyViewportRun {
   result?: StepResult;
-  screens?: Record<string, { frame: boolean; kind?: "text"; precondition?: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  screens?: Record<string, { frame: boolean; kind?: "text"; precondition?: boolean; width?: number; height?: number; result?: StepResult; reason?: string } & HttpFrameFields>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
 }
 
 export type StepResult = "pass" | "fail" | "drift";
+
+/** #2945: what an `http` screen's text frame carries beside `kind: "text"`: the reply's status and
+ * content type, its body masked and cut by the Runtime, and the sha256 of the masked body. Every
+ * field is optional: a Runtime that does not send them draws the step as it did before. */
+export interface HttpFrameFields { status?: number; contentType?: string; body?: string; bodyTruncated?: boolean; bodySha256?: string }
 
 export interface CliConfirm { argv: string[]; confirmed: boolean; digest: string }
 
@@ -231,7 +236,7 @@ export interface JourneyRun {
   current?: string;
   result?: StepResult;
   reason?: string;
-  screens?: Record<string, { frame: boolean; kind?: "text"; precondition?: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  screens?: Record<string, { frame: boolean; kind?: "text"; precondition?: boolean; width?: number; height?: number; result?: StepResult; reason?: string } & HttpFrameFields>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
   /** #1777: the viewports this run plays, in order, and what each recorded. The top-level
    * `screens`/`edges` are the first one's frames with the worst result at any viewport. */
@@ -258,7 +263,7 @@ export interface JourneyPastRun {
   reason?: string;
   kind?: "replay" | "preview";
   digest?: string;
-  screens?: Record<string, { frame?: boolean; kind?: "text"; precondition?: boolean; width?: number; height?: number; result?: StepResult; reason?: string }>;
+  screens?: Record<string, { frame?: boolean; kind?: "text"; precondition?: boolean; width?: number; height?: number; result?: StepResult; reason?: string } & HttpFrameFields>;
   edges?: Record<string, { result?: StepResult | "skipped" | null; reason?: string }>;
   /** #2442: what the Runtime keeps of a past run's mobile pass and console, when it sends them
    * (the history route is asked for them in #2442; an older Runtime sends neither). */

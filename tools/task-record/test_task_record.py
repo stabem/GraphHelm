@@ -1567,6 +1567,15 @@ class ReviewActivityCaller(unittest.TestCase):
         self.assertEqual(resumed["activity"], "resumed")
         self.assertNotIn("reason", resumed)
 
+    def test_started_activity_is_recorded_without_reason_and_refuses_one(self):
+        base = ["--lane", "reviewer", "--execution", "gh-team", "review_activity", "--issue", "1745", "--pr", "17", "--head", HEAD_A,
+                "--revision", "1", "--review-context-sequence", "41", "--activity", "started", "--no-github"]
+        started = task_record.document(task_record.parse(base), "2026-01-01T00:00:00Z")
+        self.assertEqual((started["activity"], started["reviewer"], started["reviewContextSequence"]), ("started", "reviewer", 41))
+        self.assertNotIn("reason", started)
+        with self.assertRaises(SystemExit):
+            task_record.document(task_record.parse(base + ["--reason", "x"]), "2026-01-01T00:00:00Z")
+
     def test_invalid_or_implicit_activity_binding_is_refused_before_send(self):
         base = ["--lane", "reviewer", "review_activity", "--issue", "1745", "--pr", "17", "--head", HEAD_A,
                 "--revision", "1", "--review-context-sequence", "41", "--activity", "waiting", "--reason", "A reason", "--no-github"]

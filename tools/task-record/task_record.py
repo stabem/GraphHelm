@@ -514,7 +514,7 @@ def parse(argv):
     p.add_argument("--retired", choices=("true", "false"), help="lane_retired: true retires the lanes, false restores them")
     p.add_argument("--pr", type=int)
     p.add_argument("--head", help="the PR head sha the step is about (a sha8 or a full 40-char sha, recorded as given; #1526)")
-    p.add_argument("--activity", choices=("waiting", "resumed"), help="review_activity: deliberate current reviewer state, never a lease renewal")
+    p.add_argument("--activity", choices=("waiting", "started", "resumed"), help="review_activity: deliberate current reviewer state, never a lease renewal")
     p.add_argument("--review-context-sequence", type=int, help="review_activity: exact current task review generation from tasks readback")
     p.add_argument("--reviewer")
     p.add_argument("--ordinal", type=int, default=1, choices=(1, 2))
@@ -867,7 +867,7 @@ def document(args, now):
                 sys.exit("task_record: waiting needs exactly one nonblank control-free --reason of at most 500 characters")
             doc["reason"] = args.reason[0]
         elif args.reason:
-            sys.exit("task_record: resumed carries no --reason")
+            sys.exit(f"task_record: {args.activity} carries no --reason")
         doc.update(repo=args.repo, pr=args.pr, headSha=args.head, reviewer=args.lane,
                    reviewContextSequence=args.review_context_sequence, activity=args.activity)
     elif args.kind == "review_verdict":

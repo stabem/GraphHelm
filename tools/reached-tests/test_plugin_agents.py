@@ -64,10 +64,8 @@ KEEL_AGENTS = ROOT / "plugins" / "keel" / "agents"
 
 
 class KeelPluginAgents(unittest.TestCase):
-    def test_the_keel_plugin_ships_author_reviewer_and_scout(self):
-        self.assertEqual({p.stem for p in KEEL_AGENTS.glob("*.md")}, {"keel-author", "keel-reviewer", "keel-scout"})
-
     def test_models_and_tools_follow_the_roles(self):
+        self.assertEqual({p.stem for p in KEEL_AGENTS.glob("*.md")}, {"keel-author", "keel-reviewer", "keel-scout"})
         roles = {"keel-author": "sonnet", "keel-reviewer": "opus", "keel-scout": "haiku"}
         for name, model in roles.items():
             fields, _ = split(KEEL_AGENTS / f"{name}.md")

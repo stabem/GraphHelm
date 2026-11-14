@@ -144,11 +144,17 @@ fn allowed_sites() -> BTreeMap<&'static str, usize> {
         // NAMED (#159): `MutationDecisionKind::CompletionCleared` is the serve router's name for
         // the decision event `execution.clear` produces, and the match arm that carries it READS
         // a clearance already in the journal to recognise an idempotent retry -- the same shape
-        // as projection.rs, one crate over. Three of the six lines are the inline `#[cfg(test)]`
-        // fixture that builds a clearance to exercise that recognition: the walk covers `src/`
-        // whole, test blocks included, so the fixture counts here even though tests are the
+        // as projection.rs, one crate over. Three production lines carry that name: the
+        // `MutationDecisionKind` variant, the `"execution.clear"` row of `for_command`, and the
+        // match arm that does the reading. The other six are the inline `#[cfg(test)]` block's:
+        // three are the fixture that builds a clearance to exercise that recognition (the payload
+        // import, the builder, one `assert_bound` argument), and three are the #2821 assertions
+        // that call `MutationDecisionKind::CompletionCleared.matches(...)` on that fixture event
+        // to prove an omitted or null `claimSeq` still recognises a retry. Those three are NAMED,
+        // not appended: they ask the recogniser a question and open no store. The walk covers
+        // `src/` whole, test blocks included, so all six count here even though tests are the
         // population this guard means to leave alone.
-        ("apps/cli/src/commands/serve/mod.rs", 6),
+        ("apps/cli/src/commands/serve/mod.rs", 9),
     ])
 }
 

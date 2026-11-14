@@ -12,8 +12,8 @@ brief names the flow id, the project directory, and either a grant or "no grant"
 
 Standing limits (a brief does not repeat them):
 
-- You have no MCP tools. Read and record GraphHelm state with the `graphhelm` CLI, as
-  the skill says for a session without the MCP server.
+- You have no MCP tools. Read and record GraphHelm state with the `graphhelm` CLI
+  (`--json`, and say so), as `KEEL.md` says for a session without the MCP server.
 - No grant: do not approve; end with QA-PASS or REJECT. With a delegation or grant: APPROVE only
   as the skill says, only when every point passes.
 - Work only in the project directory your brief names: a detached checkout you create there.

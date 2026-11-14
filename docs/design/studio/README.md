@@ -18,6 +18,7 @@ https://claude.ai/artifact/WjdL5A6eXFgT2BWVbcmfuL (earlier copy: https://claude.
 | `frame-sample.webp` | Sample captured frame used by the mock-ups |
 | [`2445/`](2445/README.md) | Approved shared alert for failed Studio actions (#2445) |
 | [`2913/`](2913/README.md) | The Proof journeys read failure with nothing to show: the #2445 alert with Retry only, no Dismiss (#2913, approved by Gabriel (owner), 2026-11-13, in the session chat) |
+| [`2946/`](2946/README.md) | The failed-action alert without a "Code not supplied" line and with a Dismiss that never wraps (#2946), and the review compare's hidden text in plain words (#2947) (approved by Gabriel (owner), 2026-11-14, in the session chat) |
 | [`2935/`](2935/README.md) | The journey panel's alert when the first read of a run fails: "Run could not be read" in place of "Run could not start" (#2935, approved by Gabriel (owner), 2026-11-13, in the session chat) |
 | [`2939/`](2939/README.md) | Proof, one Run at a time for a journey: while a start is in flight from the card or the panel, the other Run for that journey is in its existing disabled state (#2939, approved by Gabriel (owner), 2026-11-13, in the session chat) |
 | [`2325-2324/`](2325-2324/README.md) | Static before/after mocks (approved 2026-10-31): journeys "to fix" on the rail and the Proof card, and a run "waiting for you" in Graph and Lanes |

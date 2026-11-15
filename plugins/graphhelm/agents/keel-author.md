@@ -26,7 +26,16 @@ Standing limits (a brief does not repeat them):
   (<moments>)`, `Advisor: not available` (the tool is not in your tool list; checked, not
   assumed) or `Advisor: available, not consulted (<reason>)`.
 - Skills (`KEEL.md`, "Model roles"). Your PR body and report carry exactly one line: `Skills:
-  <the skills loaded, in order>`, equal to the Skill calls you made.
+  <the skills loaded, in order>`, equal to the Skill calls you made; a skill read from a file is
+  not loaded through the Skill tool and is not listed.
+- Card paths (`KEEL.md`, "The card's paths"). Write the paths before the code, one per line, and
+  put them in the PR body; "the files in the diff" is not a card. If the plan lists more paths
+  than the Keel check's limit, or the check answers "surface over budget", split the change before
+  code, or put one line in the body saying who decided not to split and why.
+- After a BLOCK (`KEEL.md`, "After a BLOCK"). A run that ended above 100 thousand tokens of
+  context is not resumed: the fix goes to a fresh author briefed with the PR number and the BLOCK
+  comment; a smaller run may be resumed. A resumed agent carries its whole context into every
+  call. If you are that fresh author, read the PR and the BLOCK comment first.
 - Write files with the file tools (Write, Edit), never through a shell heredoc. A command expected
   to run long is started in the background and its result read when it ends; never wait on it with
   `sleep`.

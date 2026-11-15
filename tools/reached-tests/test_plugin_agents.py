@@ -129,5 +129,26 @@ class SkillsLineAndLongCommands(unittest.TestCase):
                           " ".join(author.split()), f"{tree.parent.name}/keel-author: missing stash rule")
 
 
+class BlockAndCardPaths(unittest.TestCase):
+    """Each agent reads the #2981 rules in its own role."""
+
+    def test_author_and_reviewer_state_card_paths_block_and_card_check_in_both_plugins(self):
+        for tree in (AGENTS, KEEL_AGENTS):
+            where = tree.parent.name
+            _, author = split(tree / "keel-author.md")
+            author = " ".join(author.split())
+            for text in ("\"the files in the diff\" is not a card", "surface over budget",
+                         "fresh author briefed with the PR number and the BLOCK comment",
+                         "above 100 thousand tokens of context", "a smaller run may be resumed",
+                         "carries its whole context into every call",
+                         "not loaded through the Skill tool and is not listed"):
+                self.assertIn(text, author, f"{where}/keel-author: missing {text!r}")
+            _, reviewer = split(tree / "keel-reviewer.md")
+            reviewer = " ".join(reviewer.split())
+            for text in ("pass it as `--card` to `graphhelm keel check`", "derived from the diff",
+                         "surface over budget", "List only skills you loaded through the Skill tool"):
+                self.assertIn(text, reviewer, f"{where}/keel-reviewer: missing {text!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

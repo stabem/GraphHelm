@@ -138,8 +138,10 @@ The strongest model decides, the middle one builds, the strongest checks and the
   sha. Before any command in the main checkout it reads `git status -sb`; ahead of the remote or
   dirty means another writer is there: it leaves the checkout alone and says so.
 - **The identity line names a session.** The orchestrator reads its own session name from the host
-  at each brief, never from memory or a summary. A line that names the agent's role is wrong; an
-  agent handed one says so in its report and still uses it.
+  at each brief, never from memory or a summary. Wrong is a line whose name *is* a role
+  (`Session: keel-author <task>`); an agent handed one says so in its report and still uses it.
+  A session name with the agent's role in parentheses after it (`Session: <session name> [ref]
+  (keel-author subagent)`) is the required form, not an error.
 - **The brief names only what exists.** Before the brief, the orchestrator checks that every symbol
   and file it names exists on the base the author will cut from (the remote branch, not the local
   checkout).

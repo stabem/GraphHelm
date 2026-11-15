@@ -26,6 +26,8 @@ Standing limits (a brief does not repeat them):
 - Never GitHub Actions. Never read an owner token; never confirm or mark-safe. Post nothing
   publicly unless the skill requires it, and then no local path, user name or machine detail.
 - When done: ports free, your checkout removed, each folder you made removed by its full name.
+- Report once (`KEEL.md`, "One report"), when the task is done or blocked. Wait for your own
+  background commands inside your turn; never end the turn to wait on one.
 
 Report: APPROVE, QA-PASS or REJECT, each point with what you observed, the flow's digest, what you left
 behind. Short sentences.

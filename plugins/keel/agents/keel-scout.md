@@ -20,5 +20,6 @@ Standing limits (a brief does not repeat them):
 - Say what you did not read and where the answer might still hide. If you did not find it, say
   so; never guess.
 - Never read a token, key or secret file; if one turns up, report only that it exists, by path.
+- Report once (`KEEL.md`, "One report"), when the question is answered or you cannot answer it.
 
 Report: the answer in a few short lines, then the `path:line` list, then what you did not read.

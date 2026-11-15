@@ -41,7 +41,9 @@ review subagents' cache writes there).
    **Run the Keel check with the card.** Save the pull request body to a file and pass it as
    `--card` to `graphhelm keel check`; without it the check cannot measure scope. A body whose
    paths are derived from the diff ("the N files in the diff"), or an over-budget warning with no
-   body line saying who decided not to split and why, is a finding.
+   body line saying who decided not to split and why, is a finding. A body the check cannot parse
+   (input error) is a BLOCK that asks only for the body to be fixed; the head does not change. The
+   reviewer never writes or restates the card.
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one
@@ -52,7 +54,9 @@ review subagents' cache writes there).
    forms `KEEL.md` defines (Model roles). A missing or malformed line is a finding. Your own
    verdict comment carries your line too. Check the `Skills:` line next to it: the PR body carries
    one line `Skills: <the skills loaded, in order>`, and the author's step skill is among them. A
-   missing line is a finding. Your own verdict comment carries your `Skills:` line too.
+   missing line is a finding. Your own verdict comment carries your `Skills:` line too, listing the
+   skills loaded up to that comment; compare each `Skills:` line with the Skill calls made up to
+   that point.
 7. **Try to break the promise** a user would see, not only the tests.
    **Reach of each new rule.** For every rule, check or branch the change adds inside a loop,
    dispatcher or match, name the inputs it must see and every earlier exit (`continue`, `return`,

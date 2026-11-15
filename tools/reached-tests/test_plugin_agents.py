@@ -84,5 +84,28 @@ class KeelPluginAgents(unittest.TestCase):
                 self.assertTrue((ROOT / SKILL_TREES["keel"] / skill / "SKILL.md").is_file(), f"{name}: {skill}")
 
 
+ADVISOR_VALUES = ("Advisor: consulted (<moments>)", "Advisor: not available",
+                  "Advisor: available, not consulted (<reason>)")
+
+MOMENTS = {
+    "keel-author": ("before the plan is fixed", "same error comes back a second time", "before you report done"),
+    "keel-reviewer": ("before you post the verdict",),
+}
+
+
+class AdvisorLine(unittest.TestCase):
+    """The reviewer reads the author's `Advisor:` line (#2975), so each agent must state all three values."""
+
+    def test_author_and_reviewer_state_the_three_values_in_both_plugins(self):
+        for tree in (AGENTS, KEEL_AGENTS):
+            for name in ("keel-author", "keel-reviewer"):
+                _, body = split(tree / f"{name}.md")
+                flat = " ".join(body.split())
+                for value in ADVISOR_VALUES:
+                    self.assertIn(value, flat, f"{tree.parent.name}/{name}: missing {value!r}")
+                for moment in MOMENTS[name]:
+                    self.assertIn(moment, flat, f"{tree.parent.name}/{name}: missing moment {moment!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

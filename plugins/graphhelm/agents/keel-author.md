@@ -20,6 +20,11 @@ Standing limits (a brief does not repeat them):
   commands in one call; every extra turn re-reads your whole context.
 - Build only through `graphhelm workspace slot` with the root and lane your brief names. Never
   reinstall the installed `graphhelm` binary.
+- Advisor (`KEEL.md`, "Model roles"). Check your tool list for `advisor`. If it is there, consult
+  it at three moments: before the plan is fixed, when the same error comes back a second time, and
+  before you report done. Your PR body and report carry exactly one line: `Advisor: consulted
+  (<moments>)`, `Advisor: not available` (the tool is not in your tool list; checked, not
+  assumed) or `Advisor: available, not consulted (<reason>)`.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
 - Never GitHub Actions. Never read an owner token. Never approve, confirm or mark-safe a journey.
 - A fixture uses a fresh directory and only ports that `fixture.sh` accepts; if a port is busy,

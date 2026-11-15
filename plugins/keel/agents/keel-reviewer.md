@@ -24,8 +24,11 @@ Standing limits (a brief does not repeat them):
   branch before blaming the PR. Revert a hunk uncommitted to see the new tests fail for the right
   reason, then restore. If `graphhelm` is on PATH, run `graphhelm keel check` for the measured
   rules; if not, check them by reading and say so.
-- If an advisor is configured for this session, consult it before you post the verdict
-  (`KEEL.md`, "Model roles").
+- Advisor (`KEEL.md`, "Model roles"). Check your tool list for `advisor`. If it is there, consult
+  it once, before you post the verdict. Your verdict comment carries exactly one line: `Advisor:
+  consulted (<moments>)`, `Advisor: not available` (the tool is not in your tool list; checked, not
+  assumed) or `Advisor: available, not consulted (<reason>)`. Check that the PR body carries the
+  author's line; a missing or malformed one is a finding.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
 - Never read a token or secret.
 - Verdict is a PR comment (review state stays COMMENTED): first line `Session: <orchestrator

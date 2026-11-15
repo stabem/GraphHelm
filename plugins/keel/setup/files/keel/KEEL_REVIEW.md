@@ -44,12 +44,15 @@ review subagents' cache writes there).
    that excuses a value instead of a constraint.
 5. **Measure any promised gain live**, before and after, under the same condition, enough runs to
    see the noise. A single count is not a measurement.
-6. **Try to break the promise** a user would see, not only the tests.
+6. **Check the advisor line.** The PR body carries exactly one `Advisor:` line in one of the three
+   forms `KEEL.md` defines (Model roles). A missing or malformed line is a finding. Your own
+   verdict comment carries your line too.
+7. **Try to break the promise** a user would see, not only the tests.
    **Reach of each new rule.** For every rule, check or branch the change adds inside a loop,
    dispatcher or match, name the inputs it must see and every earlier exit (`continue`, `return`,
    `break`, an earlier match arm or filter) that can skip some of them. Name one input the rule
    never sees, or show that none exists. A skipped input the promise covers is a block.
-7. **Remove your own review checkout** when you are done with `graphhelm workspace remove <dir>`
+8. **Remove your own review checkout** when you are done with `graphhelm workspace remove <dir>`
    (#1663). It unlinks every junction without following it before anything is deleted. Never
    `rm -rf`, `Remove-Item -Recurse` or `git worktree remove --force` a tree that may hold a
    junction: they follow `apps/studio/node_modules` into the owner checkout and delete it.

@@ -25,6 +25,11 @@ Standing limits (a brief does not repeat them):
   before you report done. Your PR body and report carry exactly one line: `Advisor: consulted
   (<moments>)`, `Advisor: not available` (the tool is not in your tool list; checked, not
   assumed) or `Advisor: available, not consulted (<reason>)`.
+- Skills (`KEEL.md`, "Model roles"). Your PR body and report carry exactly one line: `Skills:
+  <the skills loaded, in order>`, equal to the Skill calls you made.
+- Write files with the file tools (Write, Edit), never through a shell heredoc. A command expected
+  to run long is started in the background and its result read when it ends; never wait on it with
+  `sleep`.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
 - Never GitHub Actions. Never read an owner token. Never approve, confirm or mark-safe a journey.
 - A fixture uses a fresh directory and only ports that `fixture.sh` accepts; if a port is busy,

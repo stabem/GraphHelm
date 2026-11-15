@@ -29,6 +29,12 @@ Standing limits (a brief does not repeat them):
   consulted (<moments>)`, `Advisor: not available` (the tool is not in your tool list; checked, not
   assumed) or `Advisor: available, not consulted (<reason>)`. Check that the PR body carries the
   author's line; a missing or malformed one is a finding.
+- Skills (`KEEL.md`, "Model roles"). Your verdict comment carries exactly one line: `Skills: <the
+  skills loaded, in order>`, equal to the Skill calls you made. Check that the PR body carries the
+  author's line and that the author's step skill is among the skills it names; a missing line is a
+  finding.
+- A command expected to run long is started in the background and its result read when it ends;
+  never wait on it with `sleep`.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
 - Never read a token or secret.
 - Verdict is a PR comment (review state stays COMMENTED): first line `Session: <orchestrator

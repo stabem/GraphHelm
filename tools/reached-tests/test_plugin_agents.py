@@ -107,5 +107,25 @@ class AdvisorLine(unittest.TestCase):
                     self.assertIn(moment, flat, f"{tree.parent.name}/{name}: missing moment {moment!r}")
 
 
+class SkillsLineAndLongCommands(unittest.TestCase):
+    """The reviewer checks the author's `Skills:` line (#2978); each agent must state the rules it reads."""
+
+    def test_author_and_reviewer_state_the_skills_line_and_no_sleep_in_both_plugins(self):
+        for tree in (AGENTS, KEEL_AGENTS):
+            for name in ("keel-author", "keel-reviewer"):
+                _, body = split(tree / f"{name}.md")
+                flat = " ".join(body.split())
+                where = f"{tree.parent.name}/{name}"
+                self.assertIn("`Skills: <the skills loaded, in order>`", flat, f"{where}: missing Skills line")
+                self.assertIn("never wait on it with `sleep`", flat, f"{where}: missing sleep rule")
+                self.assertIn("started in the background", flat, f"{where}: missing background rule")
+            _, reviewer = split(tree / "keel-reviewer.md")
+            self.assertIn("author's step skill is among the skills it names", " ".join(reviewer.split()),
+                          f"{tree.parent.name}/keel-reviewer: missing step-skill check")
+            _, author = split(tree / "keel-author.md")
+            self.assertIn("never through a shell heredoc", " ".join(author.split()),
+                          f"{tree.parent.name}/keel-author: missing heredoc rule")
+
+
 if __name__ == "__main__":
     unittest.main()

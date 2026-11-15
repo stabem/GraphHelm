@@ -81,8 +81,12 @@ def write_advisor(root, model, out):
         body = json.dumps(settings, indent=2, ensure_ascii=False).replace("\n", newline) + newline
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_name(path.name + ".keel-tmp")
-        temp.write_bytes(body.encode("utf-8"))
-        os.replace(temp, path)  # a crash leaves the old file, never half of the new one
+        try:
+            temp.write_bytes(body.encode("utf-8"))
+            os.replace(temp, path)  # a crash leaves the old file, never half of the new one
+        except OSError:
+            temp.unlink(missing_ok=True)  # a refused replace (read-only file) must not leave the temp behind
+            raise
         out.append(f"set {ADVISOR_KEY} to {model} in {SETTINGS}")
         return True
     except (OSError, ValueError) as error:

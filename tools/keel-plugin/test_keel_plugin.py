@@ -12,6 +12,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -167,6 +168,26 @@ class KeelPlugin(unittest.TestCase):
                 self.assertEqual((root / ".claude" / "settings.json").read_bytes(), content)
                 self.assertTrue((root / "KEEL.md").is_file(), "the other steps must still run")
                 self.assertIn("left .claude/settings.json alone", said)
+
+    def test_a_refused_settings_write_leaves_no_temporary_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".claude").mkdir()
+            settings = root / ".claude" / "settings.json"
+            settings.write_bytes(b'{"model": "sonnet"}')
+            with mock.patch.object(keel_setup.os, "replace", side_effect=PermissionError("read-only")):
+                code, said = self.run_setup(root)
+            self.assertEqual(code, 1)
+            self.assertIn("left .claude/settings.json alone", said)
+            self.assertEqual(settings.read_bytes(), b'{"model": "sonnet"}')
+            self.assertEqual(sorted(p.name for p in (root / ".claude").iterdir()), ["settings.json"])
+
+    def test_every_skill_says_the_installer_writes_the_advisor_setting_and_its_two_flags(self):
+        for name in sync.SKILLS:
+            skill = sync.SKILLS_DIR / name / "SKILL.md"
+            text = skill.read_text(encoding="utf-8")
+            for needle in (".claude/settings.json", "advisorModel", "--no-advisor", "--advisor <model>"):
+                self.assertIn(needle, text, f"{skill.parent.name} lacks {needle}")
 
     def test_setup_reports_a_real_difference_but_not_a_line_ending_difference(self):
         with tempfile.TemporaryDirectory() as tmp:

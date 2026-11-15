@@ -8,7 +8,9 @@ How to use this skill:
 - First run: if the project has no `KEEL.md` at its root, install Keel into it with
   `python <this plugin>/setup/keel_setup.py <project root>` (the plugin folder is two levels above
   this skill's folder). It copies `KEEL.md` and the `keel/` step files into the project, offline,
-  never overwrites an existing one, and adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`.
+  never overwrites an existing one, and adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`. It also sets
+  `advisorModel` in the project's `.claude/settings.json` and keeps any value already there; pass
+  `--no-advisor` to skip that write, or `--advisor <model>` to choose the model.
 - Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
   Before that step has run, read https://github.com/stabem/GraphHelm/blob/main/KEEL.md and the step
   files under https://github.com/stabem/GraphHelm/blob/main/keel/. The text below is the bundled copy.

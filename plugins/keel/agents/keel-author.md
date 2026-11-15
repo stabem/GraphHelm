@@ -31,6 +31,8 @@ Standing limits (a brief does not repeat them):
 - Write files with the file tools (Write, Edit), never through a shell heredoc. A command expected
   to run long is started in the background and its result read when it ends; never wait on it with
   `sleep`.
+- Never run `git stash` (the stash list is shared across worktrees): work to set aside is
+  committed on its own branch or copied to a file.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
 - Never read a token or secret. No local path, user name or machine detail in public text.
 - The PR body lives in a file inside your worktree, uncommitted. Do not merge.

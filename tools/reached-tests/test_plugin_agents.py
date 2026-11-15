@@ -125,6 +125,8 @@ class SkillsLineAndLongCommands(unittest.TestCase):
             _, author = split(tree / "keel-author.md")
             self.assertIn("never through a shell heredoc", " ".join(author.split()),
                           f"{tree.parent.name}/keel-author: missing heredoc rule")
+            self.assertIn("Never run `git stash` (the stash list is shared across worktrees)",
+                          " ".join(author.split()), f"{tree.parent.name}/keel-author: missing stash rule")
 
 
 if __name__ == "__main__":

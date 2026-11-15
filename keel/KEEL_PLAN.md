@@ -27,7 +27,11 @@ When in doubt, take the larger row.
    real Runtime, or the hook run; for a rule that must hold for every input, a property test
    (`KEEL_EXEC.md`, Prove step 2). Name what it asserts, and write the
    failure list here first when `KEEL_EXEC.md` asks for one.
-3. **Paths.** Every file the change may touch, as a list of paths. No globs.
+3. **Paths.** Every file the change may touch, as a list of paths. No globs. Write them before
+   the code, one per line, and put them in the pull request body; "the files in the diff" is not a
+   card. When the list is longer than the Keel check's path limit, or the check answers "surface
+   over budget", split the change before code, or put one line in the body saying who decided not
+   to split and why.
 4. **What already exists.** The searches you ran for code that already does part of the job, and
    what they found. A new function, type or module is planned only when nothing found fits, and
    the card names who will call it.

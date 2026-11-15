@@ -69,6 +69,10 @@ review subagents' cache writes there).
    empty `git status --short`, and pass that full sha to the runner as `--head`. A run started
    while the head is still moving ends `incomplete` ("HEAD changed while running") and is not
    evidence; rerun it with a new `--output` (#2030).
+   **Run the Keel check with the card.** Save the pull request body to a file and pass it as
+   `--card` to `graphhelm keel check`; without it the check cannot measure scope. A body whose
+   paths are derived from the diff ("the N files in the diff"), or an over-budget warning with no
+   body line saying who decided not to split and why, is a finding.
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one

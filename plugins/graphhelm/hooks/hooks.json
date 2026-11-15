@@ -105,6 +105,21 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "-c",
+              "import runpy, sys\ntry:\n    runpy.run_path(sys.argv[1], run_name='__main__')\nexcept SystemExit:\n    raise\nexcept BaseException:\n    print('{\"systemMessage\": \"keel agent lock skipped: could not run\"}')\n    sys.exit(0)",
+              "${CLAUDE_PLUGIN_ROOT}/hooks/keel_agent_lock.py"
+            ],
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [

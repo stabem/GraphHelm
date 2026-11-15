@@ -47,3 +47,16 @@ When an advisor is configured, `KEEL.md` asks the builder to consult it before t
 when the same error comes back a second time, and before reporting done; with none configured,
 no consultation is asked, but the report still carries the `Advisor:` line (`Advisor: not available`
 when the tool is not in the agent's tool list). The scout never calls it.
+
+## Agent lock (hook)
+
+`hooks/hooks.json` declares one `PreToolUse` hook on `Bash` and `PowerShell`. It refuses, for the
+plugin's own agents only (`keel:keel-author`, `keel:keel-reviewer`, `keel:keel-scout`, and
+`graphhelm:keel-author` and `graphhelm:keel-reviewer` from the graphhelm plugin), a shell command
+that holds a heredoc, runs `sleep` or `Start-Sleep`, or runs `git stash` with anything but `list` or
+`show`. The refusal names the rule and the allowed form. The host tells the hook who is calling with
+the `agent_type` field of its input, which is absent in a main session; a main session, any other
+agent and the scout's neighbours are never refused. The hook spawns nothing, and a failure or a
+timeout lets the command through and says so. Claude Code only; the Codex plugin runs no hook from
+this directory. `keel-journey-qa` is not bound. The graphhelm plugin ships a byte-identical copy of
+`keel_agent_lock.py` because a plugin cannot read a sibling plugin's files.

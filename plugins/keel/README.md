@@ -46,4 +46,4 @@ the setting is then silently off. The advisor itself is experimental.
 When an advisor is configured, `KEEL.md` asks the builder to consult it before the plan is fixed,
 when the same error comes back a second time, and before reporting done; with none configured,
 no consultation is asked, but the report still carries the `Advisor:` line (`Advisor: not available`
-or `Advisor: available, not consulted (<reason>)`). The scout never calls it.
+when the tool is not in the agent's tool list). The scout never calls it.

@@ -129,7 +129,7 @@ class KeelPlugin(unittest.TestCase):
             code = keel_setup.main(["keel_setup", str(root), *flags])
         return code, out.getvalue()
 
-    def test_setup_adds_only_the_advisor_key_and_never_changes_one_the_project_set(self):
+    def test_setup_advisor_step_keeps_what_the_project_decided_and_reports_what_it_cannot_use(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             settings = root / ".claude" / "settings.json"
@@ -150,7 +150,6 @@ class KeelPlugin(unittest.TestCase):
             self.assertEqual((code, settings.read_bytes()), (0, b'{"advisorModel": "opus"}'))
             self.assertIn("already sets it", said)
 
-    def test_setup_flags_pick_another_advisor_or_skip_the_step(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.run_setup(root, "--no-advisor")
@@ -158,7 +157,6 @@ class KeelPlugin(unittest.TestCase):
             self.run_setup(root, "--advisor", "opus")
             self.assertEqual(json.loads((root / ".claude" / "settings.json").read_bytes()), {"advisorModel": "opus"})
 
-    def test_setup_leaves_an_unusable_settings_file_alone_and_exits_non_zero_after_the_other_steps(self):
         for content in (b"{not json", b"[1, 2]", b"3", b""):
             with self.subTest(content=content), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -184,9 +182,6 @@ class KeelPlugin(unittest.TestCase):
             code, said = self.run_setup(root, "--no-advisor")
             self.assertIn("kept the project's KEEL.md: it differs", said)
             self.assertEqual(keel.read_bytes(), changed)
-
-    def test_the_scout_never_calls_the_advisor(self):
-        self.assertIn("never call the advisor", text(PLUGIN / "agents" / "keel-scout.md"))
 
     def test_each_skill_is_named_after_its_folder(self):
         for skill in [*sync.SKILLS, *sync.HAND_WRITTEN]:

@@ -21,9 +21,11 @@ Standing limits (a brief does not repeat them):
   output. Batch independent commands in one call; every extra turn re-reads your whole context.
 - Use the project's own test runner and lints; list each command and its result. A red test:
   check it on the base branch before touching it. Never weaken a test to get green.
-- If an advisor is configured for this session, consult it before the plan is fixed, when the
-  same error comes back a second time, and before you report done (`KEEL.md`, "Model roles").
-  With none configured, this asks nothing.
+- Advisor (`KEEL.md`, "Model roles"). Check your tool list for `advisor`. If it is there, consult
+  it at three moments: before the plan is fixed, when the same error comes back a second time, and
+  before you report done. Your PR body and report carry exactly one line: `Advisor: consulted
+  (<moments>)`, `Advisor: not available` (the tool is not in your tool list; checked, not
+  assumed) or `Advisor: available, not consulted (<reason>)`.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
 - Never read a token or secret. No local path, user name or machine detail in public text.
 - The PR body lives in a file inside your worktree, uncommitted. Do not merge.

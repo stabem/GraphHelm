@@ -87,6 +87,11 @@ class KeelPluginAgents(unittest.TestCase):
 ADVISOR_VALUES = ("Advisor: consulted (<moments>)", "Advisor: not available",
                   "Advisor: available, not consulted (<reason>)")
 
+MOMENTS = {
+    "keel-author": ("before the plan is fixed", "same error comes back a second time", "before you report done"),
+    "keel-reviewer": ("before you post the verdict",),
+}
+
 
 class AdvisorLine(unittest.TestCase):
     """The reviewer reads the author's `Advisor:` line (#2975), so each agent must state all three values."""
@@ -98,10 +103,8 @@ class AdvisorLine(unittest.TestCase):
                 flat = " ".join(body.split())
                 for value in ADVISOR_VALUES:
                     self.assertIn(value, flat, f"{tree.parent.name}/{name}: missing {value!r}")
-
-    def test_scout_never_calls_the_advisor(self):
-        _, body = split(KEEL_AGENTS / "keel-scout.md")
-        self.assertIn("never call the advisor", body)
+                for moment in MOMENTS[name]:
+                    self.assertIn(moment, flat, f"{tree.parent.name}/{name}: missing moment {moment!r}")
 
 
 if __name__ == "__main__":

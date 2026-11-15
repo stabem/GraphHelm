@@ -127,6 +127,20 @@ The strongest model decides, the middle one builds, the strongest checks and the
   `Skills: <the skills loaded, in order>`, equal to the Skill calls the agent made. The reviewer
   checks the PR body's line (`keel/KEEL_REVIEW.md`).
 
+## After a BLOCK
+
+The fix goes to a fresh author, briefed with the pull request number and the BLOCK comment, when
+the first author's run ended above 100 thousand tokens of context; a smaller run may be resumed.
+A resumed agent carries its whole context into every call.
+
+## The card's paths
+
+The card's paths are written before the code, one per line, and travel in the pull request body;
+"the files in the diff" is not a card, because a card derived from the diff cannot fail the scope
+check. When the plan lists more paths than the check's limit, or the check answers "surface over
+budget", the change is split before code, or the body carries one line saying who decided not to
+split and why (`keel/KEEL_PLAN.md`, `keel/KEEL_REVIEW.md`).
+
 ## After each merge
 
 The orchestrator writes a handoff: what landed, what is open, the next task and where the rules

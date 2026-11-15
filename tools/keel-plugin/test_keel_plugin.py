@@ -100,6 +100,17 @@ class KeelPlugin(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(text(sync.SETUP_FILES / source), text(ROOT / source),
                                  f"bundled {source} differs: run python tools/keel-plugin/sync_keel_plugin.py")
+        known = json.loads(keel_setup.DIGESTS.read_bytes())
+        self.assertEqual(sorted(known), sorted(sync.SKILLS.values()))
+        for source in sync.SKILLS.values():
+            with self.subTest(source=source):
+                self.assertIn(sync.bundled_digest(source), known[source],
+                              f"{source}: run python tools/keel-plugin/sync_keel_plugin.py")
+        # An earlier release's KEEL.md (keel 1.1.0) stays recognisable.
+        self.assertIn("5ad3cf94b0a8512caa8f7b12053020df30382a17f3cc9e5cb92ebfe1dd360815", known["KEEL.md"])
+        grown = sync.with_current_digests({"KEEL.md": ["a" * 64]})
+        self.assertEqual(grown["KEEL.md"], ["a" * 64, sync.bundled_digest("KEEL.md")])
+        self.assertEqual(sync.with_current_digests(grown), grown)
 
     def test_setup_installs_keel_once_and_keeps_the_projects_own_copy(self):
         def snapshot(root):
@@ -203,6 +214,71 @@ class KeelPlugin(unittest.TestCase):
             code, said = self.run_setup(root, "--no-advisor")
             self.assertIn("kept the project's KEEL.md: it differs", said)
             self.assertEqual(keel.read_bytes(), changed)
+
+    def install_with_old_copies(self, root, old_texts, unlisted=None):
+        # Seeds the project with older bundled versions and a digest list that knows them.
+        self.run_setup(root, "--no-advisor")
+        known = json.loads(keel_setup.DIGESTS.read_bytes())
+        for name, old in old_texts.items():
+            (root / name).write_bytes(old)
+            known[name] = [*known[name], keel_setup.digest(old)]
+        for name, text_ in (unlisted or {}).items():  # written to the project, never listed
+            (root / name).write_bytes(text_)
+        listing = root.parent / (root.name + "-known.json")
+        listing.write_bytes(json.dumps(known).encode("utf-8"))
+        return mock.patch.object(keel_setup, "DIGESTS", listing)
+
+    def test_setup_upgrades_an_unedited_old_copy_and_only_that(self):
+        old = b"old keel text\nsecond line\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            bundled = (keel_setup.BUNDLED / "KEEL.md").read_bytes()
+            edited = old.replace(b"old", b"older")  # one word differs from a listed version
+            newer = b"a copy newer than this plugin knows\n"
+            with self.install_with_old_copies(root, {"KEEL.md": old, "keel/KEEL_REVIEW.md": old.replace(b"\n", b"\r\n")},
+                                               unlisted={"keel/KEEL_PLAN.md": edited, "keel/KEEL_EXEC.md": newer}):
+                code, said = self.run_setup(root, "--no-advisor")
+                self.assertEqual(code, 0)
+                self.assertEqual((root / "KEEL.md").read_bytes(), bundled)
+                self.assertIn("updated KEEL.md", said)
+                self.assertEqual((root / "keel/KEEL_PLAN.md").read_bytes(), edited)
+                self.assertIn("kept the project's keel/KEEL_PLAN.md", said)
+                self.assertEqual((root / "keel/KEEL_EXEC.md").read_bytes(), newer)
+                self.assertIn("kept the project's keel/KEEL_EXEC.md", said)
+                crlf = (root / "keel/KEEL_REVIEW.md").read_bytes()
+                self.assertIn("updated keel/KEEL_REVIEW.md", said)
+                self.assertEqual(crlf, (keel_setup.BUNDLED / "keel/KEEL_REVIEW.md").read_bytes()
+                                 .replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
+                before = {p.name: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+                code, said = self.run_setup(root, "--no-advisor")
+                self.assertNotIn("updated", said)
+                self.assertEqual({p.name: p.read_bytes() for p in root.rglob("*") if p.is_file()}, before,
+                                 "a second run changed bytes")
+
+    def test_a_refused_replacement_leaves_the_old_copy_and_no_temporary_file(self):
+        old = b"old keel text\n"
+        real_replace = keel_setup.os.replace
+
+        def refuse_keel_md(source, target):
+            if Path(target).name == "KEEL.md":
+                raise PermissionError("read-only")
+            return real_replace(source, target)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            root.mkdir()
+            old_exec = b"old exec\n"
+            with self.install_with_old_copies(root, {"KEEL.md": old, "keel/KEEL_EXEC.md": old_exec}):
+                with mock.patch.object(keel_setup.os, "replace", side_effect=refuse_keel_md):
+                    code, said = self.run_setup(root, "--no-advisor")
+                self.assertEqual(code, 1)
+                self.assertEqual((root / "KEEL.md").read_bytes(), old)
+                self.assertIn("left KEEL.md alone", said)
+                self.assertEqual((root / "keel/KEEL_EXEC.md").read_bytes(),
+                                 (keel_setup.BUNDLED / "keel/KEEL_EXEC.md").read_bytes(),
+                                 "the other files are still brought up to date")
+                self.assertEqual([p.name for p in root.rglob("*.keel-tmp")], [])
 
     def test_each_skill_is_named_after_its_folder(self):
         for skill in [*sync.SKILLS, *sync.HAND_WRITTEN]:

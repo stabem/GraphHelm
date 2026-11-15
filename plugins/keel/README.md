@@ -2,7 +2,21 @@
 
 Keel is a construction pattern for agents that write code: plan, execute, review and merge skills
 that need no Runtime, MCP server or journeys. Install this plugin, then run the `keel` skill once in
-a project to copy `KEEL.md` and the `keel/` step files into it.
+a project to copy `KEEL.md` and the `keel/` step files into it; running it again upgrades the files
+the project never edited.
+
+## Upgrading an installed copy
+
+Run `keel_setup.py <project>` again after updating the plugin. Per file (`KEEL.md` and the four
+`keel/` step files): equal to the bundled text, line endings aside, nothing happens; equal to a past
+bundled version, so never edited, it is replaced by the bundled text and the run says
+`updated <name>`, keeping the file's line endings; any other text is the project's own and is kept,
+with a note. A copy newer than the running plugin is unknown, so it is kept. The past versions are
+listed as sha256 digests in `setup/known_digests.json`, which `tools/keel-plugin/sync_keel_plugin.py`
+only appends to; the list starts at this repository's public history, so a copy older than that is
+kept. A project that edited a file back to the exact text of an older bundled version is treated as
+unedited. A replacement that the file system refuses leaves the old file and no temporary file, and
+the run exits 1 after its other steps.
 
 ## Agents
 

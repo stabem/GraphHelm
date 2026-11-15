@@ -107,7 +107,10 @@ and listed as `to build` until its check exists.
 The strongest model decides, the middle one builds, the strongest checks and the cheapest reads.
 
 - **Read wide: the scout.** A read or search over many files goes to a read-only agent on the
-  cheapest model that returns paths and line numbers; the builder opens only those lines.
+  cheapest model that returns paths and line numbers; the builder opens only those lines. The
+  author's tool list cannot spawn the scout, so reading wide is done before the author is briefed:
+  whoever briefs the author sends the scout first when the change needs more than the files the
+  card names, and puts the scout's paths and line numbers in the brief. The author opens those lines.
 - **Build: the author.** The author writes the change inside the card's paths.
 - **Check: the blind reviewer**, on the strongest model, who did not write the change.
 - **Advisor.** When the session has an advisor configured, the builder consults it at three
@@ -120,6 +123,9 @@ The strongest model decides, the middle one builds, the strongest checks and the
   list; checked, not assumed) or `Advisor: available, not consulted (<reason>)`. The author's line
   is in the PR body; the reviewer's is in the verdict comment. The reviewer checks that the PR body
   carries it (`keel/KEEL_REVIEW.md`).
+- **The skills line.** The author's PR body and the reviewer's verdict comment each carry one line
+  `Skills: <the skills loaded, in order>`, equal to the Skill calls the agent made. The reviewer
+  checks the PR body's line (`keel/KEEL_REVIEW.md`).
 
 ## After each merge
 

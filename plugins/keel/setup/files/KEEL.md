@@ -84,6 +84,18 @@ The strongest model decides, the middle one builds, the strongest checks and the
   reporting the work done. With no advisor configured, this rule asks nothing. The Keel installer
   turns it on in a project (`advisorModel` in the project's `.claude/settings.json`, opt out with
   `--no-advisor`); the scout never calls it.
+- **The advisor line.** Every author and reviewer report carries one line, exactly one of
+  `Advisor: consulted (<moments>)`, `Advisor: not available` (the tool is not in the agent's tool
+  list; checked, not assumed) or `Advisor: available, not consulted (<reason>)`. The author's line
+  is in the PR body; the reviewer's is in the verdict comment. The reviewer checks that the PR body
+  carries it (`keel/KEEL_REVIEW.md`).
+
+## After each merge
+
+The orchestrator writes a handoff: what landed, what is open, the next task and where the rules
+live. It then prints one notice line telling the owner to continue in a new session, or to compact
+this one. The notice is not a question: the orchestrator does not wait for an answer, and it does
+not run `/compact` or start a session itself, which are the owner's acts.
 
 ## Talking to GraphHelm
 

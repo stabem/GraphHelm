@@ -5,11 +5,11 @@ is the machine side of those sentences. It reads the host's PreToolUse JSON on s
 `agent_type` (absent in a main session, `<plugin>:<agent>` in a plugin subagent; observed on Claude
 Code 2.1.323). A caller that is not one of the names below is never touched.
 
-The tool that starts an agent is `Agent` (`Task` on older hosts); its input carries `prompt` and
+The tool that starts an agent is `Agent`; its input carries `prompt` and
 `subagent_type` (host hooks documentation, PreToolUse tool input). Starting a Keel agent
 (`keel-author`, `keel-reviewer`, `keel-scout`, `keel-journey-qa`, bare or `keel:`/`graphhelm:` prefixed) is
-refused from any caller when the brief has no `Session:` line or the name on its first one begins with a
-Keel role name. Any other agent type is never refused.
+refused from any caller unless some `Session:` line in the brief has a non-empty name that does not begin
+with a Keel role name. Any other agent type is never refused.
 
 A refusal is exit 0 with a `permissionDecision: deny` reply, never exit 2. Any failure of the hook
 itself lets the command through and says so in a `systemMessage`. It spawns nothing and imports no
@@ -28,7 +28,7 @@ KEEL_AGENTS = frozenset({
     "graphhelm:keel-author", "graphhelm:keel-reviewer",
 })
 SHELL_TOOLS = ("Bash", "PowerShell")
-AGENT_TOOLS = ("Agent", "Task")
+AGENT_TOOLS = ("Agent",)
 ROLE_NAMES = ("keel-author", "keel-reviewer", "keel-scout", "keel-journey-qa")
 
 MESSAGES = {
@@ -209,13 +209,11 @@ def _agent_refusal(tool_input):
     if not isinstance(agent, str) or not re.fullmatch(ROLE_PATTERN, agent.strip(), re.IGNORECASE):
         return None
     prompt = tool_input.get("prompt")
-    found = SESSION_LINE.search(prompt) if isinstance(prompt, str) else None
-    if found is None:
-        return "session", MESSAGES["session"]
-    name = re.sub(r"^[\s<*\"'(\[]+", "", found.group(1))
-    if re.match(ROLE_PATTERN, name, re.IGNORECASE):
-        return "session", MESSAGES["session"]
-    return None
+    for found in SESSION_LINE.finditer(prompt if isinstance(prompt, str) else ""):
+        name = re.sub(r"^[\s<*\"'(\[]+", "", found.group(1))
+        if name and not re.match(ROLE_PATTERN, name, re.IGNORECASE):
+            return None  # one good line is enough: a brief may quote the wrong form before the real line
+    return "session", MESSAGES["session"]
 
 
 def decide(raw):

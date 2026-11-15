@@ -80,12 +80,15 @@ BAD_BRIEFS = [
     "Session: <keel-scout> [x]",
     "Session: keel:keel-author [a1]",
     "Session: Keel-Author [a1]",
+    "Session:",
+    "Session: `keel-author`",
 ]
 GOOD_BRIEFS = [
     "Session: Token economy [a39368] (keel-author subagent) · Head: f4c6ea82",
     "`Session: Token economy GraphHelm subagents [a39368] (keel-author subagent)`",
     "Session: orchestrator without a ref (keel-reviewer subagent)",
     "Do the task.\nSession: <session name> [ref]",
+    "Wrong: `Session: keel-author`\nSession: Real name [a1] (keel-reviewer subagent)",
 ]
 CALLERS = {
     "keel:keel-author": True,
@@ -150,31 +153,27 @@ class KeelAgentLock(unittest.TestCase):
         self.assertIsNone(lock.decide(other_tool))
 
     def test_a_brief_that_starts_a_keel_agent_needs_a_session_name_that_is_not_a_role(self):
-        for tool in ("Agent", "Task"):
-            for agent in ("keel-author", "keel:keel-reviewer", "graphhelm:keel-scout", "keel-journey-qa"):
-                for brief in BAD_BRIEFS:
-                    with self.subTest(tool=tool, agent=agent, brief=brief):
-                        out = json.loads(lock.decide(agent_call(agent, brief, tool)))["hookSpecificOutput"]
-                        self.assertEqual(out["permissionDecision"], "deny")
-                        self.assertIn("Session:", out["permissionDecisionReason"])
-                        self.assertIn("(keel-author subagent)", out["permissionDecisionReason"])
-                for brief in GOOD_BRIEFS:
-                    with self.subTest(tool=tool, agent=agent, brief=brief):
-                        self.assertIsNone(lock.decide(agent_call(agent, brief, tool)))
+        for agent in ("keel-author", "keel:keel-reviewer", "graphhelm:keel-scout", "keel-journey-qa"):
+            for brief in BAD_BRIEFS:
+                with self.subTest(agent=agent, brief=brief):
+                    out = json.loads(lock.decide(agent_call(agent, brief)))["hookSpecificOutput"]
+                    self.assertEqual(out["permissionDecision"], "deny")
+                    self.assertIn("Session:", out["permissionDecisionReason"])
+                    self.assertIn("(keel-author subagent)", out["permissionDecisionReason"])
+            for brief in GOOD_BRIEFS:
+                with self.subTest(agent=agent, brief=brief):
+                    self.assertIsNone(lock.decide(agent_call(agent, brief)))
+        self.assertIn("deny", lock.decide(agent_call("keel-author", 5)))
 
     def test_any_other_agent_is_never_refused(self):
         for agent in ("general-purpose", "Explore", "other:keel-author", "keel:keel-authority", "", None, 7):
             with self.subTest(agent=agent):
                 self.assertIsNone(lock.decide(agent_call(agent, "Session: keel-author")))
+        for raw in (b'{"tool_name": "Agent"}', b'{"tool_name": "Agent", "tool_input": []}'):
+            self.assertIsNone(lock.decide(raw))
         self.assertIsNone(lock.decide(json.dumps({"tool_name": "Agent", "tool_input": {"prompt": "x"}}).encode()))
         self.assertIsNone(lock.decide(json.dumps({"tool_name": "Read", "tool_input": {
             "subagent_type": "keel-author", "prompt": "x"}}).encode()))
-
-    def test_an_unusable_agent_input_is_not_refused_unless_it_names_a_keel_agent(self):
-        for raw in (b'{"tool_name": "Agent"}', b'{"tool_name": "Agent", "tool_input": []}'):
-            with self.subTest(raw=raw):
-                self.assertIsNone(lock.decide(raw))
-        self.assertIn("deny", lock.decide(agent_call("keel-author", 5)))
 
     def test_a_broken_input_lets_the_command_through_and_says_so(self):
         for raw in (b"", b"not json", b"[]", b'{"agent_type": "keel:keel-author", "tool_name": "Bash"}',

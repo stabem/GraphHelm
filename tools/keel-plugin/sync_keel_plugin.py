@@ -1,4 +1,5 @@
 """Writes the standalone keel plugin's skills from the repository's KEEL files, which stay the only source."""
+import hashlib
 import json
 import posixpath
 import re
@@ -38,12 +39,15 @@ DESCRIPTIONS = {
 GITHUB_BLOB = "https://github.com/stabem/GraphHelm/blob/main/"
 RELATIVE_LINK = re.compile(r"\]\((?![a-z][a-z0-9+.-]*:|#)([^)\s#]+)(#[^)\s]*)?\)")
 SETUP_FILES = ROOT / "plugins" / "keel" / "setup" / "files"
+KNOWN_DIGESTS = ROOT / "plugins" / "keel" / "setup" / "known_digests.json"
 PREAMBLE = """How to use this skill:
 
 - First run: if the project has no `KEEL.md` at its root, install Keel into it with
   `python <this plugin>/setup/keel_setup.py <project root>` (the plugin folder is two levels above
-  this skill's folder). It copies `KEEL.md` and the `keel/` step files into the project, offline,
-  never overwrites an existing one, and adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`. It also sets
+  this skill's folder). It copies `KEEL.md` and the `keel/` step files into the project, offline. Run
+  again later, it replaces a Keel file the project never edited (one equal to a past bundled version)
+  with the bundled copy and says `updated <name>`; a file the project changed, or one newer than this
+  plugin knows, is kept. It adds a marked pointer line to `CLAUDE.md` and `AGENTS.md`. It also sets
   `advisorModel` in the project's `.claude/settings.json` and keeps any value already there; pass
   `--no-advisor` to skip that write, or `--advisor <model>` to choose the model.
 - Read the project's own `KEEL.md` at its root when one exists, and the `keel/` step files it names.
@@ -114,12 +118,28 @@ def write_text(target, text):
     return True
 
 
+def bundled_digest(source):
+    return hashlib.sha256((SETUP_FILES / source).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def with_current_digests(known):
+    # Append-only: a digest once listed stays, so a project that kept an old copy is still recognised.
+    merged = {name: list(known.get(name, [])) for name in SKILLS.values()}
+    for source in SKILLS.values():
+        digest = bundled_digest(source)
+        if digest not in merged[source]:
+            merged[source].append(digest)
+    return merged
+
+
 def main():
     for skill in SKILLS:
         write_text(SKILLS_DIR / skill / "SKILL.md", render(skill))
     for source in SKILLS.values():
         # The setup step ships the KEEL files as they are: inside a project their relative links hold.
         write_text(SETUP_FILES / source, keel_text(source))
+    known = json.loads(KNOWN_DIGESTS.read_bytes().decode("utf-8")) if KNOWN_DIGESTS.exists() else {}
+    write_text(KNOWN_DIGESTS, json.dumps(with_current_digests(known), indent=2) + "\n")
     current = GRAPHHELM_KEEL_SKILL.read_bytes().decode("utf-8").replace("\r\n", "\n")
     write_text(GRAPHHELM_KEEL_SKILL, embed(current, GRAPHHELM_KEEL_SOURCE))
     print(f"wrote {len(SKILLS)} skills under {SKILLS_DIR.relative_to(ROOT).as_posix()}")

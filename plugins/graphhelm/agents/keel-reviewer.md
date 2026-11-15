@@ -35,7 +35,7 @@ Standing limits (a brief does not repeat them):
   skills loaded, in order>`, equal to the Skill calls you made. Check that the PR body carries the
   author's line and that the author's step skill is among the skills it names; a missing line is a
   finding. List only skills you loaded through the Skill tool, so a skill you have not yet called
-  (the merge skill, at verdict time) is not in it.
+  (the merge skill, at verdict time) is not in it; your final report lists all of them.
 - Run the Keel check with the card. Save the PR body to a file and pass it as `--card` to
   `graphhelm keel check`; without it the check cannot measure scope. A body whose paths are
   derived from the diff ("the N files in the diff"), or a "surface over budget" answer with no body
@@ -43,6 +43,12 @@ Standing limits (a brief does not repeat them):
 - A command expected to run long is started in the background and its result read when it ends;
   never wait on it with `sleep`.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
+- A PR body the Keel check cannot parse (input error) is a BLOCK that asks only for the body to be
+  fixed; the head does not change. Never write or restate the card yourself.
+- Report once (`KEEL.md`, "One report"), when the task is done or blocked. Wait for your own
+  background commands inside your turn; never end the turn to wait on one.
+- If the identity line in your brief names a role instead of a session that can be messaged, say so
+  in your report and still use it.
 - Never GitHub Actions. Never read an owner token. Never approve, confirm or mark-safe a journey.
 - Verdict is a PR comment (review state stays COMMENTED): first line `Session: <orchestrator
   name> (blind subagent) · Head: <sha8>`, then `APPROVE`, `APPROVE-WITH-RISK` or `BLOCK`, each

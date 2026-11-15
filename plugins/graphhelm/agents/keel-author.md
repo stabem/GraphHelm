@@ -42,6 +42,10 @@ Standing limits (a brief does not repeat them):
 - Never run `git stash` (the stash list is shared across worktrees): work to set aside is
   committed on its own branch or copied to a file.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
+- Report once (`KEEL.md`, "One report"), when the task is done or blocked. Wait for your own
+  background commands inside your turn; never end the turn to wait on one.
+- If the identity line in your brief names a role instead of a session that can be messaged, say so
+  in your report and still use it.
 - Never GitHub Actions. Never read an owner token. Never approve, confirm or mark-safe a journey.
 - A fixture uses a fresh directory and only ports that `fixture.sh` accepts; if a port is busy,
   wait and retry, never stop a process that is not yours. Stop what you start.

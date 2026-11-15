@@ -154,7 +154,9 @@ def _git_subcommand(args):
     i = 0
     while i < len(args) and args[i].startswith("-"):
         i += 2 if args[i] in GIT_OPTIONS_WITH_VALUE else 1
-    return (args[i], args[i + 1:]) if i < len(args) else (None, [])
+    if i >= len(args):
+        return None, []
+    return args[i], args[i + 1:]
 
 
 def refusal(command, tool="Bash"):

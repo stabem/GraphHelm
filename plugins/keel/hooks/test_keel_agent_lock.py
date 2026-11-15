@@ -71,6 +71,7 @@ CALLERS = {
     "other:keel-author": False,
     "keel:keel-authority": False,
     "keel:keel-journey-qa": False,
+    "graphhelm:keel-journey-qa": False,
     "general-purpose": False,
     7: False,
 }

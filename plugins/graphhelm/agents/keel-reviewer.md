@@ -34,7 +34,12 @@ Standing limits (a brief does not repeat them):
 - Skills (`KEEL.md`, "Model roles"). Your verdict comment carries exactly one line: `Skills: <the
   skills loaded, in order>`, equal to the Skill calls you made. Check that the PR body carries the
   author's line and that the author's step skill is among the skills it names; a missing line is a
-  finding.
+  finding. List only skills you loaded through the Skill tool, so a skill you have not yet called
+  (the merge skill, at verdict time) is not in it.
+- Run the Keel check with the card. Save the PR body to a file and pass it as `--card` to
+  `graphhelm keel check`; without it the check cannot measure scope. A body whose paths are
+  derived from the diff ("the N files in the diff"), or a "surface over budget" answer with no body
+  line saying who decided not to split and why, is a finding (`keel/KEEL_REVIEW.md`).
 - A command expected to run long is started in the background and its result read when it ends;
   never wait on it with `sleep`.
 - Every child process runs hidden; no console window. Bound every command with a timeout.

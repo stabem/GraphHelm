@@ -150,5 +150,30 @@ class BlockAndCardPaths(unittest.TestCase):
                 self.assertIn(text, reviewer, f"{where}/keel-reviewer: missing {text!r}")
 
 
+class ReportOnceIdentityAndReviewerRows(unittest.TestCase):
+    """The fifth reading (#2984): each agent states the rows that bind it."""
+
+    def test_agents_state_report_once_and_role_identity_line_in_both_plugins(self):
+        for tree in (AGENTS, KEEL_AGENTS):
+            for name in ("keel-author", "keel-reviewer"):
+                _, body = split(tree / f"{name}.md")
+                flat = " ".join(body.split())
+                where = f"{tree.parent.name}/{name}"
+                for text in ("Report once", "never end the turn to wait on one",
+                             "names a role instead of a session that can be messaged",
+                             "say so in your report and still use it"):
+                    self.assertIn(text, flat, f"{where}: missing {text!r}")
+
+    def test_reviewer_blocks_an_unparseable_body_and_lists_skills_up_to_the_verdict_in_both_plugins(self):
+        for tree in (AGENTS, KEEL_AGENTS):
+            _, body = split(tree / "keel-reviewer.md")
+            flat = " ".join(body.split())
+            where = f"{tree.parent.name}/keel-reviewer"
+            for text in ("cannot parse (input error) is a BLOCK that asks only for the body to be fixed",
+                         "Never write or restate the card yourself",
+                         "your final report lists all of them"):
+                self.assertIn(text, flat, f"{where}: missing {text!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

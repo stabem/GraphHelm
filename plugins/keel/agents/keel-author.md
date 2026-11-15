@@ -43,6 +43,10 @@ Standing limits (a brief does not repeat them):
 - Never run `git stash` (the stash list is shared across worktrees): work to set aside is
   committed on its own branch or copied to a file.
 - Every child process runs hidden; no console window. Bound every command with a timeout.
+- Report once (`KEEL.md`, "One report"), when the task is done or blocked. Wait for your own
+  background commands inside your turn; never end the turn to wait on one.
+- If the identity line in your brief names a role instead of a session that can be messaged, say so
+  in your report and still use it.
 - Never read a token or secret. No local path, user name or machine detail in public text.
 - The PR body lives in a file inside your worktree, uncommitted. Do not merge.
 

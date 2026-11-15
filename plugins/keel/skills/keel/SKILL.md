@@ -124,8 +124,25 @@ The strongest model decides, the middle one builds, the strongest checks and the
   is in the PR body; the reviewer's is in the verdict comment. The reviewer checks that the PR body
   carries it (`keel/KEEL_REVIEW.md`).
 - **The skills line.** The author's PR body and the reviewer's verdict comment each carry one line
-  `Skills: <the skills loaded, in order>`, equal to the Skill calls the agent made. The reviewer
-  checks the PR body's line (`keel/KEEL_REVIEW.md`).
+  `Skills: <the skills loaded, in order>`, equal to the Skill calls the agent made. The line in the
+  verdict comment lists the skills loaded up to that comment; the final report lists all of them.
+  The reviewer compares each line with the calls made up to that point (`keel/KEEL_REVIEW.md`).
+- **One report.** An agent reports once, when the task is done or blocked. It waits for its own
+  background commands inside its turn and never ends the turn to wait.
+
+## The orchestrator's rules
+
+- **The main checkout is read-only history.** The orchestrator never runs `git reset`,
+  `git checkout -- <paths>` or any other command that rewrites history or the tree in the main
+  checkout. To read or deploy what landed, it runs `git fetch` and uses a worktree at the fetched
+  sha. Before any command in the main checkout it reads `git status -sb`; ahead of the remote or
+  dirty means another writer is there: it leaves the checkout alone and says so.
+- **The identity line names a session.** The orchestrator reads its own session name from the host
+  at each brief, never from memory or a summary. A line that names the agent's role is wrong; an
+  agent handed one says so in its report and still uses it.
+- **The brief names only what exists.** Before the brief, the orchestrator checks that every symbol
+  and file it names exists on the base the author will cut from (the remote branch, not the local
+  checkout).
 
 ## After a BLOCK
 

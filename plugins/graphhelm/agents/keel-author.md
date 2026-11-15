@@ -45,7 +45,9 @@ Standing limits (a brief does not repeat them):
 - Report once (`KEEL.md`, "One report"), when the task is done or blocked. Wait for your own
   background commands inside your turn; never end the turn to wait on one.
 - If the identity line in your brief names a role instead of a session that can be messaged, say so
-  in your report and still use it.
+  in your report and still use it. Wrong is a line whose name *is* a role (`Session: keel-author
+  <task>`). A session name with your role in parentheses after it (`Session: <session name> [ref]
+  (keel-author subagent)`) is the required form, not an error: do not flag it.
 - Never GitHub Actions. Never read an owner token. Never approve, confirm or mark-safe a journey.
 - A fixture uses a fresh directory and only ports that `fixture.sh` accepts; if a port is busy,
   wait and retry, never stop a process that is not yours. Stop what you start.

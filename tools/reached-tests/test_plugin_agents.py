@@ -164,6 +164,23 @@ class ReportOnceIdentityAndReviewerRows(unittest.TestCase):
                              "say so in your report and still use it"):
                     self.assertIn(text, flat, f"{where}: missing {text!r}")
 
+    def test_author_and_reviewer_say_the_role_in_parentheses_is_the_required_form_in_both_plugins(self):
+        for tree in (AGENTS, KEEL_AGENTS):
+            for name in ("keel-author", "keel-reviewer"):
+                _, body = split(tree / f"{name}.md")
+                flat = " ".join(body.split())
+                where = f"{tree.parent.name}/{name}"
+                for text in ("Wrong is a line whose name *is* a role",
+                             f"({name} subagent)`) is the required form, not an error"):
+                    self.assertIn(text, flat, f"{where}: missing {text!r}")
+
+    def test_scout_and_journey_qa_state_report_once(self):
+        for path in (KEEL_AGENTS / "keel-scout.md", AGENTS / "keel-journey-qa.md"):
+            _, body = split(path)
+            flat = " ".join(body.split())
+            for text in ('Report once (`KEEL.md`, "One report")',):
+                self.assertIn(text, flat, f"{path.name}: missing {text!r}")
+
     def test_reviewer_blocks_an_unparseable_body_and_lists_skills_up_to_the_verdict_in_both_plugins(self):
         for tree in (AGENTS, KEEL_AGENTS):
             _, body = split(tree / "keel-reviewer.md")

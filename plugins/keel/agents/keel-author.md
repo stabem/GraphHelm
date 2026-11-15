@@ -46,7 +46,9 @@ Standing limits (a brief does not repeat them):
 - Report once (`KEEL.md`, "One report"), when the task is done or blocked. Wait for your own
   background commands inside your turn; never end the turn to wait on one.
 - If the identity line in your brief names a role instead of a session that can be messaged, say so
-  in your report and still use it.
+  in your report and still use it. Wrong is a line whose name *is* a role (`Session: keel-author
+  <task>`). A session name with your role in parentheses after it (`Session: <session name> [ref]
+  (keel-author subagent)`) is the required form, not an error: do not flag it.
 - Never read a token or secret. No local path, user name or machine detail in public text.
 - The PR body lives in a file inside your worktree, uncommitted. Do not merge.
 

@@ -1,9 +1,9 @@
 {
-  "description": "Keel agent lock: a Keel agent is refused a heredoc, a sleep and a git stash in a shell command. Any other caller, and any failure of the hook, lets the command through.",
+  "description": "Keel agent lock: a Keel agent is refused a heredoc, a sleep and a git stash in a shell command, and a brief that starts a Keel agent needs a Session line whose name is not a role. Any other caller, and any failure of the hook, lets the call through.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell",
+        "matcher": "Bash|PowerShell|Agent",
         "hooks": [
           {
             "type": "command",

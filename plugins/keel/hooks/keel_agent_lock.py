@@ -1,9 +1,15 @@
-"""Keel agent lock (#2987): a PreToolUse hook that refuses three shell forms, for Keel agents only.
+"""Keel agent lock (#2987, #2989): a PreToolUse hook that refuses three shell forms for Keel agents, and a brief that starts a Keel agent with a bad identity line.
 
 The agent files say "no heredoc", "no sleep", "never git stash" and agents broke each of them. This
 is the machine side of those sentences. It reads the host's PreToolUse JSON on stdin; the caller is
 `agent_type` (absent in a main session, `<plugin>:<agent>` in a plugin subagent; observed on Claude
 Code 2.1.323). A caller that is not one of the names below is never touched.
+
+The tool that starts an agent is `Agent`; its input carries `prompt` and
+`subagent_type` (host hooks documentation, PreToolUse tool input). Starting a Keel agent
+(`keel-author`, `keel-reviewer`, `keel-scout`, `keel-journey-qa`, bare or `keel:`/`graphhelm:` prefixed) is
+refused from any caller unless some `Session:` line in the brief has a non-empty name that does not begin
+with a Keel role name. Any other agent type is never refused.
 
 A refusal is exit 0 with a `permissionDecision: deny` reply, never exit 2. Any failure of the hook
 itself lets the command through and says so in a `systemMessage`. It spawns nothing and imports no
@@ -22,16 +28,24 @@ KEEL_AGENTS = frozenset({
     "graphhelm:keel-author", "graphhelm:keel-reviewer",
 })
 SHELL_TOOLS = ("Bash", "PowerShell")
+AGENT_TOOLS = ("Agent",)
+ROLE_NAMES = ("keel-author", "keel-reviewer", "keel-scout", "keel-journey-qa")
 
 MESSAGES = {
     "heredoc": ("Keel rule: no heredoc in a shell command. Write the text to a file with the Write tool "
                 "and pass its path (git commit -F <file>, gh pr create --body-file <file>)."),
     "sleep": ("Keel rule: no sleep. Wait on the command itself: run it in the background and read its "
               "result when it ends, or give the command a timeout; never poll with a delay."),
+    "session": ("Keel rule: the brief to a Keel agent needs an identity line `Session: <session name> [ref] "
+                "(keel-author subagent)`. The session name comes first and is never a Keel role name; the role "
+                "goes in parentheses after it. Read the session name from the host, then brief again."),
     "stash": ("Keel rule: never git stash (the stash list is shared across worktrees). Commit the work "
               "on its own branch, or copy it to a file; only `git stash list` and `git stash show` are allowed."),
 }
 
+ROLE_PATTERN = "(?:(?:keel|graphhelm):)?(?:" + "|".join(ROLE_NAMES) + ")"
+SESSION_LINE = re.compile(r"Session:[ \t]*([^\n`]*)")
+TIMEOUT_OPTIONS_WITH_VALUE = frozenset({"-s", "--signal", "-k", "--kill-after"})
 HEREDOC = re.compile(r"(?<!<)<<(?![<=])-?\s*[\w\\]")
 SEPARATORS = re.compile(r"[;|&\n(){}`]+")
 SKIPPED_WORDS = frozenset({"then", "do", "else", "elif", "if", "while", "until", "!", "time", "command",
@@ -141,8 +155,17 @@ def code_text(command, tool):
 
 def _first_words(segment):
     words = segment.split()
-    while words and (words[0] in SKIPPED_WORDS or re.fullmatch(r"[A-Za-z_]\w*=\S*", words[0])):
-        words.pop(0)
+    while words:
+        if words[0] in SKIPPED_WORDS or re.fullmatch(r"[A-Za-z_]\w*=\S*", words[0]):
+            words.pop(0)
+        elif _base(words[0]) in ("timeout", "timeout.exe"):
+            words.pop(0)
+            while words and words[0].startswith("-"):
+                del words[:2 if words[0] in TIMEOUT_OPTIONS_WITH_VALUE else 1]
+            if words:
+                words.pop(0)  # the duration
+        else:
+            break
     return words
 
 
@@ -178,19 +201,35 @@ def refusal(command, tool="Bash"):
     return None
 
 
+def _agent_refusal(tool_input):
+    """(rule, message) when this Agent call starts a Keel agent with a bad identity line, else None."""
+    if not isinstance(tool_input, dict):
+        return None
+    agent = tool_input.get("subagent_type")
+    if not isinstance(agent, str) or not re.fullmatch(ROLE_PATTERN, agent.strip(), re.IGNORECASE):
+        return None
+    prompt = tool_input.get("prompt")
+    for found in SESSION_LINE.finditer(prompt if isinstance(prompt, str) else ""):
+        name = re.sub(r"^[\s<*\"'(\[]+", "", found.group(1))
+        if name and not re.match(ROLE_PATTERN, name, re.IGNORECASE):
+            return None  # one good line is enough: a brief may quote the wrong form before the real line
+    return "session", MESSAGES["session"]
+
+
 def decide(raw):
     """The JSON line to print for this stdin (bytes), or None to say nothing. Never raises."""
     try:
         event = json.loads(raw.decode("utf-8", errors="replace"))
         if not isinstance(event, dict):
             raise ValueError("input is not an object")
-        if not is_keel_agent(event.get("agent_type")) or event.get("tool_name") not in SHELL_TOOLS:
-            return None
         tool_input = event.get("tool_input")
-        command = tool_input.get("command") if isinstance(tool_input, dict) else None
-        if not isinstance(command, str):
+        if event.get("tool_name") in AGENT_TOOLS:
+            found = _agent_refusal(tool_input)
+        elif is_keel_agent(event.get("agent_type")) and event.get("tool_name") in SHELL_TOOLS:
+            command = tool_input.get("command") if isinstance(tool_input, dict) else None
+            found = refusal(command, event["tool_name"]) if isinstance(command, str) else None
+        else:
             return None
-        found = refusal(command, event["tool_name"])
         if found is None:
             return None
         return json.dumps({"hookSpecificOutput": {

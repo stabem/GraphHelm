@@ -37,6 +37,10 @@ REFUSED = [
     ("git -C x stash pop", "stash"),
     ("git -c core.pager=cat stash apply", "stash"),
     ("cd x && git stash", "stash"),
+    ("timeout 5 sleep 1", "sleep"),
+    ("timeout -s KILL 5 sleep 1", "sleep"),
+    ("timeout --signal=KILL --kill-after 2 5 sleep 1", "sleep"),
+    ("make && timeout 5m git stash", "stash"),
 ]
 PASSED = [
     ("", None),
@@ -58,6 +62,33 @@ PASSED = [
     ("./sleep.sh 5", None),
     ("echo sleep 5", None),
     ("git status", None),
+    ("timeout 30 python x.py", None),
+    ("timeout -s KILL 30 python sleep.py", None),
+    ("timeout 5", None),
+]
+
+
+def agent_call(subagent_type, prompt, tool="Agent"):
+    return json.dumps({"tool_name": tool, "tool_input": {"subagent_type": subagent_type, "prompt": prompt}}).encode()
+
+
+BAD_BRIEFS = [
+    "no identity line at all",
+    "Session: keel-author fix the lock",
+    "Session: keel-reviewer",
+    "`Session: keel-author <task>` is what I was given",
+    "Session: <keel-scout> [x]",
+    "Session: keel:keel-author [a1]",
+    "Session: Keel-Author [a1]",
+    "Session:",
+    "Session: `keel-author`",
+]
+GOOD_BRIEFS = [
+    "Session: Token economy [a39368] (keel-author subagent) · Head: f4c6ea82",
+    "`Session: Token economy GraphHelm subagents [a39368] (keel-author subagent)`",
+    "Session: orchestrator without a ref (keel-reviewer subagent)",
+    "Do the task.\nSession: <session name> [ref]",
+    "Wrong: `Session: keel-author`\nSession: Real name [a1] (keel-reviewer subagent)",
 ]
 CALLERS = {
     "keel:keel-author": True,
@@ -120,6 +151,29 @@ class KeelAgentLock(unittest.TestCase):
         self.assertIsNone(lock.decide(clean))
         other_tool = json.dumps({**event, "agent_type": "keel:keel-author", "tool_name": "Read"}).encode()
         self.assertIsNone(lock.decide(other_tool))
+
+    def test_a_brief_that_starts_a_keel_agent_needs_a_session_name_that_is_not_a_role(self):
+        for agent in ("keel-author", "keel:keel-reviewer", "graphhelm:keel-scout", "keel-journey-qa"):
+            for brief in BAD_BRIEFS:
+                with self.subTest(agent=agent, brief=brief):
+                    out = json.loads(lock.decide(agent_call(agent, brief)))["hookSpecificOutput"]
+                    self.assertEqual(out["permissionDecision"], "deny")
+                    self.assertIn("Session:", out["permissionDecisionReason"])
+                    self.assertIn("(keel-author subagent)", out["permissionDecisionReason"])
+            for brief in GOOD_BRIEFS:
+                with self.subTest(agent=agent, brief=brief):
+                    self.assertIsNone(lock.decide(agent_call(agent, brief)))
+        self.assertIn("deny", lock.decide(agent_call("keel-author", 5)))
+
+    def test_any_other_agent_is_never_refused(self):
+        for agent in ("general-purpose", "Explore", "other:keel-author", "keel:keel-authority", "", None, 7):
+            with self.subTest(agent=agent):
+                self.assertIsNone(lock.decide(agent_call(agent, "Session: keel-author")))
+        for raw in (b'{"tool_name": "Agent"}', b'{"tool_name": "Agent", "tool_input": []}'):
+            self.assertIsNone(lock.decide(raw))
+        self.assertIsNone(lock.decide(json.dumps({"tool_name": "Agent", "tool_input": {"prompt": "x"}}).encode()))
+        self.assertIsNone(lock.decide(json.dumps({"tool_name": "Read", "tool_input": {
+            "subagent_type": "keel-author", "prompt": "x"}}).encode()))
 
     def test_a_broken_input_lets_the_command_through_and_says_so(self):
         for raw in (b"", b"not json", b"[]", b'{"agent_type": "keel:keel-author", "tool_name": "Bash"}',

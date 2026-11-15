@@ -107,7 +107,7 @@
         ]
       },
       {
-        "matcher": "Bash|PowerShell",
+        "matcher": "Bash|PowerShell|Agent",
         "hooks": [
           {
             "type": "command",

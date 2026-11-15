@@ -50,10 +50,14 @@ when the tool is not in the agent's tool list). The scout never calls it.
 
 ## Agent lock (hook)
 
-`hooks/hooks.json` declares one `PreToolUse` hook on `Bash` and `PowerShell`. It refuses, for the
+`hooks/hooks.json` declares one `PreToolUse` hook on `Bash`, `PowerShell` and `Agent`. A call to the
+`Agent` tool that starts a Keel agent (`keel-author`, `keel-reviewer`, `keel-scout`, `keel-journey-qa`,
+bare or prefixed `keel:` or `graphhelm:`) is refused, from any caller, unless its brief has a
+`Session:` line whose name is not a Keel role name; the role goes in parentheses after the name. Any
+other agent type is never refused. For shell commands it refuses, for the
 plugin's own agents only (`keel:keel-author`, `keel:keel-reviewer`, `keel:keel-scout`, and
 `graphhelm:keel-author` and `graphhelm:keel-reviewer` from the graphhelm plugin), a shell command
-that holds a heredoc, runs `sleep` or `Start-Sleep`, or runs `git stash` with anything but `list` or
+that holds a heredoc, runs `sleep` or `Start-Sleep` (also behind `timeout <duration>`), or runs `git stash` with anything but `list` or
 `show`. The refusal names the rule and the allowed form. The host tells the hook who is calling with
 the `agent_type` field of its input, which is absent in a main session; a main session, any other
 agent and the scout's neighbours are never refused. The hook spawns nothing, and a failure or a

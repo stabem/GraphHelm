@@ -92,9 +92,12 @@ def with_pointer(current):
 def write_pointer(root, out):
     for name in POINTER_FILES:
         path = root / name
-        current = path.read_bytes().decode("utf-8") if path.exists() else ""
+        raw = path.read_bytes().decode("utf-8") if path.exists() else ""
+        current = raw.replace("\r\n", "\n")  # a CRLF copy of the same block is the same block
         updated = with_pointer(current)
         if updated != current:
+            if "\r\n" in raw:
+                updated = updated.replace("\n", "\r\n")  # the file keeps its line-ending style
             path.write_bytes(updated.encode("utf-8"))
             out.append(f"wrote the Keel pointer in {name}")
 

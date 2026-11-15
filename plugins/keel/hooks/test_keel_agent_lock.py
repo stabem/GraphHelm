@@ -170,7 +170,7 @@ class KeelAgentLock(unittest.TestCase):
         self.assertIsNone(lock.decide(json.dumps({"tool_name": "Read", "tool_input": {
             "subagent_type": "keel-author", "prompt": "x"}}).encode()))
 
-    def test_an_agent_call_without_a_usable_input_is_not_refused_unless_it_names_a_keel_agent(self):
+    def test_an_unusable_agent_input_is_not_refused_unless_it_names_a_keel_agent(self):
         for raw in (b'{"tool_name": "Agent"}', b'{"tool_name": "Agent", "tool_input": []}'):
             with self.subTest(raw=raw):
                 self.assertIsNone(lock.decide(raw))

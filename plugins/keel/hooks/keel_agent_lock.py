@@ -201,7 +201,7 @@ def refusal(command, tool="Bash"):
     return None
 
 
-def agent_refusal(tool_input):
+def _agent_refusal(tool_input):
     """(rule, message) when this Agent call starts a Keel agent with a bad identity line, else None."""
     if not isinstance(tool_input, dict):
         return None
@@ -226,7 +226,7 @@ def decide(raw):
             raise ValueError("input is not an object")
         tool_input = event.get("tool_input")
         if event.get("tool_name") in AGENT_TOOLS:
-            found = agent_refusal(tool_input)
+            found = _agent_refusal(tool_input)
         elif is_keel_agent(event.get("agent_type")) and event.get("tool_name") in SHELL_TOOLS:
             command = tool_input.get("command") if isinstance(tool_input, dict) else None
             found = refusal(command, event["tool_name"]) if isinstance(command, str) else None

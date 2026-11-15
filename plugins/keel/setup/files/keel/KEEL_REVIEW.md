@@ -46,7 +46,9 @@ review subagents' cache writes there).
    see the noise. A single count is not a measurement.
 6. **Check the advisor line.** The PR body carries exactly one `Advisor:` line in one of the three
    forms `KEEL.md` defines (Model roles). A missing or malformed line is a finding. Your own
-   verdict comment carries your line too.
+   verdict comment carries your line too. Check the `Skills:` line next to it: the PR body carries
+   one line `Skills: <the skills loaded, in order>`, and the author's step skill is among them. A
+   missing line is a finding. Your own verdict comment carries your `Skills:` line too.
 7. **Try to break the promise** a user would see, not only the tests.
    **Reach of each new rule.** For every rule, check or branch the change adds inside a loop,
    dispatcher or match, name the inputs it must see and every earlier exit (`continue`, `return`,

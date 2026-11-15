@@ -135,6 +135,30 @@ class KeelPlugin(unittest.TestCase):
             self.assertTrue(agents.startswith("# rules\n"))
             self.assertEqual(agents.count(keel_setup.POINTER), 1)
 
+    def test_setup_pointer_keeps_the_files_line_endings_and_ignores_a_crlf_copy_of_the_block(self):
+        block = keel_setup.BLOCK
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            has = f"# rules\n\n{block}\n".replace("\n", "\r\n")
+            (root / "CLAUDE.md").write_bytes(has.encode("utf-8"))
+            (root / "AGENTS.md").write_bytes(b"# rules\r\nmore\r\n")
+            before = (root / "CLAUDE.md").read_bytes()
+            code, out = self.run_setup(root)
+            self.assertEqual(code, 0)
+            self.assertNotIn("CLAUDE.md", out)
+            self.assertEqual((root / "CLAUDE.md").read_bytes(), before)
+            self.assertIn("wrote the Keel pointer in AGENTS.md", out)
+            agents = (root / "AGENTS.md").read_bytes()
+            self.assertEqual(agents.count(b"\n"), agents.count(b"\r\n"), "a bare LF in a CRLF file")
+            self.assertEqual(agents.count(keel_setup.POINTER.encode()), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_bytes(b"# rules\n")
+            self.run_setup(root)
+            agents = (root / "AGENTS.md").read_bytes()
+            self.assertNotIn(b"\r", agents)
+            self.assertEqual(agents, f"# rules\n\n{block}\n".encode())
+
     def run_setup(self, root, *flags):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):

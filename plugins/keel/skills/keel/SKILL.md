@@ -108,8 +108,9 @@ The strongest model decides, the middle one builds, the strongest checks and the
 - **Check: the blind reviewer**, on the strongest model, who did not write the change.
 - **Advisor.** When the session has an advisor configured, the builder consults it at three
   moments: before the plan is fixed, when the same error comes back a second time, and before
-  reporting the work done. With no advisor configured, this rule asks nothing. The owner turns an
-  advisor on; Keel never writes the setting.
+  reporting the work done. With no advisor configured, this rule asks nothing. The Keel installer
+  turns it on in a project (`advisorModel` in the project's `.claude/settings.json`, opt out with
+  `--no-advisor`); the scout never calls it.
 
 ## Talking to GraphHelm
 

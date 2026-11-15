@@ -5,6 +5,8 @@ text byte for byte. A difference on either side is a rule written in two places:
 until `python tools/keel-plugin/sync_keel_plugin.py` copies the KEEL file into its skill again.
 Cost: reads a handful of files; offline.
 """
+import contextlib
+import io
 import json
 import re
 import sys
@@ -106,7 +108,7 @@ class KeelPlugin(unittest.TestCase):
             root = Path(empty)
             keel_setup.main(["keel_setup", str(root)])
             first = snapshot(root)
-            self.assertEqual(sorted(first), sorted([*keel_setup.FILES, "AGENTS.md", "CLAUDE.md"]))
+            self.assertEqual(sorted(first), sorted([*keel_setup.FILES, "AGENTS.md", "CLAUDE.md", keel_setup.SETTINGS]))
             for name in keel_setup.POINTER_FILES:
                 self.assertEqual(first[name].decode("utf-8").count(keel_setup.POINTER), 1, name)
             keel_setup.main(["keel_setup", str(root)])
@@ -120,6 +122,66 @@ class KeelPlugin(unittest.TestCase):
             agents = (root / "AGENTS.md").read_bytes().decode("utf-8")
             self.assertTrue(agents.startswith("# rules\n"))
             self.assertEqual(agents.count(keel_setup.POINTER), 1)
+
+    def run_setup(self, root, *flags):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = keel_setup.main(["keel_setup", str(root), *flags])
+        return code, out.getvalue()
+
+    def test_setup_advisor_step_keeps_what_the_project_decided_and_reports_what_it_cannot_use(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = root / ".claude" / "settings.json"
+            self.assertEqual(self.run_setup(root)[0], 0)
+            self.assertEqual(json.loads(settings.read_bytes()), {"advisorModel": "fable"})
+            # Already installed: the step still runs, and a settings file made since is completed.
+            settings.write_bytes(b'{"model": "sonnet", "permissions": {"allow": ["Read"]}}\r\n')
+            self.run_setup(root)
+            raw = settings.read_bytes()
+            self.assertEqual(json.loads(raw), {"model": "sonnet", "permissions": {"allow": ["Read"]},
+                                               "advisorModel": "fable"})
+            self.assertIn(b"\r\n", raw)
+            self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+            self.run_setup(root)
+            self.assertEqual(settings.read_bytes(), raw, "a second run changed bytes")
+            settings.write_bytes(b'{"advisorModel": "opus"}')
+            code, said = self.run_setup(root)
+            self.assertEqual((code, settings.read_bytes()), (0, b'{"advisorModel": "opus"}'))
+            self.assertIn("already sets it", said)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.run_setup(root, "--no-advisor")
+            self.assertFalse((root / ".claude").exists())
+            self.run_setup(root, "--advisor", "opus")
+            self.assertEqual(json.loads((root / ".claude" / "settings.json").read_bytes()), {"advisorModel": "opus"})
+
+        for content in (b"{not json", b"[1, 2]", b"3", b""):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / ".claude").mkdir()
+                (root / ".claude" / "settings.json").write_bytes(content)
+                code, said = self.run_setup(root)
+                self.assertEqual(code, 1)
+                self.assertEqual((root / ".claude" / "settings.json").read_bytes(), content)
+                self.assertTrue((root / "KEEL.md").is_file(), "the other steps must still run")
+                self.assertIn("left .claude/settings.json alone", said)
+
+    def test_setup_reports_a_real_difference_but_not_a_line_ending_difference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.run_setup(root, "--no-advisor")
+            keel = root / "KEEL.md"
+            bundled = keel.read_bytes()
+            keel.write_bytes(bundled.replace(b"\n", b"\r\n"))
+            code, said = self.run_setup(root, "--no-advisor")
+            self.assertNotIn("differs", said)
+            changed = bundled.replace(b"Keel", b"Kiel", 1)
+            keel.write_bytes(changed)
+            code, said = self.run_setup(root, "--no-advisor")
+            self.assertIn("kept the project's KEEL.md: it differs", said)
+            self.assertEqual(keel.read_bytes(), changed)
 
     def test_each_skill_is_named_after_its_folder(self):
         for skill in [*sync.SKILLS, *sync.HAND_WRITTEN]:

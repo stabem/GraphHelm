@@ -16,10 +16,19 @@ The plugin ships three subagent types (`agents/`), one per model role in `KEEL.m
 
 They name only skills this plugin ships. They take effect after the plugin is reinstalled.
 
-## Advisor (the owner's setting)
+## Advisor (set by the installer)
 
-Claude Code has an experimental advisor: a stronger model the working model can consult. The owner
-turns it on with `/advisor <model>`, with `advisorModel` in the Claude Code settings, or with
-`--advisor`. This plugin does not write settings and its manifest cannot set it. When an advisor is
-configured, `KEEL.md` asks the builder to consult it before the plan is fixed, when the same error
-comes back a second time, and before reporting done; with none configured, nothing is asked.
+Claude Code has an experimental advisor: a stronger model the working model can consult.
+`keel_setup.py <project>` writes `"advisorModel": "fable"` into `<project>/.claude/settings.json` on
+every run: it creates the file, or adds only that key and keeps the rest; an existing `advisorModel`
+is left alone. `--advisor <model>` picks another value, `--no-advisor` skips the step. A settings
+file that is not a JSON object is not touched and the run exits 1 after its other steps. The plugin
+manifest cannot set it, and user-level settings are never written.
+
+Three risks. A committed project value overrides each collaborator's own advisor choice. `fable`
+needs access to that model; when a pairing is unavailable Claude Code drops it without an error, so
+the setting is then silently off. The advisor itself is experimental.
+
+When an advisor is configured, `KEEL.md` asks the builder to consult it before the plan is fixed,
+when the same error comes back a second time, and before reporting done; with none configured,
+nothing is asked. The scout never calls it.

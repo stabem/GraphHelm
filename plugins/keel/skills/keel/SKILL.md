@@ -145,6 +145,14 @@ The strongest model decides, the middle one builds, the strongest checks and the
 - **The brief names only what exists.** Before the brief, the orchestrator checks that every symbol
   and file it names exists on the base the author will cut from (the remote branch, not the local
   checkout).
+- **Read-only work goes to the scout.** An audit, a census, a "where is X" or a triage of issues
+  writes nothing: it goes to `keel-scout`. A Keel orchestrator never briefs `general-purpose` for
+  work that writes nothing.
+- **A mechanical task still goes to the author, on the cheapest model.** A task with no judgement
+  in it (only a pull request body, only a commit message, a rebase with no conflict) goes to
+  `keel-author`, started with the cheapest model as the per-call model override. The brief says why.
+- **One brief carries one promise.** A request with two promises is two briefs and two pull
+  requests, even when the files are few. The orchestrator splits before the brief, not after the run.
 
 ## After a BLOCK
 

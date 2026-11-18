@@ -174,6 +174,13 @@ class ReportOnceIdentityAndReviewerRows(unittest.TestCase):
                              f"({name} subagent)`) is the required form, not an error"):
                     self.assertIn(text, flat, f"{where}: missing {text!r}")
 
+    def test_keel_md_states_the_three_model_per_task_rules_for_the_orchestrator(self):
+        flat = " ".join((ROOT / "KEEL.md").read_text(encoding="utf-8").split())
+        for text in ("never briefs `general-purpose` for work that writes nothing",
+                     "started with the cheapest model as the per-call model override",
+                     "One brief carries one promise"):
+            self.assertIn(text, flat)
+
     def test_scout_and_journey_qa_state_report_once(self):
         for path in (KEEL_AGENTS / "keel-scout.md", AGENTS / "keel-journey-qa.md"):
             _, body = split(path)

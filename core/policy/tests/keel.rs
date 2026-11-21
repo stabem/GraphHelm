@@ -775,3 +775,34 @@ fn a_body_without_a_filled_identity_line_warns_at_the_card_path() {
         assert!(!findings[0].blocking);
     }
 }
+
+#[test]
+fn a_body_without_a_filled_skills_line_warns_at_the_card_path() {
+    for body in [
+        "Skills: keel:keel, keel:keel-exec\n",
+        "- **Skills:** keel:keel\n",
+        "\u{feff}Skills: keel:keel\n",
+        "## Skills usadas\n\n- keel:keel\n",
+        "### Skills used\nkeel:keel\n",
+        "Skills usadas: keel:keel\n",
+        "Skills:\n- keel:keel\n",
+    ] {
+        assert!(
+            graphhelm_policy::keel::check_skills_line(body).is_empty(),
+            "{body}"
+        );
+    }
+    for body in [
+        "Promise: x\nCloses #1\n",
+        "Skills:\n",
+        "Skills: <the skills loaded, in order>\n",
+        "## Skills usadas\n\n## Next\n",
+        "## Skills usadas\n",
+    ] {
+        let findings = graphhelm_policy::keel::check_skills_line(body);
+        assert_eq!(findings.len(), 1, "{body}");
+        assert_eq!(findings[0].rule, "keel.card.skills_line_missing");
+        assert_eq!(findings[0].path.as_deref(), Some("/card"));
+        assert!(!findings[0].blocking);
+    }
+}

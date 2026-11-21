@@ -495,6 +495,53 @@ fn identity_line_is_filled(line: &str) -> bool {
     !name.contains(['<', '>']) && !name.replace('·', "").trim().is_empty() && sha_len >= 8
 }
 
+/// `keel.card.skills_line_missing`: a pull request body must carry a skills line, either
+/// `Skills: <names>` or a `Skills usadas` / `Skills used` heading with a name under it. Absent, empty
+/// or a `<...>` template is a warning, for the same reason as the identity line.
+#[must_use]
+pub fn check_skills_line(body: &str) -> Vec<Finding> {
+    let body = body.trim_start_matches('\u{feff}');
+    let lines: Vec<&str> = body.lines().collect();
+    if (0..lines.len()).any(|index| skills_line_is_filled(&lines, index)) {
+        return Vec::new();
+    }
+    vec![Finding {
+        rule: "keel.card.skills_line_missing".into(),
+        blocking: false,
+        path: Some("/card".into()),
+        detail: "no filled `Skills: <the skills loaded, in order>` line (or `Skills usadas` \
+                 heading with a name under it); the skills line is compared with the Skill calls \
+                 the author made"
+            .into(),
+    }]
+}
+
+fn skills_line_is_filled(lines: &[&str], index: usize) -> bool {
+    let line = decorated_text(lines[index]);
+    let lower = line.to_ascii_lowercase();
+    let has_name = |text: &str| !text.trim().is_empty() && !text.contains(['<', '>']);
+    let Some(heading) = ["skills:", "skills usadas", "skills used", "skills-used"]
+        .into_iter()
+        .find(|heading| lower.starts_with(heading))
+    else {
+        return false;
+    };
+    let same_line = line[heading.len()..].trim_start_matches([':', ' ']);
+    if !same_line.is_empty() {
+        return has_name(same_line);
+    }
+    lines[index + 1..]
+        .iter()
+        .find(|next| !next.trim().is_empty())
+        .is_some_and(|next| !next.trim_start().starts_with('#') && has_name(&decorated_text(next)))
+}
+
+fn decorated_text(line: &str) -> String {
+    line.trim()
+        .trim_start_matches(['-', '*', '+', '>', '#', ' ', '`'])
+        .replace("**", "")
+}
+
 /// A Keel contract card as `graphhelm keel check` reads it (#1330). The JSON shape is
 /// `schemas/keel-card.schema.json` in the development-contracts package: the three-line card of
 /// `docs/process/DELIVERY.md` (paths, promise, proving command) plus, for new public surface, the

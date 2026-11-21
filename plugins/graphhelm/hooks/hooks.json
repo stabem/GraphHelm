@@ -6,6 +6,21 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python",
+            "args": [
+              "-c",
+              "import runpy, sys\ntry:\n    runpy.run_path(sys.argv[1], run_name='__main__')\nexcept BaseException:\n    sys.exit(0)",
+              "${CLAUDE_PLUGIN_ROOT}/hooks/keel_route_card.py"
+            ],
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
             "command": "python \"${CLAUDE_PLUGIN_ROOT}/hooks/session_hook.py\" start --host claude",
             "timeout": 30
           }

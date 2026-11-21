@@ -1,6 +1,23 @@
 {
-  "description": "Keel agent lock: a Keel agent is refused a heredoc, a sleep and a git stash in a shell command, and a brief that starts a Keel agent needs a Session line whose name is not a role. Any other caller, and any failure of the hook, lets the call through.",
+  "description": "Keel route card at session start (static text, silent on failure). Keel agent lock: a Keel agent is refused a heredoc, a sleep and a git stash in a shell command, and a brief that starts a Keel agent needs a Session line whose name is not a role. Any other caller, and any failure of the hook, lets the call through.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "-c",
+              "import runpy, sys\ntry:\n    runpy.run_path(sys.argv[1], run_name='__main__')\nexcept BaseException:\n    sys.exit(0)",
+              "${CLAUDE_PLUGIN_ROOT}/hooks/keel_route_card.py"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|PowerShell|Agent",

@@ -9,7 +9,8 @@ The tool that starts an agent is `Agent`; its input carries `prompt` and
 `subagent_type` (host hooks documentation, PreToolUse tool input). Starting a Keel agent
 (`keel-author`, `keel-reviewer`, `keel-scout`, `keel-journey-qa`, bare or `keel:`/`graphhelm:` prefixed) is
 refused from any caller unless some `Session:` line in the brief has a non-empty name that does not begin
-with a Keel role name. Any other agent type is never refused.
+with a Keel role name, and refused when a `Session:` line outside a code span still carries a `<...>`
+placeholder in the name position (the template quoted inside a code span is not refused). Any other agent type is never refused.
 
 A refusal is exit 0 with a `permissionDecision: deny` reply, never exit 2. Any failure of the hook
 itself lets the command through and says so in a `systemMessage`. It spawns nothing and imports no
@@ -38,13 +39,15 @@ MESSAGES = {
               "result when it ends, or give the command a timeout; never poll with a delay."),
     "session": ("Keel rule: the brief to a Keel agent needs an identity line `Session: <session name> [ref] "
                 "(keel-author subagent)`. The session name comes first and is never a Keel role name; the role "
-                "goes in parentheses after it. Read the session name from the host, then brief again."),
+                "goes in parentheses after it. Read the session name from the host, fill it in (no `<...>` "
+                "placeholder left in a Session line), then brief again."),
     "stash": ("Keel rule: never git stash (the stash list is shared across worktrees). Commit the work "
               "on its own branch, or copy it to a file; only `git stash list` and `git stash show` are allowed."),
 }
 
 ROLE_PATTERN = "(?:(?:keel|graphhelm):)?(?:" + "|".join(ROLE_NAMES) + ")"
 SESSION_LINE = re.compile(r"Session:[ \t]*([^\n`]*)")
+PLACEHOLDER = re.compile(r"<[^>\n]*>")  # `<your session name>` where the name goes
 TIMEOUT_OPTIONS_WITH_VALUE = frozenset({"-s", "--signal", "-k", "--kill-after"})
 HEREDOC = re.compile(r"(?<!<)<<(?![<=])-?\s*[\w\\]")
 SEPARATORS = re.compile(r"[;|&\n(){}`]+")
@@ -209,11 +212,18 @@ def _agent_refusal(tool_input):
     if not isinstance(agent, str) or not re.fullmatch(ROLE_PATTERN, agent.strip(), re.IGNORECASE):
         return None
     prompt = tool_input.get("prompt")
-    for found in SESSION_LINE.finditer(prompt if isinstance(prompt, str) else ""):
-        name = re.sub(r"^[\s<*\"'(\[]+", "", found.group(1))
+    prompt = prompt if isinstance(prompt, str) else ""
+    good = False
+    for found in SESSION_LINE.finditer(prompt):
+        name = re.sub(r"^[\s*\"'(\[]+", "", found.group(1))
+        if PLACEHOLDER.match(name):
+            line_start = prompt.rfind("\n", 0, found.start()) + 1
+            if prompt.count("`", line_start, found.start()) % 2 == 0:
+                return "session", MESSAGES["session"]  # an unfilled template outside a code span
+            continue  # the template quoted in a code span is not the identity line
         if name and not re.match(ROLE_PATTERN, name, re.IGNORECASE):
-            return None  # one good line is enough: a brief may quote the wrong form before the real line
-    return "session", MESSAGES["session"]
+            good = True  # a brief may quote the wrong form before or after the real line
+    return None if good else ("session", MESSAGES["session"])
 
 
 def decide(raw):

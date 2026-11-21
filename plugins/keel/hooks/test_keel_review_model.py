@@ -67,7 +67,10 @@ class ReviewModelWarning(unittest.TestCase):
             self.assertEqual(review_model.last_model(path), "claude-sonnet-5-5")
             with open(path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"type": "api-request", "params": {"model": "claude-haiku-5"}}) + "\n")
-            self.assertEqual(review_model.last_model(path), "claude-haiku-5")
+                handle.write(json.dumps({"type": "assistant", "isSidechain": True,
+                                         "message": {"model": "claude-opus-5-5"}}) + "\n")
+                handle.write(json.dumps({"type": "assistant", "message": {"model": "<synthetic>"}}) + "\n")
+            self.assertEqual(review_model.last_model(path), "claude-sonnet-5-5")
 
     def test_first_turn_session_with_only_an_api_request_entry_is_read(self):
         with tempfile.TemporaryDirectory() as tmp:

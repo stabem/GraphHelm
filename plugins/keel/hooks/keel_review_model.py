@@ -36,28 +36,31 @@ OLD_SKILL_NOTE = (
 
 
 def last_model(transcript_path):
-    """The model id of the newest assistant or api-request entry in the last TAIL_BYTES, or None.
+    """The model id of the newest main-chain assistant entry in the last TAIL_BYTES, or None.
 
-    The assistant entry of the tool call that fires the hook is not written yet, so a session whose
-    first turn loads the skill has no assistant entry; the api-request entry, when the host writes
-    one, covers that."""
+    A sidechain (subagent) entry and a `<synthetic>` model are skipped. The assistant entry of the
+    tool call that fires the hook is not written yet, so a headless session whose first turn loads
+    the skill has none; then the newest api-request entry, which that host writes, covers it."""
     with open(transcript_path, "rb") as handle:
         handle.seek(0, os.SEEK_END)
         size = handle.tell()
         handle.seek(max(0, size - TAIL_BYTES))
         lines = handle.read().decode("utf-8", errors="replace").splitlines()
+    request_model = None
     for line in reversed(lines):
         try:
             entry = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or entry.get("isSidechain"):
             continue
-        holder = {"assistant": entry.get("message"), "api-request": entry.get("params")}.get(entry.get("type"))
-        model = holder.get("model") if isinstance(holder, dict) else None
-        if isinstance(model, str) and model:
-            return model
-    return None
+        if entry.get("type") == "api-request" and request_model is None:
+            request_model = (entry.get("params") or {}).get("model")
+        elif entry.get("type") == "assistant":
+            model = (entry.get("message") or {}).get("model")
+            if isinstance(model, str) and model and not model.startswith("<"):
+                return model
+    return request_model if isinstance(request_model, str) and request_model else None
 
 
 def advice(hook_input, model_of=last_model):

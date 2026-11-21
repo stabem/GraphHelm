@@ -12,6 +12,17 @@
             "additionalContextLimit": 512
           }
         ]
+      },
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/keel_codex_route_card.py\"",
+            "statusMessage": "Loading Keel route card",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionEnd": [

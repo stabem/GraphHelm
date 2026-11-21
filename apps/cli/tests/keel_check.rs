@@ -1402,7 +1402,7 @@ fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
     let body = scratch.path().join("pr-body.md");
     fs::write(
         &body,
-        "Before: x.\n\nKeel card:\n- **Promise:** added() exists\n- **Scope:** `src/lib.rs`\n- **Proof:** `cargo test`\n- Exported: `added`\n\nCloses #1\n",
+        "Before: x.\n\nKeel card:\n- **Promise:** added() exists\n- **Scope:** `src/lib.rs`\n- **Proof:** `cargo test`\n- Exported: `added`\n\nSession: Author [2ba4e9] \u{b7} Head: 0123abcd\nCloses #1\n",
     )
     .unwrap();
     let (code, reply) = run(repo.path(), Some(&body));
@@ -1415,6 +1415,46 @@ fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
     let (code, reply) = run(repo.path(), Some(&body));
     assert_ne!(code, 0, "{reply}");
     assert!(reply.to_string().contains("scopePaths"), "{reply}");
+}
+
+/// The identity line is a warning on a markdown body only: absent or a template warns at
+/// `/card`, a filled line is silent, and a JSON card is never asked for one.
+#[test]
+fn a_pr_body_without_a_filled_identity_line_warns_and_a_plain_card_does_not() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    let card_text = "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\n";
+    fs::write(&body, card_text).unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.identity_line_missing"]);
+    assert_eq!(reply["diagnostics"][0]["path"], "/card");
+    assert_eq!(reply["diagnostics"][0]["severity"], "warning");
+    fs::write(
+        &body,
+        format!("{card_text}Session: <name> [ref] \u{b7} Head: <sha8>\n"),
+    )
+    .unwrap();
+    assert_eq!(reply["data"]["recommendation"]["step"], "review");
+    assert_eq!(
+        reply["data"]["recommendation"]["paths"],
+        serde_json::json!([])
+    );
+    let (_, reply) = run(repo.path(), Some(&body));
+    assert_eq!(codes(&reply), vec!["keel.card.identity_line_missing"]);
+    assert_eq!(reply["diagnostics"][0]["path"], "/card");
+    fs::write(
+        &body,
+        format!("{card_text}Session: Author [2ba4e9] \u{b7} Head: 0123abcd\n"),
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
 }
 
 #[test]

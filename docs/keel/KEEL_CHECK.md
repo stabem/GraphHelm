@@ -56,6 +56,7 @@ declared at planning time: it is added to `keel.yaml` `surface` and capped by `m
 | `keel.scope.path_outside_card`: a changed path (added, edited, deleted or renamed, either side) is not a scope path and not under one | Yes, when a card was given and the path was read plainly. A quoted or escaped path that the checker does not decode is a warning. |
 | `keel.card.scope_empty`, `keel.card.scope_not_a_path` | Yes |
 | `keel.card.scope_too_wide`, `too_many_symbols`, `too_large` | No (warning) |
+| `keel.card.identity_line_missing` (path `/card`): a markdown card (a pull request body) has no filled identity line (the form is in `docs/process/DELIVERY.md` §4), absent or still a template. A JSON card is never checked. | No (warning); the reviewer treats it as a finding on a pull request body |
 | `keel.diff.unparseable` | Yes |
 | `keel.surface.<kind>_over_budget`, `keel.body.oversized_change` | No while `surfaceEnforcement: signal` (the shipped value) |
 | `keel.journey.no_fresh_capture`: the card names a journey, its scope touches a screen's scope path (equal, under, or containing), and that screen's newest capture is not fresh at the range head | No (warning) |

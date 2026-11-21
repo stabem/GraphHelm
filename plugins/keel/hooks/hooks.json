@@ -1,5 +1,5 @@
 {
-  "description": "Keel route card at session start (static text, silent on failure). Keel agent lock: a Keel agent is refused a heredoc, a sleep and a git stash in a shell command, and a brief that starts a Keel agent needs a Session line whose name is not a role. Any other caller, and any failure of the hook, lets the call through.",
+  "description": "Keel route card at session start (static text, silent on failure). Review model warning: loading a review skill on a middle or cheap model adds a warning, never a block. Keel agent lock: a Keel agent is refused a heredoc, a sleep and a git stash in a shell command, and a brief that starts a Keel agent needs a Session line whose name is not a role. Any other caller, and any failure of the hook, lets the call through.",
   "hooks": {
     "SessionStart": [
       {
@@ -31,6 +31,21 @@
               "${CLAUDE_PLUGIN_ROOT}/hooks/keel_agent_lock.py"
             ],
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "-c",
+              "import runpy, sys\ntry:\n    runpy.run_path(sys.argv[1], run_name='__main__')\nexcept BaseException:\n    sys.exit(0)",
+              "${CLAUDE_PLUGIN_ROOT}/hooks/keel_review_model.py"
+            ],
+            "timeout": 5
           }
         ]
       }

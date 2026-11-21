@@ -33,6 +33,14 @@ How to use this skill:
 
 Step 3: one reviewer per pull request. Read [`KEEL.md`](https://github.com/stabem/GraphHelm/blob/main/KEEL.md) first.
 
+## This file rules, on the strongest model
+
+This file (the `keel-review` skill) is the review rule. The GraphHelm `blind-review` skill is the
+same review plus the task records; where the two differ, this file wins. The review runs on the
+strongest model (`KEEL.md`, "Model roles"): the `keel` plugin warns, never blocks, when a review
+skill loads in a session on a middle or cheap model. A session so warned hands the review to
+`keel:keel-reviewer` or tells the owner.
+
 ## Blind
 
 You did not write the change, and your brief carries only the PR number, the identity line to

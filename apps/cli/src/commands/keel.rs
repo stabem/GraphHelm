@@ -379,6 +379,18 @@ pub(super) fn check(
     report.add_lines(graphhelm_policy::keel_lines::check_lines_except_shipped(
         &diff, &head_text, &today, &shipped,
     ));
+    // Only a markdown card is a pull request body; a JSON card has no place for the line.
+    if let Some(path) = card_path.filter(|path| {
+        path.extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+    }) && let Ok(bytes) = std::fs::read(path)
+    {
+        report
+            .findings
+            .extend(policy_keel::check_identity_line(&String::from_utf8_lossy(
+                &bytes,
+            )));
+    }
     let changed: Vec<String> = report
         .changed_paths
         .iter()

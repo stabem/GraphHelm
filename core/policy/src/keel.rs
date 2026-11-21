@@ -460,6 +460,41 @@ pub fn check_card(
     findings
 }
 
+/// `keel.card.identity_line_missing`: a pull request body must carry one filled
+/// `Session: <name> [ref] · Head: <sha8>` line. Absent, or still a `<...>` template, is a warning:
+/// the machine cannot tell a body that skipped the line from a card file that is not a body.
+#[must_use]
+pub fn check_identity_line(body: &str) -> Vec<Finding> {
+    if body.lines().any(identity_line_is_filled) {
+        return Vec::new();
+    }
+    vec![Finding {
+        rule: "keel.card.identity_line_missing".into(),
+        blocking: false,
+        path: Some("/card".into()),
+        detail:
+            "no filled `Session: <name> [ref] · Head: <sha8>` line; the identity line names the \
+                 session that can be messaged and the head the body describes"
+                .into(),
+    }]
+}
+
+fn identity_line_is_filled(line: &str) -> bool {
+    let line = line
+        .trim()
+        .trim_start_matches(['-', '*', '+', '>', ' ', '`'])
+        .replace("**", "");
+    let Some(rest) = line.strip_prefix("Session:") else {
+        return false;
+    };
+    let Some((name, head)) = rest.split_once("Head:") else {
+        return false;
+    };
+    let head = head.trim().trim_matches('`');
+    let sha_len = head.chars().take_while(char::is_ascii_hexdigit).count();
+    !name.contains(['<', '>']) && !name.replace('·', "").trim().is_empty() && sha_len >= 8
+}
+
 /// A Keel contract card as `graphhelm keel check` reads it (#1330). The JSON shape is
 /// `schemas/keel-card.schema.json` in the development-contracts package: the three-line card of
 /// `docs/process/DELIVERY.md` (paths, promise, proving command) plus, for new public surface, the

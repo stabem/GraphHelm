@@ -57,6 +57,9 @@ review subagents' cache writes there).
    missing line is a finding. Your own verdict comment carries your `Skills:` line too, listing the
    skills loaded up to that comment; compare each `Skills:` line with the Skill calls made up to
    that point.
+   **Identity line.** A warning `keel.card.identity_line_missing` from the Keel check means the
+   body has no filled identity line (the form the brief gave), absent or still a template. It is a warning because a card file that is not a body cannot carry one; for a pull
+   request body it is a finding, and the reviewer asks the author to add the line before approving.
 7. **Try to break the promise** a user would see, not only the tests.
    **Reach of each new rule.** For every rule, check or branch the change adds inside a loop,
    dispatcher or match, name the inputs it must see and every earlier exit (`continue`, `return`,

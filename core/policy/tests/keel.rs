@@ -809,3 +809,33 @@ fn a_body_without_a_filled_skills_line_warns_at_the_card_path() {
         assert!(!findings[0].blocking);
     }
 }
+
+#[test]
+fn a_declared_skill_without_a_loaded_record_warns_with_its_name_in_the_path() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills(
+        "Session: A [2ba4e9] · Head: 0123abcd\nSkills: `keel:keel`, implement > keel-exec (via the Skill tool)\nAdvisor: not available\n",
+    );
+    assert_eq!(declared, ["keel:keel", "implement", "keel-exec"]);
+    assert_eq!(
+        declared_skills("## Skills usadas\n\n- keel:keel\n- keel:keel-exec\n\nRollback: x\n"),
+        ["keel:keel", "keel:keel-exec"]
+    );
+    assert!(declared_skills("Skills: none\n").is_empty());
+
+    let loaded: std::collections::BTreeSet<String> = ["keel:keel", "keel:implement"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    // Declared and loaded: exact, or bare against a namespaced record.
+    assert!(check_skills_loaded(&declared[..2], &loaded).is_empty());
+    // Declared and not loaded: one warning per skill, the name in the path.
+    let findings = check_skills_loaded(&declared, &loaded);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");
+    assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel-exec"));
+    assert!(!findings[0].blocking);
+    // A namespaced declaration is not satisfied by another namespace.
+    let other = ["graphhelm:keel"].map(String::from).to_vec();
+    assert_eq!(check_skills_loaded(&other, &loaded).len(), 1);
+}

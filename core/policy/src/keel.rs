@@ -15,7 +15,7 @@
 //! heading. Every one of those is a SEALED LIMIT named in `keel.yaml`; a reader who needs the
 //! stronger claim writes the parser and the pathogen that fails without it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -517,6 +517,13 @@ pub fn check_skills_line(body: &str) -> Vec<Finding> {
 }
 
 fn skills_line_is_filled(lines: &[&str], index: usize) -> bool {
+    skills_line_text(lines, index).is_some()
+}
+
+/// The text a filled skills line carries after its heading: the same line, or the lines under a
+/// bare heading up to the first blank, heading or `Key: value` line. `None` when `lines[index]` is
+/// not a filled skills line.
+fn skills_line_text(lines: &[&str], index: usize) -> Option<String> {
     let line = decorated_text(lines[index]);
     let lower = line.to_ascii_lowercase();
     // A template is a `<...>` pair; a lone `>` is an arrow between two skill names.
@@ -527,7 +534,7 @@ fn skills_line_is_filled(lines: &[&str], index: usize) -> bool {
         !text.trim().is_empty() && !template
     };
     // The heading ends the line or is followed by `:`; `Skills used by authors` is prose.
-    let Some(rest) = ["skills usadas", "skills used", "skills-used", "skills"]
+    let rest = ["skills usadas", "skills used", "skills-used", "skills"]
         .into_iter()
         .find_map(|heading| {
             if !lower.starts_with(heading) {
@@ -537,21 +544,86 @@ fn skills_line_is_filled(lines: &[&str], index: usize) -> bool {
             let ends_heading = after.is_empty() || after.starts_with(':');
             let bare_skills = heading == "skills" && after.is_empty();
             (ends_heading && !bare_skills).then_some(after)
-        })
-    else {
-        return false;
-    };
+        })?;
     let same_line = rest.trim_start_matches(':').trim();
     if !same_line.is_empty() {
-        return has_name(same_line);
+        return has_name(same_line).then(|| same_line.to_owned());
     }
-    lines[index + 1..]
+    let names: Vec<String> = lines[index + 1..]
         .iter()
-        .find(|next| !next.trim().is_empty())
-        .is_some_and(|next| {
-            let text = decorated_text(next);
-            !next.trim_start().starts_with('#') && !is_key_line(&text) && has_name(&text)
+        .skip_while(|next| next.trim().is_empty())
+        .take_while(|next| !next.trim().is_empty())
+        .map(|next| (next.trim_start().starts_with('#'), decorated_text(next)))
+        .take_while(|(heading, text)| !heading && !is_key_line(text) && has_name(text))
+        .map(|(_, text)| text)
+        .collect();
+    (!names.is_empty()).then(|| names.join(" "))
+}
+
+/// The skill names a pull request body's skills line declares, in order, without repeats.
+/// `Skills: keel:keel, implement > keel-exec (via the Skill tool)` gives three names; a name is
+/// what stands between separators (commas, semicolons, arrows, spaces), a parenthesised note is
+/// dropped, and `none` style words declare nothing. Empty when the body has no filled skills line.
+#[must_use]
+pub fn declared_skills(body: &str) -> Vec<String> {
+    let body = body.trim_start_matches('\u{feff}');
+    let lines: Vec<&str> = body.lines().collect();
+    let Some(text) = (0..lines.len()).find_map(|index| skills_line_text(&lines, index)) else {
+        return Vec::new();
+    };
+    let mut plain = String::new();
+    let mut depth = 0_u32;
+    for c in text.chars() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            _ if depth > 0 => {}
+            ',' | ';' | '>' | '→' | '*' | '`' | '"' | '\'' => plain.push(' '),
+            _ => plain.push(c),
+        }
+    }
+    let mut names: Vec<String> = Vec::new();
+    for token in plain.split_whitespace() {
+        let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        let is_name = token.starts_with(|c: char| c.is_ascii_alphanumeric())
+            && token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '_' | '-' | '.'));
+        let filler = ["none", "n", "nenhuma", "nenhum", "and", "e", "then", "-"];
+        if is_name
+            && !filler.contains(&token.to_ascii_lowercase().as_str())
+            && !names.iter().any(|seen| seen == token)
+        {
+            names.push(token.to_owned());
+        }
+    }
+    names
+}
+
+/// `keel.card.skill_not_loaded`: a declared skill the Runtime holds no `skill.loaded` record for.
+/// A declared name matches a loaded one when they are equal, or when the declared name has no
+/// namespace and equals the loaded name's last segment (`keel` is `keel:keel`). Pure: the declared
+/// and loaded sets are the only inputs; the records are read by the caller.
+#[must_use]
+pub fn check_skills_loaded(declared: &[String], loaded: &BTreeSet<String>) -> Vec<Finding> {
+    declared
+        .iter()
+        .filter(|name| {
+            !loaded.iter().any(|record| {
+                record == *name
+                    || (!name.contains(':') && record.rsplit(':').next() == Some(name.as_str()))
+            })
         })
+        .map(|name| Finding {
+            rule: "keel.card.skill_not_loaded".into(),
+            blocking: false,
+            path: Some(format!("/card/skills/{name}")),
+            detail: format!(
+                "the skills line names `{name}`, and the execution has no `skill.loaded` record \
+                 for it; list only skills this session loaded through the Skill tool"
+            ),
+        })
+        .collect()
 }
 
 /// `Advisor: not available`: a capitalised word or words, a colon, then a space. A plugin skill

@@ -81,6 +81,11 @@ fn run(repo: &Path, card: Option<&Path>) -> (i32, Value) {
     if let Some(card) = card {
         command.args(["--card", card.to_str().unwrap()]);
     }
+    // A lane shell exports the Runtime binding; a check that reads one is not hermetic.
+    command
+        .env_remove("GRAPHHELM_EXECUTION_ID")
+        .env_remove("GRAPHHELM_TOKEN_FILE")
+        .env_remove("GRAPHHELM_RUNTIME_URL");
     let output = command.output().unwrap();
     let reply: Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&output.stdout)));
@@ -1488,6 +1493,126 @@ fn a_pr_body_without_a_skills_line_warns_and_a_bom_does_not_hide_the_lines() {
     let (code, reply) = run(repo.path(), Some(&body));
     assert_eq!(code, 0, "{reply}");
     assert!(codes(&reply).is_empty(), "{reply}");
+}
+
+/// Serves `skill.loaded` records for one execution the way the Runtime's events and evidence
+/// routes reply, on a loopback port, and returns the base URL. One thread, closed connections.
+fn runtime_with_loaded_skills(names: &[&str]) -> String {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let events: Vec<Value> = names
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            serde_json::json!({
+                "sequence": index + 1,
+                "kind": {"type": "signal_recorded", "data": {"kind": "skill.loaded"}},
+                "evidenceRefs": [{"evidenceId": format!("signal-{index}")}],
+            })
+        })
+        .collect();
+    let results: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            let content = serde_json::json!({"description": format!("Skill loaded: {name}")});
+            serde_json::json!({"status": "available", "content": content.to_string()})
+        })
+        .collect();
+    let events_reply =
+        serde_json::json!({"ok": true, "data": {"events": events, "head": names.len()}});
+    let evidence_reply = serde_json::json!({"ok": true, "data": {"results": results}});
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            let mut request = [0_u8; 4096];
+            let read = stream.read(&mut request).unwrap_or(0);
+            let head = String::from_utf8_lossy(&request[..read]);
+            let body = if head.contains("/evidence") {
+                &evidence_reply
+            } else {
+                &events_reply
+            };
+            let body = body.to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    url
+}
+
+/// Contract: each skill the card's skills line names that the execution has no `skill.loaded`
+/// record for warns at `/card/skills/<name>`; with no Runtime binding the check says
+/// OBSERVER_MISSING in the envelope and passes. Regression: a copied skills line goes unseen, or
+/// the check fails or warns about every skill when no Runtime can be read.
+/// Cost: one loopback stub thread and short CLI processes; no real Runtime.
+#[test]
+fn a_skill_named_on_the_card_but_not_loaded_warns_and_no_binding_passes_unobserved() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    fs::write(
+        &body,
+        "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nSession: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel, keel:keel-exec\n",
+    )
+    .unwrap();
+    let token = scratch.path().join("agent.token");
+    fs::write(&token, "a".repeat(64)).unwrap();
+    let url = runtime_with_loaded_skills(&["keel:keel"]);
+    let run_bound = |url: &str| {
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--repo",
+            ])
+            .arg(repo.path())
+            .arg("--card")
+            .arg(&body)
+            .args(["--runtime-url", url, "--runtime-execution", "ex1"])
+            .arg("--runtime-token-file")
+            .arg(&token)
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        (output.status.code().unwrap(), reply)
+    };
+    let (code, reply) = run_bound(&url);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"],
+        "/card/skills/keel:keel-exec"
+    );
+    assert!(reply["data"]["skillsObserver"].is_null(), "{reply}");
+    // A port nothing listens on: unobserved, never a failure, and no URL in the reply.
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    let (code, reply) = run_bound(&closed);
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(reply["data"]["skillsObserver"]["state"], "unobserved");
+    assert!(!reply.to_string().contains(&closed), "{reply}");
+    // No binding at all (`run` clears the binding variables): the same one-line answer.
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+    assert!(
+        reply["data"]["skillsObserver"]["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("OBSERVER_MISSING"),
+        "{reply}"
+    );
 }
 
 #[test]

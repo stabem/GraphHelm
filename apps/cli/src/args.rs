@@ -873,6 +873,17 @@ pub enum KeelCommand {
         /// Explicit graph-specific drafts to propose after a valid check; requires sealed records.
         #[arg(long, requires_all = ["events", "execution", "keyring", "key_id"])]
         route_proposal: Option<PathBuf>,
+        /// With a markdown card: the Runtime whose `skill.loaded` records the card's skills line
+        /// is compared with; default `GRAPHHELM_RUNTIME_URL`, else the hooks' local default.
+        #[arg(long)]
+        runtime_url: Option<String>,
+        /// A Runtime bearer token file for that comparison; default `GRAPHHELM_TOKEN_FILE`.
+        #[arg(long)]
+        runtime_token_file: Option<PathBuf>,
+        /// The execution whose records are compared; default `GRAPHHELM_EXECUTION_ID`. Without an
+        /// execution and a token file the check reports `OBSERVER_MISSING` and passes.
+        #[arg(long)]
+        runtime_execution: Option<String>,
     },
     /// Plan one task (#382 phase B): classify the paths it names under the shipped `keel.yaml`
     /// (invariant class, user-visible screen, code, docs), and print the `graphhelm-task-plan-v1`

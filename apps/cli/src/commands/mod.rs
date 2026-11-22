@@ -26,6 +26,7 @@ mod journey_validate;
 mod journeys;
 mod keel;
 mod keel_sabotage;
+mod keel_skills;
 mod keel_validation;
 mod lint;
 mod mcp;
@@ -721,6 +722,9 @@ pub fn run(command: TopLevel) -> Outcome {
                 keyring,
                 key_id,
                 route_proposal,
+                runtime_url,
+                runtime_token_file,
+                runtime_execution,
             } => keel::check(
                 &repo,
                 &diff,
@@ -737,6 +741,11 @@ pub fn run(command: TopLevel) -> Outcome {
                     key_id: key_id.unwrap_or_default(),
                 }),
                 route_proposal.as_deref(),
+                keel_skills::RuntimeBinding {
+                    url: runtime_url,
+                    token_file: runtime_token_file,
+                    execution: runtime_execution,
+                },
             ),
             KeelCommand::Plan {
                 task,

@@ -235,6 +235,7 @@ pub(super) fn check(
     prove: Option<ProveArgs>,
     records: Option<JourneyRecords>,
     route_proposal: Option<&Path>,
+    runtime: super::keel_skills::RuntimeBinding,
 ) -> Outcome {
     if range.starts_with('-') || !range.contains("..") {
         return input_error("--diff takes a git range `<base>..<head>`", "/diff");
@@ -371,6 +372,7 @@ pub(super) fn check(
             _ => None,
         }
     };
+    let mut skills_unobserved: Option<&str> = None;
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     // stabem/GraphHelm#2549: an observer GraphHelm ships, byte-equal to that copy, is its own output.
     let shipped = |path: &str, text: &str| {
@@ -392,6 +394,17 @@ pub(super) fn check(
             .findings
             .extend(policy_keel::check_identity_line(text));
         report.findings.extend(policy_keel::check_skills_line(text));
+        let declared = policy_keel::declared_skills(text);
+        if !declared.is_empty() {
+            match super::keel_skills::loaded_skills(&runtime) {
+                super::keel_skills::LoadedSkills::Names(loaded) => report
+                    .findings
+                    .extend(policy_keel::check_skills_loaded(&declared, &loaded)),
+                super::keel_skills::LoadedSkills::Unobserved(reason) => {
+                    skills_unobserved = Some(reason);
+                }
+            }
+        }
     }
     let changed: Vec<String> = report
         .changed_paths
@@ -485,6 +498,12 @@ pub(super) fn check(
         Err(error) => return Outcome::internal(COMMAND, error.to_string()),
     };
     data["recommendation"] = recommendation;
+    if let (Some(reason), Some(object)) = (skills_unobserved, data.as_object_mut()) {
+        object.insert(
+            "skillsObserver".into(),
+            serde_json::json!({"state": "unobserved", "reason": reason}),
+        );
+    }
     if let Some(object) = data.as_object_mut() {
         object.insert("cardGuidance".into(), guidance);
     }

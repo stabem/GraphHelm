@@ -53,6 +53,11 @@ review subagents' cache writes there).
    body line saying who decided not to split and why, is a finding. A body the check cannot parse
    (input error) is a BLOCK that asks only for the body to be fixed; the head does not change. The
    reviewer never writes or restates the card.
+   **A project whose card is a JSON file** passes the JSON card as `--card` and the saved body as
+   `--body`: `graphhelm keel check --diff <base>..<head> --card <card>.json --body <body>.md`. A
+   warning `keel.card.body_unread` means the body rules (identity line, skills line, declared
+   skills) did not run: rerun with `--body` before approving; a clean result without `--body` says
+   nothing about the body.
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one

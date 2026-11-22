@@ -222,8 +222,15 @@ struct RouteBinding {
     review_draft: graphhelm_protocols::GraphDraft,
 }
 
-/// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--repo <dir>]
-/// [--prove-new-tests]` (#1330, #1333).
+/// The files `keel check` reads besides the diff: the card, and the saved pull request body when
+/// the card is not itself the body.
+pub(super) struct CardFiles<'a> {
+    pub card: Option<&'a Path>,
+    pub body: Option<&'a Path>,
+}
+
+/// `graphhelm keel check --diff <base>..<head> [--card <card.json>] [--body <body.md>]
+/// [--repo <dir>] [--prove-new-tests]` (#1330, #1333).
 ///
 /// Exit 0 when nothing blocks (signals travel as warnings), 2 when a finding blocks (the report
 /// still travels in `data`), 3 when the range, the repository or the card cannot be read, or the
@@ -231,7 +238,7 @@ struct RouteBinding {
 pub(super) fn check(
     repo: &Path,
     range: &str,
-    card_path: Option<&Path>,
+    files: CardFiles<'_>,
     prove: Option<ProveArgs>,
     records: Option<JourneyRecords>,
     route_proposal: Option<&Path>,
@@ -248,6 +255,10 @@ pub(super) fn check(
             "/proveCommand",
         );
     }
+    let CardFiles {
+        card: card_path,
+        body: body_path,
+    } = files;
     let card = match card_path.map(read_card).transpose() {
         Ok(card) => card,
         Err(outcome) => return *outcome,
@@ -381,12 +392,23 @@ pub(super) fn check(
     report.add_lines(graphhelm_policy::keel_lines::check_lines_except_shipped(
         &diff, &head_text, &today, &shipped,
     ));
-    // Only a markdown card is a pull request body; a JSON card has no place for the line.
-    if let Some(path) = card_path.filter(|path| {
-        path.extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-    }) && let Ok(bytes) = std::fs::read(path)
-    {
+    // The body is the `--body` file, else a markdown card (which is the body). A JSON card has no
+    // place for the body lines, so without `--body` the body rules go unread and the report says so.
+    let body_file = match body_path {
+        Some(path) => Some(path),
+        None => card_path.filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        }),
+    };
+    if body_file.is_none() && card_path.is_some() {
+        report.findings.extend(policy_keel::body_unread());
+    }
+    if let Some(path) = body_file {
+        let bytes = match read_bounded(path, "body") {
+            Ok(bytes) => bytes,
+            Err(outcome) => return *outcome,
+        };
         // A byte-order mark in front of the first line is not part of it.
         let text = String::from_utf8_lossy(&bytes);
         let text = text.trim_start_matches('\u{feff}');
@@ -1005,17 +1027,23 @@ fn journey_findings(
     Ok(findings)
 }
 
-fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
+/// Reads a file of at most `MAX_CARD_READ_BYTES`; a failure is an input error naming `what`.
+fn read_bounded(path: &Path, what: &str) -> Result<Vec<u8>, Box<Outcome>> {
+    let pointer = format!("/{what}");
     let metadata = std::fs::metadata(path)
-        .map_err(|error| Box::new(input_error(format!("card unreadable: {error}"), "/card")))?;
+        .map_err(|error| Box::new(input_error(format!("{what} unreadable: {error}"), &pointer)))?;
     if metadata.len() > MAX_CARD_READ_BYTES {
         return Err(Box::new(input_error(
-            format!("card is {} bytes; not read", metadata.len()),
-            "/card",
+            format!("{what} is {} bytes; not read", metadata.len()),
+            &pointer,
         )));
     }
-    let bytes = std::fs::read(path)
-        .map_err(|error| Box::new(input_error(format!("card unreadable: {error}"), "/card")))?;
+    std::fs::read(path)
+        .map_err(|error| Box::new(input_error(format!("{what} unreadable: {error}"), &pointer)))
+}
+
+fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
+    let bytes = read_bounded(path, "card")?;
     let is_markdown = path
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));

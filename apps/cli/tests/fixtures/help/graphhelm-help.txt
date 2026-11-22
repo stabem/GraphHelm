@@ -3946,6 +3946,15 @@ Options:
       --route-proposal <ROUTE_PROPOSAL>
           Explicit graph-specific drafts to propose after a valid check; requires sealed records
 
+      --runtime-url <RUNTIME_URL>
+          With a markdown card: the Runtime whose `skill.loaded` records the card's skills line is compared with; default `GRAPHHELM_RUNTIME_URL`, else the hooks' local default
+
+      --runtime-token-file <RUNTIME_TOKEN_FILE>
+          A Runtime bearer token file for that comparison; default `GRAPHHELM_TOKEN_FILE`. A lane credential also needs `GRAPHHELM_ACTOR=<lane>`
+
+      --runtime-execution <RUNTIME_EXECUTION>
+          The execution whose records are compared; default `GRAPHHELM_EXECUTION_ID`. Without an execution and a token file the check reports `OBSERVER_MISSING` and passes
+
   -h, --help
           Print help
 

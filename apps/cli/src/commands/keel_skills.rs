@@ -93,7 +93,8 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<BTreeSet<String>>
     let started = Instant::now();
     let get = |path: &str| -> Option<serde_json::Value> {
         let left = DEADLINE.checked_sub(started.elapsed())?;
-        match client.request_waiting("GET", path, None, None, None, left) {
+        // The key makes the client attach the actor headers, which a lane credential needs.
+        match client.request_waiting("GET", path, None, Some("keel-check-skills"), None, left) {
             Ok((200, reply)) if reply["ok"] == true => Some(reply["data"].clone()),
             _ => None,
         }
@@ -108,14 +109,17 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<BTreeSet<String>>
         for event in events {
             if event["kind"]["type"] == "signal_recorded"
                 && event["kind"]["data"]["kind"] == "skill.loaded"
-                && let Some(id) = event["evidenceRefs"][0]["evidenceId"].as_str()
             {
-                evidence_ids.push(id.to_owned());
+                // A record whose content cannot be named leaves the list incomplete.
+                evidence_ids.push(event["evidenceRefs"][0]["evidenceId"].as_str()?.to_owned());
             }
             after = after.max(event["sequence"].as_u64()?);
         }
-        if after >= head || events.is_empty() {
+        if after >= head {
             return read_names(&get, execution, &evidence_ids);
+        }
+        if events.is_empty() {
+            return None;
         }
     }
     None
@@ -131,7 +135,11 @@ fn read_names(
     for batch in evidence_ids.chunks(EVIDENCE_BATCH) {
         let ids = serde_json::to_string(batch).ok()?;
         let reply = get(&format!("{evidence_path}?ids={}", query_value(&ids)))?;
-        for item in reply["results"].as_array()? {
+        let results = reply["results"].as_array()?;
+        if results.len() != batch.len() {
+            return None;
+        }
+        for item in results {
             if item["status"] != "available" {
                 return None;
             }

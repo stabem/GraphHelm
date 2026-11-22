@@ -877,7 +877,8 @@ pub enum KeelCommand {
         /// is compared with; default `GRAPHHELM_RUNTIME_URL`, else the hooks' local default.
         #[arg(long)]
         runtime_url: Option<String>,
-        /// A Runtime bearer token file for that comparison; default `GRAPHHELM_TOKEN_FILE`.
+        /// A Runtime bearer token file for that comparison; default `GRAPHHELM_TOKEN_FILE`. A lane
+        /// credential also needs `GRAPHHELM_ACTOR=<lane>`.
         #[arg(long)]
         runtime_token_file: Option<PathBuf>,
         /// The execution whose records are compared; default `GRAPHHELM_EXECUTION_ID`. Without an

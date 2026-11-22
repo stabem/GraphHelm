@@ -470,15 +470,18 @@ Never auto-expand permissions. If a new version requests additional access, conf
 
 ### 12.7 Subagent definitions shipped by the `graphhelm` plugin
 
-The `graphhelm` Claude Code plugin ships three subagent definitions in `plugins/graphhelm/agents/`:
-`keel-author`, `keel-reviewer` and `keel-journey-qa`. Each is a Markdown file whose frontmatter
+The `graphhelm` Claude Code plugin ships one subagent definition in `plugins/graphhelm/agents/`: `keel-journey-qa`. The author,
+reviewer and scout agents live only in the `keel` plugin (#3006): a second copy was twice installed
+at an older revision and let briefs escape newer rules. The file is Markdown whose frontmatter
 names a tool allowlist (always including `Skill`, so the agent can load the step skill it names)
 and whose body carries the standing limits a task brief used to repeat. They narrow tools and
 grant nothing: permissions, hooks and MCP servers stay the host's. A general-purpose subagent
 carries every tool schema of the host; these start with only the tools their step uses. The
 plugin guard (`tools/reached-tests/plugin_version_guard.py`) treats the folder as shipped plugin
-content, and `tools/reached-tests/test_plugin_agents.py` pins their shape. They take effect after the
-plugin is reinstalled in a host.
+content, and `tools/reached-tests/test_plugin_agents.py` pins their shape.
+`tools/reached-tests/plugin_shipped_digest.py` records a digest of each plugin group's shipped files
+per manifest version, so a changed file under an unchanged version fails a test. They take effect after
+the plugin is reinstalled in a host.
 
 ## 13. Community Registry
 

@@ -13,11 +13,16 @@ only place that says who cuts one, when and how (#2253).
 
 ## Versions between releases
 
-A plugin pull request does not bump any version. `plugin_version_guard.py --base <base> --head
-<head>` (run by the reached plan) only checks that each changed release group's manifests agree and
-do not go below the base. `--write` without `--release` still regenerates extension digests and
-canonical goldens. Installed plugin caches are keyed by version, so a host sees new plugin content
-only after a release, or after a reinstall from a checkout.
+A plugin pull request that changes shipped files of a plugin release group bumps that group's
+version in every manifest of the group and records the new digest with
+`python tools/reached-tests/plugin_shipped_digest.py --write` (#3006, which reverses the earlier
+"no bump in a plugin pull request" rule: installed plugin caches are keyed by version, so changed
+content under an unchanged version never reached a host). `test_plugin_shipped_digest.py` fails
+when a group's files differ from the digest recorded for its current version. Two plugin pull
+requests in flight both touch the version line and the record, so the second rebases and re-records.
+`plugin_version_guard.py --base <base> --head <head>` (run by the reached plan) also checks that each
+changed release group's manifests agree and do not go below the base. `--write` without `--release`
+still regenerates extension digests and canonical goldens.
 
 ## Steps
 
@@ -30,7 +35,9 @@ only after a release, or after a reinstall from a checkout.
    Patch by default; minor when a public contract changes (a new CLI command or flag, an
    event/schema/API change, or a removed surface). Same version for Cargo and the tag.
 5. Bump each plugin and builtin extension group whose shipped content changed since the tag:
-   `python tools/reached-tests/plugin_version_guard.py --base <last tag> --write --release`.
+   `python tools/reached-tests/plugin_version_guard.py --base <last tag> --write --release`, then
+   record the digests of the bumped plugin groups:
+   `python tools/reached-tests/plugin_shipped_digest.py --write`.
 6. Prove it: `python tools/reached-tests/plugin_version_guard.py --base <last tag> --head HEAD --release`
    passes (every changed group carries one agreeing, higher version), and
    `python tools/reached-tests/run_reached.py --base origin/main --head HEAD --stage implement`

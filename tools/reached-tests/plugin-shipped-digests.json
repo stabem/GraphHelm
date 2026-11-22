@@ -1,0 +1,11 @@
+{
+  "plugins/graphhelm/": {
+    "1.3.0": "ab8fbffe33159031e137528330326de1b68dd5a2fa42348816b9de4e1a885787"
+  },
+  "plugins/journey-review/": {
+    "1.0.0": "76107a1ec9263c0d08b30c9333fc999120f348e608f1ca66ed9edc4b45948231"
+  },
+  "plugins/keel/": {
+    "1.6.2": "df2e7c5837563c32e8f8ef1db6a07c57ac30fd05fafdcb94963a5853fb68868d"
+  }
+}

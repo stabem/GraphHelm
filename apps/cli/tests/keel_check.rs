@@ -1402,7 +1402,7 @@ fn a_card_written_in_a_pr_body_runs_the_scope_rule() {
     let body = scratch.path().join("pr-body.md");
     fs::write(
         &body,
-        "Before: x.\n\nKeel card:\n- **Promise:** added() exists\n- **Scope:** `src/lib.rs`\n- **Proof:** `cargo test`\n- Exported: `added`\n\nSession: Author [2ba4e9] \u{b7} Head: 0123abcd\nCloses #1\n",
+        "Before: x.\n\nKeel card:\n- **Promise:** added() exists\n- **Scope:** `src/lib.rs`\n- **Proof:** `cargo test`\n- Exported: `added`\n\nSession: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\nCloses #1\n",
     )
     .unwrap();
     let (code, reply) = run(repo.path(), Some(&body));
@@ -1424,7 +1424,7 @@ fn a_pr_body_without_a_filled_identity_line_warns_and_a_plain_card_does_not() {
     let repo = repository(&[("src/lib.rs", "planned edit\n")]);
     let scratch = tempfile::tempdir().unwrap();
     let body = scratch.path().join("pr-body.md");
-    let card_text = "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\n";
+    let card_text = "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nSkills: keel:keel\n";
     fs::write(&body, card_text).unwrap();
     let (code, reply) = run(repo.path(), Some(&body));
     assert_eq!(code, 0, "{reply}");
@@ -1453,6 +1453,39 @@ fn a_pr_body_without_a_filled_identity_line_warns_and_a_plain_card_does_not() {
     assert_eq!(code, 0, "{reply}");
     assert!(codes(&reply).is_empty(), "{reply}");
     let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+}
+
+/// The skills line is a warning on a markdown body only, and a byte-order mark in front of the
+/// first line hides neither the skills line nor the identity line.
+#[test]
+fn a_pr_body_without_a_skills_line_warns_and_a_bom_does_not_hide_the_lines() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    let identity = "Session: Author [2ba4e9] \u{b7} Head: 0123abcd\n";
+    let card_text = "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\n";
+    fs::write(&body, format!("{card_text}{identity}")).unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.skills_line_missing"]);
+    assert_eq!(reply["diagnostics"][0]["path"], "/card");
+    assert_eq!(reply["diagnostics"][0]["severity"], "warning");
+    for skills in ["Skills: keel:keel\n", "## Skills usadas\n\n- keel:keel\n"] {
+        fs::write(&body, format!("{card_text}{identity}{skills}")).unwrap();
+        let (code, reply) = run(repo.path(), Some(&body));
+        assert_eq!(code, 0, "{reply}");
+        assert!(codes(&reply).is_empty(), "{skills}: {reply}");
+    }
+    fs::write(
+        &body,
+        format!(
+            "\u{feff}Session: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\n{card_text}"
+        ),
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
     assert_eq!(code, 0, "{reply}");
     assert!(codes(&reply).is_empty(), "{reply}");
 }

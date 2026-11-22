@@ -385,11 +385,13 @@ pub(super) fn check(
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
     }) && let Ok(bytes) = std::fs::read(path)
     {
+        // A byte-order mark in front of the first line is not part of it.
+        let text = String::from_utf8_lossy(&bytes);
+        let text = text.trim_start_matches('\u{feff}');
         report
             .findings
-            .extend(policy_keel::check_identity_line(&String::from_utf8_lossy(
-                &bytes,
-            )));
+            .extend(policy_keel::check_identity_line(text));
+        report.findings.extend(policy_keel::check_skills_line(text));
     }
     let changed: Vec<String> = report
         .changed_paths

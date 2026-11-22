@@ -495,6 +495,80 @@ fn identity_line_is_filled(line: &str) -> bool {
     !name.contains(['<', '>']) && !name.replace('·', "").trim().is_empty() && sha_len >= 8
 }
 
+/// `keel.card.skills_line_missing`: a pull request body must carry a skills line, either
+/// `Skills: <names>` or a `Skills usadas` / `Skills used` heading with a name under it. Absent, empty
+/// or a `<...>` template is a warning, for the same reason as the identity line.
+#[must_use]
+pub fn check_skills_line(body: &str) -> Vec<Finding> {
+    let body = body.trim_start_matches('\u{feff}');
+    let lines: Vec<&str> = body.lines().collect();
+    if (0..lines.len()).any(|index| skills_line_is_filled(&lines, index)) {
+        return Vec::new();
+    }
+    vec![Finding {
+        rule: "keel.card.skills_line_missing".into(),
+        blocking: false,
+        path: Some("/card".into()),
+        detail: "no filled `Skills: <the skills loaded, in order>` line (or `Skills usadas` \
+                 heading with a name under it); the skills line is compared with the Skill calls \
+                 the author made"
+            .into(),
+    }]
+}
+
+fn skills_line_is_filled(lines: &[&str], index: usize) -> bool {
+    let line = decorated_text(lines[index]);
+    let lower = line.to_ascii_lowercase();
+    // A template is a `<...>` pair; a lone `>` is an arrow between two skill names.
+    let has_name = |text: &str| {
+        let template = text
+            .find('<')
+            .is_some_and(|open| text[open..].contains('>'));
+        !text.trim().is_empty() && !template
+    };
+    // The heading ends the line or is followed by `:`; `Skills used by authors` is prose.
+    let Some(rest) = ["skills usadas", "skills used", "skills-used", "skills"]
+        .into_iter()
+        .find_map(|heading| {
+            if !lower.starts_with(heading) {
+                return None;
+            }
+            let after = line.get(heading.len()..)?.trim_start();
+            let ends_heading = after.is_empty() || after.starts_with(':');
+            let bare_skills = heading == "skills" && after.is_empty();
+            (ends_heading && !bare_skills).then_some(after)
+        })
+    else {
+        return false;
+    };
+    let same_line = rest.trim_start_matches(':').trim();
+    if !same_line.is_empty() {
+        return has_name(same_line);
+    }
+    lines[index + 1..]
+        .iter()
+        .find(|next| !next.trim().is_empty())
+        .is_some_and(|next| {
+            let text = decorated_text(next);
+            !next.trim_start().starts_with('#') && !is_key_line(&text) && has_name(&text)
+        })
+}
+
+/// `Advisor: not available`: a capitalised word or words, a colon, then a space. A plugin skill
+/// name such as `keel:keel` has no space after its colon and is not one.
+fn is_key_line(text: &str) -> bool {
+    text.split_once(": ").is_some_and(|(key, _)| {
+        key.starts_with(|c: char| c.is_ascii_uppercase())
+            && key.chars().all(|c| c.is_ascii_alphabetic() || c == ' ')
+    })
+}
+
+fn decorated_text(line: &str) -> String {
+    line.trim()
+        .trim_start_matches(['-', '*', '+', '>', '#', ' ', '`'])
+        .replace("**", "")
+}
+
 /// A Keel contract card as `graphhelm keel check` reads it (#1330). The JSON shape is
 /// `schemas/keel-card.schema.json` in the development-contracts package: the three-line card of
 /// `docs/process/DELIVERY.md` (paths, promise, proving command) plus, for new public surface, the

@@ -25,7 +25,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 def _files(repo, roots):
-    out = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *roots],
+    out = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *roots], timeout=60,
                          cwd=repo, capture_output=True, check=True, creationflags=NO_WINDOW).stdout
     names = sorted(set(out.decode("utf-8", "surrogateescape").split("\0")) - {""})
     return [n for n in names if (repo / n).is_file() and not guard._is_docs_or_tests(n)]

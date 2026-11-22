@@ -786,6 +786,7 @@ fn a_body_without_a_filled_skills_line_warns_at_the_card_path() {
         "### Skills used\nkeel:keel\n",
         "Skills usadas: keel:keel\n",
         "Skills:\n- keel:keel\n",
+        "Skills: keel:keel -> keel:keel-exec\n",
     ] {
         assert!(
             graphhelm_policy::keel::check_skills_line(body).is_empty(),
@@ -798,6 +799,8 @@ fn a_body_without_a_filled_skills_line_warns_at_the_card_path() {
         "Skills: <the skills loaded, in order>\n",
         "## Skills usadas\n\n## Next\n",
         "## Skills usadas\n",
+        "Session: A [2ba4e9] · Head: 0123abcd\nSkills:\nAdvisor: not available\n",
+        "Skills used by authors vary.\n",
     ] {
         let findings = graphhelm_policy::keel::check_skills_line(body);
         assert_eq!(findings.len(), 1, "{body}");

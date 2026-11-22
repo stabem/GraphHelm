@@ -519,21 +519,48 @@ pub fn check_skills_line(body: &str) -> Vec<Finding> {
 fn skills_line_is_filled(lines: &[&str], index: usize) -> bool {
     let line = decorated_text(lines[index]);
     let lower = line.to_ascii_lowercase();
-    let has_name = |text: &str| !text.trim().is_empty() && !text.contains(['<', '>']);
-    let Some(heading) = ["skills:", "skills usadas", "skills used", "skills-used"]
+    // A template is a `<...>` pair; a lone `>` is an arrow between two skill names.
+    let has_name = |text: &str| {
+        let template = text
+            .find('<')
+            .is_some_and(|open| text[open..].contains('>'));
+        !text.trim().is_empty() && !template
+    };
+    // The heading ends the line or is followed by `:`; `Skills used by authors` is prose.
+    let Some(rest) = ["skills usadas", "skills used", "skills-used", "skills"]
         .into_iter()
-        .find(|heading| lower.starts_with(heading))
+        .find_map(|heading| {
+            if !lower.starts_with(heading) {
+                return None;
+            }
+            let after = line.get(heading.len()..)?.trim_start();
+            let ends_heading = after.is_empty() || after.starts_with(':');
+            let bare_skills = heading == "skills" && after.is_empty();
+            (ends_heading && !bare_skills).then_some(after)
+        })
     else {
         return false;
     };
-    let same_line = line[heading.len()..].trim_start_matches([':', ' ']);
+    let same_line = rest.trim_start_matches(':').trim();
     if !same_line.is_empty() {
         return has_name(same_line);
     }
     lines[index + 1..]
         .iter()
         .find(|next| !next.trim().is_empty())
-        .is_some_and(|next| !next.trim_start().starts_with('#') && has_name(&decorated_text(next)))
+        .is_some_and(|next| {
+            let text = decorated_text(next);
+            !next.trim_start().starts_with('#') && !is_key_line(&text) && has_name(&text)
+        })
+}
+
+/// `Advisor: not available`: a capitalised word or words, a colon, then a space. A plugin skill
+/// name such as `keel:keel` has no space after its colon and is not one.
+fn is_key_line(text: &str) -> bool {
+    text.split_once(": ").is_some_and(|(key, _)| {
+        key.starts_with(|c: char| c.is_ascii_uppercase())
+            && key.chars().all(|c| c.is_ascii_alphabetic() || c == ' ')
+    })
 }
 
 fn decorated_text(line: &str) -> String {

@@ -106,6 +106,12 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<BTreeSet<String>>
         let page = get(&format!("{events_path}?after={after}&limit={EVENTS_PAGE}"))?;
         let head = page["head"].as_u64()?;
         let events = page["events"].as_array()?;
+        // The Runtime answers `head` 0 with no events both for an execution it does not know and
+        // for a stream with nothing in it. A started execution always has events, so head 0 is
+        // no observation, never an empty complete list.
+        if head == 0 {
+            return None;
+        }
         for event in events {
             if event["kind"]["type"] == "signal_recorded"
                 && event["kind"]["data"]["kind"] == "skill.loaded"

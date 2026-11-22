@@ -1602,6 +1602,13 @@ fn a_skill_named_on_the_card_but_not_loaded_warns_and_no_binding_passes_unobserv
     assert!(codes(&reply).is_empty(), "{reply}");
     assert_eq!(reply["data"]["skillsObserver"]["state"], "unobserved");
     assert!(!reply.to_string().contains(&closed), "{reply}");
+    // An execution the Runtime does not know answers `events: [], head: 0`: unobserved, not a
+    // warning per declared skill.
+    let unknown = runtime_with_loaded_skills(&[]);
+    let (code, reply) = run_bound(&unknown);
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(reply["data"]["skillsObserver"]["state"], "unobserved");
     // No binding at all (`run` clears the binding variables): the same one-line answer.
     let (code, reply) = run(repo.path(), Some(&body));
     assert_eq!(code, 0, "{reply}");

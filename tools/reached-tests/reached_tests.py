@@ -1181,6 +1181,8 @@ def commands(whole, single, studio, tools=(), validate=(), lint_packages=None, p
     if plugin_version_refs is not None:
         cmds.insert(0, _argv_text(["python", "tools/reached-tests/plugin_version_guard.py",
                                    "--base", plugin_version_refs[0], "--head", plugin_version_refs[1]]))
+        cmds.insert(1, "python tools/reached-tests/plugin_shipped_digest.py")
+        cmds.insert(2, "python -m unittest tools/reached-tests/test_plugin_shipped_digest.py")
     for name in sorted(whole):
         if package_plans is not None and name in package_plans:
             cmds.extend(_argv_text(step["argv"]) for step in package_plans[name])
@@ -1241,6 +1243,9 @@ def steps(whole, single, studio, tools=(), validate=(), lint_packages=None, repo
     if plugin_version_refs is not None:
         out.append({"argv": ["python", "tools/reached-tests/plugin_version_guard.py",
                               "--base", plugin_version_refs[0], "--head", plugin_version_refs[1]],
+                    "cwd": ".", "slot": False})
+        out.append({"argv": ["python", "tools/reached-tests/plugin_shipped_digest.py"], "cwd": ".", "slot": False})
+        out.append({"argv": ["python", "-m", "unittest", "tools/reached-tests/test_plugin_shipped_digest.py"],
                     "cwd": ".", "slot": False})
     for tool in tools:
         if tool == BROWSER_OBSERVERS:

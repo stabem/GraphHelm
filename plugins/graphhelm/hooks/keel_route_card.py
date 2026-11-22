@@ -23,9 +23,9 @@ write | keel:keel-author | sonnet | keel:keel, keel:keel-exec
 mechanical write (no judgement) | keel:keel-author | haiku (per-call override) | keel:keel, keel:keel-exec
 review, then merge | keel:keel-reviewer | opus | keel:keel-review, keel:keel-merge
 journey QA | graphhelm:keel-journey-qa | opus | keel:keel-journey-qa
-Why `keel:`: it is standalone, carries the scout and the current step skills; `graphhelm:keel-author`
-and `graphhelm:keel-reviewer` are twins that need other plugins' skills and can be older.
-Journey QA exists only as a `graphhelm:` agent; the `keel:` plugin ships its skill only."""
+Why `keel:`: it is standalone and carries the scout and the current step skills; the `graphhelm`
+plugin no longer ships an author or reviewer agent. Journey QA exists only as a `graphhelm:` agent;
+the `keel:` plugin ships its skill only."""
 
 
 if __name__ == "__main__":

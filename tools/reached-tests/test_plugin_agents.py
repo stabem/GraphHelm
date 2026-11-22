@@ -1,7 +1,7 @@
-"""The GraphHelm plugin ships three subagent definitions (#2956); this pins their shape.
+"""The GraphHelm plugin ships the journey QA subagent definition (#2956, #3006); this pins its shape.
 
 An agent file that loses its `Skill` tool, drifts from its file name, or tells the agent to load a
-skill that no plugin here ships fails here. Cost: reads three small files and a directory listing;
+skill that no plugin here ships fails here. Cost: reads small files and a directory listing;
 offline.
 """
 import re
@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTS = ROOT / "plugins" / "graphhelm" / "agents"
-EXPECTED = {"keel-author", "keel-reviewer", "keel-journey-qa"}
+EXPECTED = {"keel-journey-qa"}  # the keel plugin owns author and reviewer (#3006)
 # Plugin name as a session invokes it -> where that plugin's skills live in this repository.
 SKILL_TREES = {
     "graphhelm": "plugins/graphhelm/skills",
@@ -36,7 +36,7 @@ def split(path):
 
 
 class PluginAgents(unittest.TestCase):
-    def test_exactly_the_three_agents_ship(self):
+    def test_only_journey_qa_ships(self):
         self.assertEqual({p.stem for p in AGENTS.glob("*.md")}, EXPECTED)
 
     def test_each_agent_is_well_formed(self):
@@ -97,7 +97,7 @@ class AdvisorLine(unittest.TestCase):
     """The reviewer reads the author's `Advisor:` line (#2975), so each agent must state all three values."""
 
     def test_author_and_reviewer_state_the_three_values_in_both_plugins(self):
-        for tree in (AGENTS, KEEL_AGENTS):
+        for tree in (KEEL_AGENTS,):
             for name in ("keel-author", "keel-reviewer"):
                 _, body = split(tree / f"{name}.md")
                 flat = " ".join(body.split())
@@ -111,7 +111,7 @@ class SkillsLineAndLongCommands(unittest.TestCase):
     """The reviewer checks the author's `Skills:` line (#2978); each agent must state the rules it reads."""
 
     def test_author_and_reviewer_state_the_skills_line_and_no_sleep_in_both_plugins(self):
-        for tree in (AGENTS, KEEL_AGENTS):
+        for tree in (KEEL_AGENTS,):
             for name in ("keel-author", "keel-reviewer"):
                 _, body = split(tree / f"{name}.md")
                 flat = " ".join(body.split())
@@ -133,7 +133,7 @@ class BlockAndCardPaths(unittest.TestCase):
     """Each agent reads the #2981 rules in its own role."""
 
     def test_author_and_reviewer_state_card_paths_block_and_card_check_in_both_plugins(self):
-        for tree in (AGENTS, KEEL_AGENTS):
+        for tree in (KEEL_AGENTS,):
             where = tree.parent.name
             _, author = split(tree / "keel-author.md")
             author = " ".join(author.split())
@@ -154,7 +154,7 @@ class ReportOnceIdentityAndReviewerRows(unittest.TestCase):
     """The fifth reading (#2984): each agent states the rows that bind it."""
 
     def test_agents_state_report_once_and_role_identity_line_in_both_plugins(self):
-        for tree in (AGENTS, KEEL_AGENTS):
+        for tree in (KEEL_AGENTS,):
             for name in ("keel-author", "keel-reviewer"):
                 _, body = split(tree / f"{name}.md")
                 flat = " ".join(body.split())
@@ -165,7 +165,7 @@ class ReportOnceIdentityAndReviewerRows(unittest.TestCase):
                     self.assertIn(text, flat, f"{where}: missing {text!r}")
 
     def test_author_and_reviewer_say_the_role_in_parentheses_is_the_required_form_in_both_plugins(self):
-        for tree in (AGENTS, KEEL_AGENTS):
+        for tree in (KEEL_AGENTS,):
             for name in ("keel-author", "keel-reviewer"):
                 _, body = split(tree / f"{name}.md")
                 flat = " ".join(body.split())
@@ -189,7 +189,7 @@ class ReportOnceIdentityAndReviewerRows(unittest.TestCase):
                 self.assertIn(text, flat, f"{path.name}: missing {text!r}")
 
     def test_reviewer_blocks_an_unparseable_body_and_lists_skills_up_to_the_verdict_in_both_plugins(self):
-        for tree in (AGENTS, KEEL_AGENTS):
+        for tree in (KEEL_AGENTS,):
             _, body = split(tree / "keel-reviewer.md")
             flat = " ".join(body.split())
             where = f"{tree.parent.name}/keel-reviewer"

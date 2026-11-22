@@ -7,8 +7,7 @@ the group's shipped files (tests and docs excluded, as in plugin_version_guard).
 when the digest recorded for the manifest's current version differs from the files; `--write`
 records the current digest after the version is bumped. Offline; reads `git ls-files` and files.
 
-Limit: a tree-only check cannot tell a re-recorded digest under an unchanged version from an
-honest one; the record is keyed by version so such an overwrite shows as a one-line diff."""
+`--write` refuses to replace the digest of a version that is already recorded."""
 import argparse
 import hashlib
 import json
@@ -71,14 +70,30 @@ def load(path=RECORD):
     return json.loads(path.read_bytes().decode("utf-8"))
 
 
+def record_current(repo, record):
+    """Add the current digests to `record`; refuse (and change nothing) to overwrite a different
+    digest recorded for the same version, which is a change under an unchanged version."""
+    now = current(repo)
+    refused = [f"{group}: version {version} already has a different recorded digest; bump the version "
+               f"in every manifest of the group before `--write`"
+               for group, (version, digest) in now.items()
+               if record.get(group, {}).get(version, digest) != digest]
+    if not refused:
+        for group, (version, digest) in now.items():
+            record.setdefault(group, {})[version] = digest
+    return refused
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="record the current digests")
     args = parser.parse_args(argv)
     if args.write:
         record = load() if RECORD.is_file() else {}
-        for group, (version, digest) in current(REPO).items():
-            record.setdefault(group, {})[version] = digest
+        refused = record_current(REPO, record)
+        if refused:
+            print("\n".join(refused))
+            return 1
         RECORD.write_bytes((json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         return 0
     found = problems(REPO, load())

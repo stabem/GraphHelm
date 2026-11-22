@@ -49,9 +49,17 @@ class ChangeWithoutBump(unittest.TestCase):
         for manifest in shipped.guard.GROUPS[1][1]:
             self.put(manifest, json.dumps({"version": "1.0.1"}))
         self.assertIn("no recorded digest", shipped.problems(self.repo, self.record)[0])
-        for g, (v, d) in shipped.current(self.repo).items():
-            self.record.setdefault(g, {})[v] = d
+        self.assertEqual(shipped.record_current(self.repo, self.record), [])
         self.assertEqual(shipped.problems(self.repo, self.record), [])
+
+    def test_write_refuses_to_overwrite_the_digest_of_an_unchanged_version(self):
+        group = shipped.guard.GROUPS[1][0][0]
+        self.put(group + "skills/x/SKILL.md", "two\n")
+        before = json.dumps(self.record, sort_keys=True)
+        refused = shipped.record_current(self.repo, self.record)
+        self.assertEqual(len(refused), 1)
+        self.assertIn("already has a different recorded digest", refused[0])
+        self.assertEqual(json.dumps(self.record, sort_keys=True), before)
 
     def test_a_test_file_change_needs_no_bump(self):
         group = shipped.guard.GROUPS[1][0][0]

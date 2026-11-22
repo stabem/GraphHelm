@@ -840,6 +840,11 @@ pub enum KeelCommand {
         /// The card JSON (`keel-card.schema.json`). Without it the scope rule does not run.
         #[arg(long)]
         card: Option<PathBuf>,
+        /// The saved pull request body: the identity-line and skills-line rules run on it. A
+        /// markdown card is already the body; with a JSON card and no `--body` the check warns
+        /// `keel.card.body_unread`.
+        #[arg(long)]
+        body: Option<PathBuf>,
         /// The repository the range belongs to.
         #[arg(long, default_value = ".")]
         repo: PathBuf,

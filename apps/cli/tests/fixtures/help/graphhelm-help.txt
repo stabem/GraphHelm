@@ -3912,6 +3912,9 @@ Options:
       --json
           Print the JSON envelope even at a terminal (#1172). Without it a terminal gets the rendered summary, and everything that is not a terminal gets the envelope either way
 
+      --body <BODY>
+          The saved pull request body: the identity-line and skills-line rules run on it. A markdown card is already the body; with a JSON card and no `--body` the check warns `keel.card.body_unread`
+
       --repo <REPO>
           The repository the range belongs to
           

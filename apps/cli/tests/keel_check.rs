@@ -891,6 +891,102 @@ fn validation_reports_invalid_flow_and_no_dead_code_verdict() {
     assert_eq!(envelope["data"]["failures"][0]["reason"], "flow_invalid");
 }
 
+/// Like `run`, with the saved pull request body passed as `--body`.
+fn run_with_body(repo: &Path, card: &Path, body: &Path) -> (i32, Value) {
+    let output = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--json",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--repo",
+        ])
+        .arg(repo)
+        .arg("--card")
+        .arg(card)
+        .arg("--body")
+        .arg(body)
+        .env_remove("GRAPHHELM_EXECUTION_ID")
+        .env_remove("GRAPHHELM_TOKEN_FILE")
+        .env_remove("GRAPHHELM_RUNTIME_URL")
+        .output()
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&output.stdout)));
+    (output.status.code().unwrap(), reply)
+}
+
+/// A JSON card carries no body: without `--body` the check says the body rules did not run, in the
+/// envelope and in the rendered summary a terminal gets (`--pretty`).
+#[test]
+fn a_json_card_without_a_body_warns_that_the_body_was_not_read() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let json_card = card(scratch.path(), &["src"]);
+    let (code, reply) = run(repo.path(), Some(&json_card));
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.body_unread"]);
+    assert_eq!(reply["diagnostics"][0]["severity"], "warning");
+    assert_eq!(reply["diagnostics"][0]["path"], "/card");
+    let rendered = Command::cargo_bin("graphhelm")
+        .unwrap()
+        .args([
+            "--pretty",
+            "keel",
+            "check",
+            "--diff",
+            "HEAD~1..HEAD",
+            "--repo",
+        ])
+        .arg(repo.path())
+        .arg("--card")
+        .arg(&json_card)
+        .env_remove("GRAPHHELM_EXECUTION_ID")
+        .env_remove("GRAPHHELM_TOKEN_FILE")
+        .env_remove("GRAPHHELM_RUNTIME_URL")
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&rendered.stdout);
+    assert!(text.contains("keel.card.body_unread"), "{text}");
+}
+
+/// With the saved body next to a JSON card, the identity-line and skills-line rules run on that
+/// body, a body that cannot be read is refused, and a markdown card (the body itself) gets no
+/// unread warning.
+#[test]
+fn a_json_card_with_a_body_runs_the_body_rules_on_it() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let json_card = card(scratch.path(), &["src"]);
+    let body = scratch.path().join("pr-body.md");
+    fs::write(&body, "No identity line here.\nSkills: keel:keel\n").unwrap();
+    let (code, reply) = run_with_body(repo.path(), &json_card, &body);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.identity_line_missing"]);
+    fs::write(
+        &body,
+        "Session: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\n",
+    )
+    .unwrap();
+    let (_, reply) = run_with_body(repo.path(), &json_card, &body);
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // A body file that cannot be read is an input error, not a clean result.
+    let (code, reply) = run_with_body(repo.path(), &json_card, &scratch.path().join("absent.md"));
+    assert_eq!(code, 3, "{reply}");
+    // A markdown card is the body: no unread warning.
+    let md = scratch.path().join("card.md");
+    fs::write(
+        &md,
+        "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nSkills: keel:keel\nSession: Author [2ba4e9] \u{b7} Head: 0123abcd\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&md));
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+}
+
 fn codes(reply: &Value) -> Vec<String> {
     reply["diagnostics"]
         .as_array()
@@ -917,7 +1013,7 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
         reply["data"]["surface"]["undeclaredPublicSymbols"],
         serde_json::json!([])
     );
-    assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.body_unread"], "{reply}");
     assert_eq!(reply["data"]["recommendation"]["step"], "review");
     assert_eq!(
         reply["data"]["recommendation"]["head"]
@@ -936,7 +1032,10 @@ fn a_path_outside_the_card_blocks_with_exit_2_and_keeps_the_report() {
     let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src/lib.rs"])));
     assert_eq!(code, 2, "{reply}");
     assert_eq!(reply["ok"], false);
-    assert_eq!(codes(&reply), vec!["keel.scope.path_outside_card"]);
+    assert_eq!(
+        codes(&reply),
+        vec!["keel.scope.path_outside_card", "keel.card.body_unread"]
+    );
     assert_eq!(reply["diagnostics"][0]["severity"], "error");
     assert_eq!(reply["diagnostics"][0]["path"], "docs/notes.md");
     assert_eq!(reply["data"]["refused"], true);
@@ -966,7 +1065,10 @@ fn a_sneaked_in_test_file_is_counted_and_blocked_when_outside_the_card() {
     let scratch = tempfile::tempdir().unwrap();
     let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
     assert_eq!(code, 2, "{reply}");
-    assert_eq!(codes(&reply), vec!["keel.scope.path_outside_card"]);
+    assert_eq!(
+        codes(&reply),
+        vec!["keel.scope.path_outside_card", "keel.card.body_unread"]
+    );
     assert_eq!(reply["data"]["surface"]["newTestFiles"], 1);
     assert_eq!(reply["data"]["surface"]["newTests"], 1);
 }
@@ -1316,7 +1418,11 @@ fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it(
             .unwrap();
         let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(output.status.code(), Some(0), "{range}: {reply}");
-        assert!(codes(&reply).is_empty(), "{range}: {reply}");
+        assert_eq!(
+            codes(&reply),
+            vec!["keel.card.body_unread"],
+            "{range}: {reply}"
+        );
     }
 }
 
@@ -1459,7 +1565,7 @@ fn a_pr_body_without_a_filled_identity_line_warns_and_a_plain_card_does_not() {
     assert!(codes(&reply).is_empty(), "{reply}");
     let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
     assert_eq!(code, 0, "{reply}");
-    assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.body_unread"], "{reply}");
 }
 
 /// The skills line is a warning on a markdown body only, and a byte-order mark in front of the

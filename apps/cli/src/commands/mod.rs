@@ -712,6 +712,7 @@ pub fn run(command: TopLevel) -> Outcome {
             KeelCommand::Check {
                 diff,
                 card,
+                body,
                 repo,
                 prove_new_tests,
                 prove_target_dir,
@@ -728,7 +729,10 @@ pub fn run(command: TopLevel) -> Outcome {
             } => keel::check(
                 &repo,
                 &diff,
-                card.as_deref(),
+                keel::CardFiles {
+                    card: card.as_deref(),
+                    body: body.as_deref(),
+                },
                 prove_new_tests.then_some(keel::ProveArgs {
                     target_dir: prove_target_dir,
                     timeout_secs: prove_timeout_secs,

@@ -479,6 +479,21 @@ pub fn check_identity_line(body: &str) -> Vec<Finding> {
     }]
 }
 
+/// `keel.card.body_unread`: the card is a JSON file and no pull request body was given, so the
+/// body rules (identity line, skills line, declared skills) did not run. A warning, so a clean
+/// result is never read as "the body is fine".
+#[must_use]
+pub fn body_unread() -> Vec<Finding> {
+    vec![Finding {
+        rule: "keel.card.body_unread".into(),
+        blocking: false,
+        path: Some("/card".into()),
+        detail: "the pull request body was not read, so its identity-line and skills-line rules \
+                 did not run; save the body to a file and pass it with `--body <file>`"
+            .into(),
+    }]
+}
+
 fn identity_line_is_filled(line: &str) -> bool {
     let line = line
         .trim()

@@ -755,11 +755,16 @@ fn a_touched_screen_without_a_fresh_capture_is_a_warning_and_never_blocks() {
 }
 
 #[test]
-fn a_body_without_a_filled_identity_line_warns_at_the_card_path() {
+fn a_body_without_a_filled_identity_line_blocks_at_the_card_path() {
+    use graphhelm_policy::keel::{BodySource, check_identity_line};
     let filled = "Session: Author [2ba4e9] (keel-author subagent) \u{b7} Head: 0123abcd\n";
-    assert!(graphhelm_policy::keel::check_identity_line(filled).is_empty());
+    assert!(check_identity_line(filled, BodySource::PullRequestBody).is_empty());
     assert!(
-        graphhelm_policy::keel::check_identity_line(&format!("- **{}**", filled.trim())).is_empty()
+        check_identity_line(
+            &format!("- **{}**", filled.trim()),
+            BodySource::PullRequestBody
+        )
+        .is_empty()
     );
     for body in [
         "Promise: x\nCloses #1\n",
@@ -768,10 +773,13 @@ fn a_body_without_a_filled_identity_line_warns_at_the_card_path() {
         "Session: Author [2ba4e9] \u{b7} Head: <sha8 of your head>\n",
         "Session: Author \u{b7} Head: 0123abc\n",
     ] {
-        let findings = graphhelm_policy::keel::check_identity_line(body);
+        let findings = check_identity_line(body, BodySource::PullRequestBody);
         assert_eq!(findings.len(), 1, "{body}");
         assert_eq!(findings[0].rule, "keel.card.identity_line_missing");
         assert_eq!(findings[0].path.as_deref(), Some("/card"));
+        assert!(findings[0].blocking);
+        // A markdown card might not be a body: the same text only warns.
+        let findings = check_identity_line(body, BodySource::MarkdownCard);
         assert!(!findings[0].blocking);
     }
 }

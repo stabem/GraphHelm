@@ -494,7 +494,7 @@ card). `keel check` then warns when the diff touches a screen whose newest captu
 cat card.json
 # {"promise":"the pay screen keeps its password field","scopePaths":["app/checkout/page.tsx"],
 #  "proof":"graphhelm journey replay checkout","journeys":["checkout"]}
-graphhelm keel check --diff HEAD~1..HEAD --card card.json \
+graphhelm keel check --diff HEAD~1..HEAD --card card.json --body pr-body.md \
   --events .graphhelm/events --execution demo --keyring .graphhelm/keyring --key-id studio --json
 ```
 ```json

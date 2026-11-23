@@ -841,8 +841,8 @@ pub enum KeelCommand {
         #[arg(long)]
         card: Option<PathBuf>,
         /// The saved pull request body: the identity-line and skills-line rules run on it. A
-        /// markdown card is already the body; with a JSON card and no `--body` the check warns
-        /// `keel.card.body_unread`.
+        /// markdown card is already the body; with a JSON card and no `--body` the check is refused
+        /// with `keel.card.body_unread`, and a body without a filled identity line is refused.
         #[arg(long)]
         body: Option<PathBuf>,
         /// The repository the range belongs to.

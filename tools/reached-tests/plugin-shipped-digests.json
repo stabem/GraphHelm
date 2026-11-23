@@ -1,11 +1,13 @@
 {
   "plugins/graphhelm/": {
-    "1.3.0": "49bf9e5d5018cf3382cc889e91b407fbd90635f43245584df5dfc6be89fad0fd"
+    "1.3.0": "49bf9e5d5018cf3382cc889e91b407fbd90635f43245584df5dfc6be89fad0fd",
+    "1.3.1": "f773f365ee878ef4c0b159848f6c32c26fcfac6b76010a269bdff714dc89c868"
   },
   "plugins/journey-review/": {
     "1.0.0": "76107a1ec9263c0d08b30c9333fc999120f348e608f1ca66ed9edc4b45948231"
   },
   "plugins/keel/": {
-    "1.6.2": "df2e7c5837563c32e8f8ef1db6a07c57ac30fd05fafdcb94963a5853fb68868d"
+    "1.6.2": "df2e7c5837563c32e8f8ef1db6a07c57ac30fd05fafdcb94963a5853fb68868d",
+    "1.6.3": "7235d43912925bb728408246d9fb6bd3e5ae3147e96963a024163513051e67ce"
   }
 }

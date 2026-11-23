@@ -328,6 +328,31 @@ def forget(repo: Path) -> None:
         pass
 
 
+def _without_unread_body(returncode: int, stdout: str) -> tuple[int, str]:
+    """The check's result with `keel.card.body_unread` taken out of what blocks.
+
+    No pull request exists at Stop, so there is no body to read: the reviewer's check carries
+    `--body`, and this gate neither refuses nor records a block for the missing one. When that was
+    the only blocking finding, the result reads as the passing check it is otherwise."""
+    if returncode != 2:
+        return returncode, stdout
+    try:
+        envelope = json.loads(stdout)
+        data = envelope["data"]
+        findings = data["findings"]
+        blocking = [f for f in findings if f.get("blocking")]
+        if not blocking or any(f.get("rule") != "keel.card.body_unread" for f in blocking):
+            return returncode, stdout
+        for finding in blocking:
+            finding["blocking"] = False
+        data["refused"] = False
+        envelope["ok"] = True
+        data["recommendation"] = {**data["recommendation"], "step": "review", "findingIds": [], "paths": []}
+        return 0, json.dumps(envelope)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return returncode, stdout
+
+
 def decide(repo: Path, payload: dict | None = None) -> str | None:
     """The reason to block, or None to let the turn end."""
     global LAST_FROM_CACHE
@@ -353,7 +378,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
         result = subprocess.run([cli, "--json", "keel", "check", "--diff", f"{base}..HEAD",
                                  "--card", str(card), "--repo", str(repo)],
                                 capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
-        returncode, stdout = result.returncode, result.stdout
+        returncode, stdout = _without_unread_body(result.returncode, result.stdout)
         if returncode in (0, 2):
             delivered = False
             try:

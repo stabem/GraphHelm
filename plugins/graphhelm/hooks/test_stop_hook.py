@@ -116,6 +116,32 @@ class HookProcessCount(unittest.TestCase):
             self.assertEqual(stop_hook.main(), 0)
         return counted, out.getvalue()
 
+    def decide_with(self, findings):
+        """The Stop gate's verdict when the check refuses (exit 2) with these blocking findings."""
+        real = subprocess.run
+
+        def cli_stub(args, *a, **k):
+            if str(args[0]) == str(self.cli):
+                data = {"data": {"findings": [{"rule": r, "path": p, "blocking": True} for r, p in findings],
+                                 "recommendation": {"step": "implement", "head": "h", "findingIds": [],
+                                                    "paths": [], "applied": False}}}
+                return subprocess.CompletedProcess(args, 2, json.dumps(data), "")
+            return real(args, *a, **k)
+        with mock.patch.object(subprocess, "run", cli_stub):
+            return keel_stop_hook.decide(self.repo, self.payload())
+
+    def test_a_missing_pull_request_body_does_not_stop_the_turn_but_a_scope_refusal_does(self):
+        self.assertIsNone(self.decide_with([("keel.card.body_unread", "/card")]))
+        code, text = keel_stop_hook._without_unread_body(2, json.dumps({"ok": False, "data": {
+            "refused": True, "findings": [{"rule": "keel.card.body_unread", "blocking": True}],
+            "recommendation": {"step": "implement", "head": "h", "findingIds": ["keel.card.body_unread"],
+                               "paths": ["/card"], "applied": False}}}))
+        self.assertEqual(code, 0, "recorded as the passing check it is otherwise, not as keel.blocked")
+        self.assertEqual(json.loads(text)["data"]["recommendation"]["step"], "review")
+        keel_stop_hook.forget(self.repo)
+        reason = self.decide_with([("keel.card.body_unread", "/card"), ("keel.scope.path_outside_card", "a.py")])
+        self.assertIn("keel.scope.path_outside_card a.py", reason)
+
     def test_the_claude_stop_is_one_registered_process(self):
         # The #1058 rewake runs in the background (`asyncRewake`): it never holds the turn end.
         stops = [hook for group in json.loads((HERE / "hooks.json").read_text())["hooks"]["Stop"]

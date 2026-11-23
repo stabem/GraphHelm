@@ -257,9 +257,10 @@ review-start-to-merge intervals. Record unavailable timestamps as unobserved.
   plan. Name reused and rerun commands and results. Independent review still examines the diff,
   earlier comments and the adequacy of the proof, including security and compatibility risks.
 - **The reviewer runs the Keel check on the head under review and pastes its output** in the
-  review: `graphhelm --json keel check --diff <base>..<head> --card <card.json>`, where `<base>` is
-  the merge base with `main` and the card is the one in the PR body saved as JSON
-  ([`docs/keel/KEEL_CHECK.md`](../keel/KEEL_CHECK.md) has the shape). Exit 2 with
+  review: `graphhelm --json keel check --diff <base>..<head> --card <card.json> --body <body.md>`, where
+  `<base>` is the merge base with `main`, the card is the one in the PR body saved as JSON
+  ([`docs/keel/KEEL_CHECK.md`](../keel/KEEL_CHECK.md) has the shape) and `<body.md>` is the saved
+  PR body: a JSON card without `--body`, or a body without a filled identity line, is refused. Exit 2 with
   `keel.scope.path_outside_card` means the change touches a path its card does not list: the
   author widens the card in the PR body (and says why) or removes the change. The surface counts
   and warnings are signals the reviewer weighs, not a verdict. A change whose row in §2 needs no

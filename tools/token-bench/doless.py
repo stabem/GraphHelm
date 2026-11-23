@@ -58,6 +58,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -266,10 +267,17 @@ def keel_check(wt: Path, base: str, head: str, card: Path, prove: bool) -> dict:
     exe = os.environ.get("TOKEN_BENCH_GRAPHHELM_CLI")
     if not exe or not Path(exe).is_file():
         return {"error": "TOKEN_BENCH_GRAPHHELM_CLI does not name a graphhelm executable"}
-    cmd = [exe, "--json", "keel", "check", "--diff", f"{base}..{head}", "--card", str(card), "--repo", str(wt)]
-    if prove:
-        cmd += ["--prove-new-tests", "--prove-target-dir", str(run_target(wt) / "prove")]
-    proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+    # A JSON card is refused until a pull request body is read; the benchmark has no pull request, so
+    # it hands the check a body that carries the identity line.
+    with tempfile.TemporaryDirectory(prefix="doless-body-") as body_dir:
+        body = Path(body_dir) / "pr-body.md"
+        body.write_text(f"Session: do-less benchmark [bench] · Head: {head[:8]}\n", encoding="utf-8")
+        cmd = [exe, "--json", "keel", "check", "--diff", f"{base}..{head}", "--card", str(card),
+               "--body", str(body), "--repo", str(wt)]
+        if prove:
+            cmd += ["--prove-new-tests", "--prove-target-dir", str(run_target(wt) / "prove")]
+        proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8", errors="replace",
+                              creationflags=NO_WINDOW)
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:

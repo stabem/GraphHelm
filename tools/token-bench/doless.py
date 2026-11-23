@@ -277,7 +277,7 @@ def keel_check(wt: Path, base: str, head: str, card: Path, prove: bool) -> dict:
         if prove:
             cmd += ["--prove-new-tests", "--prove-target-dir", str(run_target(wt) / "prove")]
         proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8", errors="replace",
-                              creationflags=NO_WINDOW)
+                              creationflags=NO_WINDOW, timeout=3600)
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:

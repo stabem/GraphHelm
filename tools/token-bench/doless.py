@@ -276,8 +276,11 @@ def keel_check(wt: Path, base: str, head: str, card: Path, prove: bool) -> dict:
                "--body", str(body), "--repo", str(wt)]
         if prove:
             cmd += ["--prove-new-tests", "--prove-target-dir", str(run_target(wt) / "prove")]
-        proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8", errors="replace",
-                              creationflags=NO_WINDOW, timeout=3600)
+        try:
+            proc = subprocess.run(cmd, cwd=wt, text=True, capture_output=True, encoding="utf-8",
+                                  errors="replace", creationflags=NO_WINDOW, timeout=3600)
+        except subprocess.TimeoutExpired:
+            return {"error": "keel check did not finish within 3600 seconds"}
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:

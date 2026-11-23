@@ -67,6 +67,10 @@ def main() -> int:
                     }),
                     encoding="utf-8",
                 )
+                # A JSON card is refused until a pull request body is read, so the check gets one.
+                (repo / "pr-body.md").write_text(
+                    "Session: Contributor [fixture] · Head: 0123abcd\n", encoding="utf-8"
+                )
             git(repo, "init", "--quiet", "--object-format=sha1")
             commit(repo, "base")
 
@@ -94,7 +98,8 @@ def main() -> int:
                 commit(repo, "unmapped invariant change")
                 missing = run(
                     [graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
-                     "--repo", str(repo), "--card", str(repo / "card.json")],
+                     "--repo", str(repo), "--card", str(repo / "card.json"),
+                     "--body", str(repo / "pr-body.md")],
                     repo,
                 )
                 if missing.returncode:
@@ -124,7 +129,8 @@ def main() -> int:
 
                 reached = run(
                     [graphhelm(), "--json", "keel", "check", "--diff", "HEAD~2..HEAD~1",
-                     "--repo", str(repo), "--card", str(repo / "card.json")], repo,
+                     "--repo", str(repo), "--card", str(repo / "card.json"),
+                     "--body", str(repo / "pr-body.md")], repo,
                 )
                 if reached.returncode:
                     sys.stdout.buffer.write(reached.stdout)
@@ -141,6 +147,7 @@ def main() -> int:
                     [
                         graphhelm(), "--json", "keel", "check", "--diff", "HEAD~1..HEAD",
                         "--repo", str(repo), "--card", str(repo / "card.json"),
+                        "--body", str(repo / "pr-body.md"),
                     ],
                     repo,
                 )
@@ -170,7 +177,8 @@ def main() -> int:
                     {"docs": "HEAD~3..HEAD~2", "bounded-code": "HEAD~2..HEAD~1",
                 "expanded": "HEAD~2..HEAD~1"}[mode],
                     "--repo", str(repo),
-                    *( ["--card", str(repo / "card.json")] if mode == "expanded" else [] ),
+                    *( ["--card", str(repo / "card.json"), "--body", str(repo / "pr-body.md")]
+                       if mode == "expanded" else [] ),
                 ],
                 repo,
             )

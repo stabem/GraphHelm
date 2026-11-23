@@ -6,8 +6,10 @@ joins them with the scope rule). The rules and their version are in
 `extensions/builtin/graphhelm-development-contracts/policies/keel.yaml` (version `1.3.0`).
 
 ```sh
-graphhelm --json keel check --diff origin/main..HEAD --card card.json [--repo <dir>]
+graphhelm --json keel check --diff origin/main..HEAD --card card.json --body pr-body.md [--repo <dir>]
 ```
+
+A JSON card is refused (exit 2) until `--body` supplies the pull request body; a markdown card is the body.
 
 - `--diff` is a git range, `<base>..<head>` or `<base>...<head>`; both mean the same thing. The
   command diffs from `git merge-base <base> <head>` to `<head>` in `--repo` (default: the current
@@ -155,7 +157,7 @@ A test that is green before the change proves nothing (`keel/KEEL_EXEC.md`). `--
 Rust `#[test]` the counter charges (#1333):
 
 ```sh
-graphhelm --json keel check --diff origin/main..HEAD --card card.json --prove-new-tests   [--prove-target-dir <dir>] [--prove-timeout-secs 900]
+graphhelm --json keel check --diff origin/main..HEAD --card card.json --body pr-body.md --prove-new-tests   [--prove-target-dir <dir>] [--prove-timeout-secs 900]
 ```
 
 1. The base and the head are checked out as two detached worktrees under a fresh directory in the

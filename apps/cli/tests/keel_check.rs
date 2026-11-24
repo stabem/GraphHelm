@@ -1636,6 +1636,11 @@ fn a_pr_body_without_a_skills_line_warns_and_a_bom_does_not_hide_the_lines() {
 /// Serves `skill.loaded` records for one execution the way the Runtime's events and evidence
 /// routes reply, on a loopback port, and returns the base URL. One thread, closed connections.
 fn runtime_with_loaded_skills(names: &[&str]) -> String {
+    runtime_with_events(names, 0)
+}
+
+/// Like `runtime_with_loaded_skills`, with `other_events` records of another kind after them.
+fn runtime_with_events(names: &[&str], other_events: usize) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1649,6 +1654,13 @@ fn runtime_with_loaded_skills(names: &[&str]) -> String {
                 "evidenceRefs": [{"evidenceId": format!("signal-{index}")}],
             })
         })
+        .chain((0..other_events).map(|index| {
+            serde_json::json!({
+                "sequence": names.len() + index + 1,
+                "kind": {"type": "signal_recorded", "data": {"kind": "task.claimed"}},
+                "evidenceRefs": [{"evidenceId": format!("other-{index}")}],
+            })
+        }))
         .collect();
     let results: Vec<Value> = names
         .iter()
@@ -1657,8 +1669,7 @@ fn runtime_with_loaded_skills(names: &[&str]) -> String {
             serde_json::json!({"status": "available", "content": content.to_string()})
         })
         .collect();
-    let events_reply =
-        serde_json::json!({"ok": true, "data": {"events": events, "head": names.len()}});
+    let events_reply = serde_json::json!({"ok": true, "data": {"events": events, "head": names.len() + other_events}});
     let evidence_reply = serde_json::json!({"ok": true, "data": {"results": results}});
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -1747,6 +1758,20 @@ fn a_skill_named_on_the_card_but_not_loaded_warns_and_no_binding_passes_unobserv
     assert_eq!(code, 0, "{reply}");
     assert!(codes(&reply).is_empty(), "{reply}");
     assert_eq!(reply["data"]["skillsObserver"]["state"], "unobserved");
+    // Events but not one `skill.loaded`: the host has no recorder, so unobserved with the reason
+    // naming it, and no warning per declared skill.
+    let no_recorder = runtime_with_events(&[], 3);
+    let (code, reply) = run_bound(&no_recorder);
+    assert_eq!(code, 0, "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(reply["data"]["skillsObserver"]["state"], "unobserved");
+    assert!(
+        reply["data"]["skillsObserver"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("skill_record_hook"),
+        "{reply}"
+    );
     // No binding at all (`run` clears the binding variables): the same one-line answer.
     let (code, reply) = run(repo.path(), Some(&body));
     assert_eq!(code, 0, "{reply}");

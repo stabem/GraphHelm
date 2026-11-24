@@ -10,9 +10,20 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import os
 import urllib.parse
 
 import session_hook
+
+
+def signal_actor(payload: dict, fallback: str) -> str:
+    """The session's lane when known: a lane credential is valid only with its own lane as actor.
+
+    The signal `source` still names the tool or node; only the actor header changes. A session
+    with no lane keeps `fallback`.
+    """
+    lane = os.environ.get("GRAPHHELM_ACTOR") or session_hook._lane_actor(payload)
+    return lane if isinstance(lane, str) and session_hook.ID.fullmatch(lane) else fallback
 
 
 def record_check(envelope: dict, payload: dict) -> bool:
@@ -49,7 +60,7 @@ def record_check(envelope: dict, payload: dict) -> bool:
                   "evidence": evidence, "emittedAt": emitted_at}
         session_hook.request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
                              session_hook.token_from_file(token_file), "POST", {"signal": signal},
-                             {"X-GraphHelm-Actor": source["id"], "X-GraphHelm-Actor-Type": "agent",
+                             {"X-GraphHelm-Actor": signal_actor(payload, source["id"]), "X-GraphHelm-Actor-Type": "agent",
                               "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id},
                              timeout=2.0)
         return True
@@ -83,7 +94,7 @@ def post_signal(payload: dict, *, id_prefix: str, digest_text: str, kind: str, s
             signal["emittedAt"] = emitted_at
         session_hook.request(f"{url}/v1/executions/{urllib.parse.quote(execution, safe='')}/signal",
                              session_hook.token_from_file(token_file), "POST", {"signal": signal},
-                             {"X-GraphHelm-Actor": source["id"], "X-GraphHelm-Actor-Type": "agent",
+                             {"X-GraphHelm-Actor": signal_actor(payload, source["id"]), "X-GraphHelm-Actor-Type": "agent",
                               "X-GraphHelm-Actor-Session": session, "Idempotency-Key": signal_id},
                              timeout=2.0)
         return True

@@ -886,6 +886,11 @@ fn declared_skills_skips_prose_after_the_list_and_a_not_used_line() {
         declared_skills("## Skills usadas\nkeel\nNão carregadas: task-plan\n"),
         ["keel"]
     );
+    // A sentence ends only its own line: a later list item is still declared.
+    assert_eq!(
+        declared_skills("## Skills usadas\n- keel (first).\n- made-up-skill (second).\n"),
+        ["keel", "made-up-skill"]
+    );
     // A listed name with no record keeps firing, known or not.
     let loaded: std::collections::BTreeSet<String> =
         ["keel:keel"].into_iter().map(String::from).collect();

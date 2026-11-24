@@ -584,7 +584,7 @@ fn skills_line_text(lines: &[&str], index: usize) -> Option<String> {
         })
         .map(|(_, text)| text)
         .collect();
-    (!names.is_empty()).then(|| names.join(" "))
+    (!names.is_empty()).then(|| names.join("\n"))
 }
 
 /// The skill names a pull request body's skills line declares, in order, without repeats.
@@ -609,14 +609,18 @@ pub fn declared_skills(body: &str) -> Vec<String> {
             _ => plain.push(c),
         }
     }
-    // A sentence ends the list: what follows `. ` is prose, not names.
-    let list_end = plain
-        .char_indices()
-        .zip(plain.chars().skip(1))
-        .find_map(|((at, c), next)| (c == '.' && next.is_whitespace()).then_some(at))
-        .unwrap_or(plain.len());
+    // A sentence ends the names on its own line: what follows `. ` is prose. The next line of the
+    // block is a new list item and is read on its own.
+    let names_only = plain.lines().map(|line| {
+        let end = line
+            .char_indices()
+            .zip(line.chars().skip(1))
+            .find_map(|((at, c), next)| (c == '.' && matches!(next, ' ' | '\t')).then_some(at))
+            .unwrap_or(line.len());
+        &line[..end]
+    });
     let mut names: Vec<String> = Vec::new();
-    for token in plain[..list_end].split_whitespace() {
+    for token in names_only.flat_map(str::split_whitespace) {
         let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric());
         let is_name = token.starts_with(|c: char| c.is_ascii_alphanumeric())
             && token

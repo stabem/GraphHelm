@@ -579,10 +579,12 @@ fn skills_line_text(lines: &[&str], index: usize) -> Option<String> {
         .skip_while(|next| next.trim().is_empty())
         .take_while(|next| !next.trim().is_empty())
         .map(|next| (next.trim_start().starts_with('#'), decorated_text(next)))
-        .take_while(|(heading, text)| !heading && !is_key_line(text) && has_name(text))
+        .take_while(|(heading, text)| {
+            !heading && !is_key_line(text) && !is_not_used_label(text) && has_name(text)
+        })
         .map(|(_, text)| text)
         .collect();
-    (!names.is_empty()).then(|| names.join(" "))
+    (!names.is_empty()).then(|| names.join("\n"))
 }
 
 /// The skill names a pull request body's skills line declares, in order, without repeats.
@@ -607,8 +609,11 @@ pub fn declared_skills(body: &str) -> Vec<String> {
             _ => plain.push(c),
         }
     }
+    // A sentence ends the names on its own line: what follows `. ` is prose. The next line of the
+    // block is a new list item and is read on its own.
+    let names_only = plain.lines().map(|line| &line[..sentence_end(line)]);
     let mut names: Vec<String> = Vec::new();
-    for token in plain.split_whitespace() {
+    for token in names_only.flat_map(str::split_whitespace) {
         let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric());
         let is_name = token.starts_with(|c: char| c.is_ascii_alphanumeric())
             && token
@@ -658,6 +663,44 @@ fn is_key_line(text: &str) -> bool {
         key.starts_with(|c: char| c.is_ascii_uppercase())
             && key.chars().all(|c| c.is_ascii_alphabetic() || c == ' ')
     })
+}
+
+/// Where prose starts on a line: the first `.` followed by a space or tab that ends a word. A list
+/// marker (`1. keel`) and an abbreviation (`e.g. keel`) are not sentence ends, so the names after
+/// them are still read.
+fn sentence_end(line: &str) -> usize {
+    line.char_indices()
+        .zip(line.chars().skip(1))
+        .find_map(|((at, c), next)| {
+            if c != '.' || !matches!(next, ' ' | '\t') {
+                return None;
+            }
+            let word = line[..at]
+                .trim_end()
+                .rsplit(char::is_whitespace)
+                .next()
+                .unwrap_or("");
+            let marker = !word.is_empty() && word.chars().all(|w| w.is_ascii_digit());
+            (!marker && !word.contains('.')).then_some(at)
+        })
+        .unwrap_or(line.len())
+}
+
+/// `Não usadas nesta tarefa: ...`, `Not used: ...`, `Não carregadas: ...`: a label whose words
+/// say the skills after it were not loaded. Such a line declares nothing and ends the list.
+fn is_not_used_label(text: &str) -> bool {
+    let Some((key, _)) = text.split_once(':') else {
+        return false;
+    };
+    // A label is plain words before the colon; a list or a sentence with a colon later is not one.
+    let plain_words = key.chars().all(|c| c.is_alphabetic() || c == ' ');
+    plain_words
+        && key.split_whitespace().any(|word| {
+            matches!(
+                word.to_lowercase().as_str(),
+                "não" | "nao" | "not" | "unused" | "never" | "sem" | "without"
+            )
+        })
 }
 
 fn decorated_text(line: &str) -> String {

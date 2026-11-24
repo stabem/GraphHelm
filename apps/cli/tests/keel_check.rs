@@ -1785,6 +1785,67 @@ fn a_skill_named_on_the_card_but_not_loaded_warns_and_no_binding_passes_unobserv
     );
 }
 
+/// Contract: a skills block with a "not used" line under the names warns for none of the six
+/// loaded names, and a listed name with no record still warns. Regression: the words of the "not
+/// used" line were reported as skills never loaded.
+/// Cost: one loopback stub thread and short CLI processes; no real Runtime.
+#[test]
+fn a_not_used_line_under_the_skills_names_declares_nothing_and_an_unloaded_name_still_warns() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let token = scratch.path().join("agent.token");
+    fs::write(&token, "a".repeat(64)).unwrap();
+    let run_card = |skills: &str, loaded: &[&str]| {
+        let body = scratch.path().join("pr-body.md");
+        fs::write(
+            &body,
+            format!(
+                "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nSession: Author [2ba4e9] \u{b7} Head: 0123abcd\n{skills}"
+            ),
+        )
+        .unwrap();
+        let url = runtime_with_loaded_skills(loaded);
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--repo",
+            ])
+            .arg(repo.path())
+            .arg("--card")
+            .arg(&body)
+            .args(["--runtime-url", &url, "--runtime-execution", "ex1"])
+            .arg("--runtime-token-file")
+            .arg(&token)
+            .output()
+            .unwrap();
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let six = [
+        "keel",
+        "graphhelm-implement",
+        "keel-exec",
+        "test-audit",
+        "modern-web-guidance",
+        "graphhelm-work",
+    ];
+    let reply = run_card(
+        "## Skills usadas\n`keel`, `graphhelm-implement`, `keel-exec`, `test-audit`, `modern-web-guidance`, `graphhelm-work`\nNão usadas nesta tarefa: `journey-prove` (OBSERVER_MISSING: jornada), `task-plan` (plano na issue).\n",
+        &six,
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
+    let reply = run_card("Skills: keel, made-up-skill\n", &["keel"]);
+    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
+    assert_eq!(
+        reply["diagnostics"][0]["path"],
+        "/card/skills/made-up-skill"
+    );
+}
+
 #[test]
 fn a_card_written_with_multiline_scope_lists_all_paths() {
     let repo = repository(&[

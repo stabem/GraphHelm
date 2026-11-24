@@ -91,6 +91,30 @@ class Allowed(unittest.TestCase):
                 self.assertEqual(run(before + post), "deny")
         self.assertEqual(run('echo "a;b\n&& c"\n' + post), "deny")
 
+    def test_gh_is_checked_unless_it_is_a_plain_argument(self):
+        post = 'gh pr comment 5 --body "x"'
+        checked = (
+            "A; if ($?) { %s }", "& { %s }", "foreach ($i in 1..2) { %s }", "try { %s } catch { throw }",
+            "try { x } catch { %s }", "if ($?) {%s}", "if ($a) { 1 } else { %s }", "{ %s; }", "& %s",
+            "if true; then %s; fi", "if true\nthen\n  %s\nfi", "for i in 1 2; do %s; done", "( %s )",
+            "$( %s )", "`%s`", "cd x && %s", "! %s", "while true; do %s; done", "ls | %s", "ls |& %s",
+            "sudo %s", "env A=1 %s", "A=1 %s", "xargs %s", "time %s", "else %s", "cd x\r\n%s", "{ cd x; %s }",
+            "function f { %s }", "case $x in a) %s ;; esac", "echo hi >out; %s", "echo hi > out\n%s")
+        for shape in checked:
+            with self.subTest(shape=shape):
+                self.assertEqual(run(shape % post, tool="PowerShell"), "deny")
+                self.assertEqual(run(shape % post.replace('"x"', f'"{GOOD}"')), "allow")
+        text = "gh pr comment 5 --body x"
+        plain = ("echo %s", "echo hi && echo %s", "printf '%%s' %s", "git commit -m ok %s", "ls -la %s",
+                 "echo a;echo %s", "echo $x %s", "echo -n %s")
+        for shape in plain:
+            with self.subTest(shape=shape):
+                self.assertEqual(run(shape % text), "allow")
+
+    def test_a_quoted_body_starting_with_a_bracket_is_still_checked(self):
+        self.assertEqual(run('gh pr comment 5 --body "(x) note"'), "deny")
+        self.assertEqual(run(f'gh pr comment 5 --body "{GOOD}"'), "allow")
+
     def test_gh_as_an_argument_or_in_a_quote_is_not_a_command(self):
         text = "gh pr comment 5 --body x"
         for command in (f"echo {text}", f"echo hi && echo {text}", f"echo hi\necho {text}", f"echo hi;echo {text}",

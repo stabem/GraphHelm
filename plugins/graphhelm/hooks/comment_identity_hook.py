@@ -16,12 +16,17 @@ import sys
 
 SHELL_TOOLS = ("Bash", "PowerShell")
 READ_LIMIT = 4096
-SEPARATOR_CHARS = ";&|()"
+SEPARATOR_CHARS = ";&|(){}`"
 SEPARATORS = set(SEPARATOR_CHARS)
+# A word before `gh` that still leaves `gh` in command position (a keyword or a command wrapper).
+LEADS_A_COMMAND = {"if", "then", "else", "elif", "while", "until", "do", "time", "sudo", "env", "exec", "nohup",
+                   "xargs", "command", "builtin", "foreach", "for", "try", "catch", "finally", "switch",
+                   "function", "begin", "process", "end", "not", "elseif", "in"}
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
 IDENTITY = re.compile(
     r"^Session: (?P<name>[^\[\]\n]*?\S) \[(?P<ref>[^\]\n]*\S)\](?: \([^)\n]*\))* · Head: "
     r"(?P<sha>[0-9A-Fa-f]{8,})(?![0-9A-Za-z_])")
-UNKNOWN_START = ("$", "`", "@", "(")
+UNKNOWN_START = ("$", "`", "@")
 MESSAGE = ("This GitHub comment does not start with an identity line, so nobody can tell which session "
            "wrote it (many sessions post under one account). Make the first line of the body: "
            "`Session: <session name> [<ref>] · Head: <sha8>`, with your real session name, ref and the "
@@ -54,6 +59,12 @@ def _spaced(command: str) -> str:
     return "".join(out)
 
 
+def _plain_argument(token: str) -> bool:
+    """True only for an ordinary word of a simple command; punctuation, keywords and wrappers are not."""
+    return (any(c.isalnum() for c in token) and token.lower() not in LEADS_A_COMMAND
+            and not ASSIGNMENT.match(token))
+
+
 def _tokens(command: str) -> list[str]:
     lexer = shlex.shlex(_spaced(command), posix=True)
     lexer.whitespace_split = True
@@ -70,7 +81,7 @@ def _is_comment_command(words: list[str]) -> bool:
 def _segments(tokens: list[str]) -> list[list[str]]:
     out: list[list[str]] = []
     for index, token in enumerate(tokens):
-        starts_command = index == 0 or tokens[index - 1] in SEPARATORS
+        starts_command = index == 0 or not _plain_argument(tokens[index - 1])
         if starts_command and token in ("gh", "gh.exe") and _is_comment_command(tokens[index:index + 3]):
             end = index + 1
             while end < len(tokens) and tokens[end] not in SEPARATORS:

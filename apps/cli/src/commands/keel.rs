@@ -1055,7 +1055,12 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("md"));
     let (value, bytes) = if is_markdown {
-        let value = card_from_markdown(&String::from_utf8_lossy(&bytes));
+        let value = card_from_markdown(&String::from_utf8_lossy(&bytes)).map_err(|message| {
+            Box::new(Outcome::application(
+                COMMAND,
+                Diagnostic::error("keel.card.list_unreadable", message, "/card", "keel"),
+            ))
+        })?;
         let missing: Vec<&str> = ["promise", "scopePaths", "proof"]
             .into_iter()
             .filter(|key| value.get(key).is_none())
@@ -1106,10 +1111,11 @@ fn read_card(path: &Path) -> Result<(Card, u64), Box<Outcome>> {
 }
 
 /// Reads a card written as prose in a PR body (`.md`): the lines `Promise:`, `Scope:`, `Proof:`
-/// and optionally `Exported:`, each possibly a list item or bold. List fields take the backticked
-/// items on the line, else its comma-separated words; `Proof` drops one pair of backticks. A field
-/// that is missing stays missing, so the schema names it.
-fn card_from_markdown(text: &str) -> serde_json::Value {
+/// and optionally `Exported:`, each possibly a list item or bold. List fields take the items
+/// `list_items` reads; `Proof` drops one pair of backticks. A field that is missing stays missing,
+/// so the schema names it; a list line that cannot be read comes back as the refusal message.
+fn card_from_markdown(text: &str) -> Result<serde_json::Value, String> {
+    let mut unreadable: Option<String> = None;
     let mut card = serde_json::Map::new();
     let mut active_list: Option<(&'static str, Vec<String>)> = None;
     for line in text.lines() {
@@ -1135,19 +1141,15 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
                 .or_insert_with(|| serde_json::Value::from(items));
         }
         let rest = rest.trim();
-        let list = || {
-            let ticked: Vec<&str> = rest.split('`').skip(1).step_by(2).collect();
-            let items: Vec<String> = if ticked.is_empty() {
-                rest.split(',').map(str::trim).map(str::to_owned).collect()
-            } else {
-                ticked.into_iter().map(str::to_owned).collect()
-            };
-            serde_json::Value::from(
-                items
-                    .into_iter()
-                    .filter(|item| !item.is_empty())
-                    .collect::<Vec<_>>(),
-            )
+        let mut list = || match list_items(rest) {
+            Ok(items) => serde_json::Value::from(items),
+            Err(reason) => {
+                unreadable.get_or_insert(format!(
+                    "`{}:` line cannot be read as a list ({reason}); write the items as a comma-separated list of paths, with notes after a `(`",
+                    label.trim()
+                ));
+                serde_json::Value::Null
+            }
         };
         let (key, value) = match label.trim().to_ascii_lowercase().as_str() {
             "promise" => ("promise", serde_json::Value::from(rest)),
@@ -1174,7 +1176,81 @@ fn card_from_markdown(text: &str) -> serde_json::Value {
         card.entry(key)
             .or_insert_with(|| serde_json::Value::from(items));
     }
-    serde_json::Value::Object(card)
+    match unreadable {
+        Some(message) => Err(message),
+        None => Ok(serde_json::Value::Object(card)),
+    }
+}
+
+/// The items a list line declares: comma-separated at the top level, each plain or backticked.
+/// Text inside parentheses is a note and declares nothing, even when it holds backticks; one
+/// trailing `.` ends the sentence. A plain item with whitespace in it is prose, so the line is
+/// refused rather than guessed at.
+fn list_items(line: &str) -> Result<Vec<String>, &'static str> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let (mut depth, mut glued, mut ticked) = (0usize, 0usize, false);
+    for ch in line.chars() {
+        match ch {
+            '`' => {
+                ticked = !ticked;
+                if depth == 0 {
+                    current.push(ch);
+                }
+            }
+            // A `(` inside a word (`app/(group)/page.tsx`) is part of the path, not a note.
+            '(' if !ticked && depth == 0 && !current.is_empty() && !current.ends_with(' ') => {
+                glued += 1;
+                current.push(ch);
+            }
+            ')' if !ticked && depth == 0 && glued > 0 => {
+                glued -= 1;
+                current.push(ch);
+            }
+            '(' if !ticked => depth += 1,
+            ')' if !ticked => depth = depth.checked_sub(1).ok_or("unbalanced `)`")?,
+            ',' if !ticked && depth == 0 => items.push(std::mem::take(&mut current)),
+            _ if depth == 0 => current.push(ch),
+            _ => {}
+        }
+    }
+    if ticked || depth != 0 {
+        return Err("unbalanced backtick or parenthesis");
+    }
+    items.push(current);
+    let mut declared = Vec::new();
+    for item in items {
+        let item = item.trim();
+        let item = item.strip_suffix('.').unwrap_or(item).trim_end();
+        // A segment made only of backtick spans and whitespace (`a` `b`) declares each span.
+        let pieces: Vec<&str> = item.split('`').collect();
+        if pieces.len() >= 3
+            && pieces.len() % 2 == 1
+            && pieces.iter().step_by(2).all(|gap| gap.trim().is_empty())
+            && pieces
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .all(|span| !span.is_empty())
+        {
+            declared.extend(
+                pieces
+                    .iter()
+                    .skip(1)
+                    .step_by(2)
+                    .map(|span| (*span).to_owned()),
+            );
+            continue;
+        }
+        if item.is_empty() {
+            continue;
+        }
+        if item.contains(char::is_whitespace) || item.contains('`') {
+            return Err("an item holds prose");
+        }
+        declared.push(item.to_owned());
+    }
+    Ok(declared)
 }
 
 /// The `keel.plan` signal kind and its description protocol (#382 phase B).
@@ -1506,6 +1582,53 @@ mod tests {
         assert_eq!(read("approve"), None);
         assert_eq!(read("****BLOCK"), None);
         assert_eq!(read(""), None);
+    }
+
+    /// #3023: a list line declares its items and nothing from the prose after them.
+    #[test]
+    fn a_markdown_scope_line_declares_only_its_items() {
+        let scope = |line: &str| {
+            card_from_markdown(&format!("Promise: p\n{line}\nProof: `t`")).map(|card| {
+                card["scopePaths"]
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|i| i.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_else(Vec::<String>::new)
+            })
+        };
+        let three = vec!["src/a.ts", "test/a.test.ts", "cards/issue-1.json"];
+        assert_eq!(
+            scope("Scope: src/a.ts, test/a.test.ts, cards/issue-1.json (without `other.ts`).")
+                .unwrap(),
+            three
+        );
+        assert_eq!(
+            scope("Scope: src/a.ts, test/a.test.ts, cards/issue-1.json (does not touch src/other.ts, from #12)").unwrap(),
+            three
+        );
+        assert_eq!(
+            scope("Scope: `src/a.ts`, `test/a.test.ts`, `cards/issue-1.json`").unwrap(),
+            three
+        );
+        assert_eq!(
+            scope("Scope: src/a.ts, test/a.test.ts, cards/issue-1.json").unwrap(),
+            three
+        );
+        assert_eq!(
+            scope("Scope:\n- `src/a.ts`\n- `test/a.test.ts`\n- `cards/issue-1.json`").unwrap(),
+            three
+        );
+        assert_eq!(
+            scope("Scope: `src/a.ts` `test/a.test.ts`, app/(group)/page.tsx (a note)").unwrap(),
+            vec!["src/a.ts", "test/a.test.ts", "app/(group)/page.tsx"]
+        );
+        let refused = scope("Scope: src/a.ts, test/a.test.ts. The rest is untouched").unwrap_err();
+        assert!(refused.contains("Scope:"), "{refused}");
+        assert!(scope("Scope: src/a.ts (unclosed").is_err());
     }
 
     const KEEL_POLICY_SCHEMA: &str = include_str!(

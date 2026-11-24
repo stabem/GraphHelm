@@ -6375,6 +6375,38 @@ fn a_recorded_request_lists_its_linked_issues_their_prs_and_its_status() {
         "{view}"
     );
 
+    // #3018: work recorded for an issue no request names is served as `unlinked`, never the
+    // linked ones; linking it empties the list.
+    assert_eq!(view["data"]["unlinked"], serde_json::json!([]), "{view}");
+    let (status, reply, _) = record(
+        "claim-1772",
+        "lane-a",
+        "task.claimed",
+        &claim_document("lane-a", 1772),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = requests();
+    assert_eq!(
+        view["data"]["unlinked"],
+        serde_json::json!([{"issue": 1772, "slices": []}]),
+        "{view}"
+    );
+    assert_eq!(view["data"]["linkedElsewhere"], serde_json::json!([]));
+    let (status, reply, _) = record(
+        "link-3",
+        lead,
+        "task.request_linked",
+        &request_document(
+            lead,
+            "task.request_linked",
+            "one-header",
+            serde_json::json!({"issue": 1772}),
+        ),
+    );
+    assert_eq!(status, 200, "{reply}");
+    let view = requests();
+    assert_eq!(view["data"]["unlinked"], serde_json::json!([]), "{view}");
+
     let tasks = get_json(
         &format!("{base}/v1/executions/{run}/tasks?full=1"),
         Some(&token),

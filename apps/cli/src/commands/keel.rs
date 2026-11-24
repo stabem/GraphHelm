@@ -412,9 +412,14 @@ pub(super) fn check(
         // A byte-order mark in front of the first line is not part of it.
         let text = String::from_utf8_lossy(&bytes);
         let text = text.trim_start_matches('\u{feff}');
+        let source = if body_path.is_some() {
+            policy_keel::BodySource::PullRequestBody
+        } else {
+            policy_keel::BodySource::MarkdownCard
+        };
         report
             .findings
-            .extend(policy_keel::check_identity_line(text));
+            .extend(policy_keel::check_identity_line(text, source));
         report.findings.extend(policy_keel::check_skills_line(text));
         let declared = policy_keel::declared_skills(text);
         if !declared.is_empty() {
@@ -428,6 +433,8 @@ pub(super) fn check(
             }
         }
     }
+    // The body rules can block (`--body` without an identity line, or no body at all for a JSON card).
+    report.refused = report.findings.iter().any(|finding| finding.blocking);
     let changed: Vec<String> = report
         .changed_paths
         .iter()

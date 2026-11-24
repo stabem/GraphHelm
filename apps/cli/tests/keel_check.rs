@@ -243,6 +243,12 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
         .unwrap(),
     )
     .unwrap();
+    let pr_body = repo.path().join("pr-body.md");
+    fs::write(
+        &pr_body,
+        "Session: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\n",
+    )
+    .unwrap();
     let check = |binding_path: Option<&Path>, card_path: &Path| {
         let mut command = Command::cargo_bin("graphhelm").unwrap();
         let check_events = if binding_path.is_some() {
@@ -262,12 +268,17 @@ fn routed_blocked_check_records_the_selected_pending_draft() {
             .arg(repo.path())
             .args(["--card"])
             .arg(card_path)
+            .arg("--body")
+            .arg(&pr_body)
             .args(["--events"])
             .arg(check_events)
             .args(["--execution", "exec_feature", "--keyring"])
             .arg(&keyring)
             .args(["--key-id", "route-key"])
-            .env("GRAPHHELM_EVENTS_KEY", key);
+            .env("GRAPHHELM_EVENTS_KEY", key)
+            .env_remove("GRAPHHELM_EXECUTION_ID")
+            .env_remove("GRAPHHELM_TOKEN_FILE")
+            .env_remove("GRAPHHELM_RUNTIME_URL");
         if let Some(path) = binding_path {
             command.arg("--route-proposal").arg(path);
         }
@@ -918,17 +929,31 @@ fn run_with_body(repo: &Path, card: &Path, body: &Path) -> (i32, Value) {
     (output.status.code().unwrap(), reply)
 }
 
-/// A JSON card carries no body: without `--body` the check says the body rules did not run, in the
-/// envelope and in the rendered summary a terminal gets (`--pretty`).
+/// `run_with_body` with a pull request body that carries a filled identity line.
+fn run_read_body(repo: &Path, card: &Path) -> (i32, Value) {
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    fs::write(
+        &body,
+        "Session: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\n",
+    )
+    .unwrap();
+    run_with_body(repo, card, &body)
+}
+
+/// A JSON card carries no body: without `--body` the check is refused and says the body rules did
+/// not run, in the envelope and in the rendered summary a terminal gets (`--pretty`).
 #[test]
-fn a_json_card_without_a_body_warns_that_the_body_was_not_read() {
+fn a_json_card_without_a_body_is_refused_as_body_unread() {
     let repo = repository(&[("src/lib.rs", "planned edit\n")]);
     let scratch = tempfile::tempdir().unwrap();
     let json_card = card(scratch.path(), &["src"]);
     let (code, reply) = run(repo.path(), Some(&json_card));
-    assert_eq!(code, 0, "{reply}");
+    assert_eq!(code, 2, "{reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["data"]["refused"], true, "{reply}");
     assert_eq!(codes(&reply), vec!["keel.card.body_unread"]);
-    assert_eq!(reply["diagnostics"][0]["severity"], "warning");
+    assert_eq!(reply["diagnostics"][0]["severity"], "error");
     assert_eq!(reply["diagnostics"][0]["path"], "/card");
     let rendered = Command::cargo_bin("graphhelm")
         .unwrap()
@@ -963,14 +988,19 @@ fn a_json_card_with_a_body_runs_the_body_rules_on_it() {
     let body = scratch.path().join("pr-body.md");
     fs::write(&body, "No identity line here.\nSkills: keel:keel\n").unwrap();
     let (code, reply) = run_with_body(repo.path(), &json_card, &body);
-    assert_eq!(code, 0, "{reply}");
+    assert_eq!(code, 2, "{reply}");
+    assert_eq!(reply["ok"], false, "{reply}");
     assert_eq!(codes(&reply), vec!["keel.card.identity_line_missing"]);
+    assert_eq!(reply["diagnostics"][0]["severity"], "error");
+    assert_eq!(reply["diagnostics"][0]["path"], "/card");
     fs::write(
         &body,
         "Session: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\n",
     )
     .unwrap();
-    let (_, reply) = run_with_body(repo.path(), &json_card, &body);
+    let (code, reply) = run_with_body(repo.path(), &json_card, &body);
+    assert_eq!(code, 0, "{reply}");
+    assert_eq!(reply["ok"], true, "{reply}");
     assert!(codes(&reply).is_empty(), "{reply}");
     // A body file that cannot be read is an input error, not a clean result.
     let (code, reply) = run_with_body(repo.path(), &json_card, &scratch.path().join("absent.md"));
@@ -1000,7 +1030,7 @@ fn codes(reply: &Value) -> Vec<String> {
 fn a_diff_inside_its_card_passes_and_reports_its_surface() {
     let repo = repository(&[]);
     let scratch = tempfile::tempdir().unwrap();
-    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
+    let (code, reply) = run_read_body(repo.path(), &card(scratch.path(), &["src"]));
     assert_eq!(code, 0, "{reply}");
     assert_eq!(reply["ok"], true);
     assert_eq!(reply["command"], "keel");
@@ -1013,7 +1043,7 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
         reply["data"]["surface"]["undeclaredPublicSymbols"],
         serde_json::json!([])
     );
-    assert_eq!(codes(&reply), vec!["keel.card.body_unread"], "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
     assert_eq!(reply["data"]["recommendation"]["step"], "review");
     assert_eq!(
         reply["data"]["recommendation"]["head"]
@@ -1029,13 +1059,10 @@ fn a_diff_inside_its_card_passes_and_reports_its_surface() {
 fn a_path_outside_the_card_blocks_with_exit_2_and_keeps_the_report() {
     let repo = repository(&[("docs/notes.md", "an unplanned edit\n")]);
     let scratch = tempfile::tempdir().unwrap();
-    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src/lib.rs"])));
+    let (code, reply) = run_read_body(repo.path(), &card(scratch.path(), &["src/lib.rs"]));
     assert_eq!(code, 2, "{reply}");
     assert_eq!(reply["ok"], false);
-    assert_eq!(
-        codes(&reply),
-        vec!["keel.scope.path_outside_card", "keel.card.body_unread"]
-    );
+    assert_eq!(codes(&reply), vec!["keel.scope.path_outside_card"]);
     assert_eq!(reply["diagnostics"][0]["severity"], "error");
     assert_eq!(reply["diagnostics"][0]["path"], "docs/notes.md");
     assert_eq!(reply["data"]["refused"], true);
@@ -1063,12 +1090,9 @@ fn a_path_outside_the_card_blocks_with_exit_2_and_keeps_the_report() {
 fn a_sneaked_in_test_file_is_counted_and_blocked_when_outside_the_card() {
     let repo = repository(&[("tests/extra.rs", "#[test]\nfn sneaked() {}\n")]);
     let scratch = tempfile::tempdir().unwrap();
-    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
+    let (code, reply) = run_read_body(repo.path(), &card(scratch.path(), &["src"]));
     assert_eq!(code, 2, "{reply}");
-    assert_eq!(
-        codes(&reply),
-        vec!["keel.scope.path_outside_card", "keel.card.body_unread"]
-    );
+    assert_eq!(codes(&reply), vec!["keel.scope.path_outside_card"]);
     assert_eq!(reply["data"]["surface"]["newTestFiles"], 1);
     assert_eq!(reply["data"]["surface"]["newTests"], 1);
 }
@@ -1407,6 +1431,12 @@ fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it(
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-q", "-m", "someone else merged"]);
     let card = card(repo.path(), &["src/lib.rs"]);
+    let body = repo.path().join("pr-body.md");
+    fs::write(
+        &body,
+        "Session: Author [2ba4e9] \u{b7} Head: 0123abcd\nSkills: keel:keel\n",
+    )
+    .unwrap();
     for range in ["main..feature", "main...feature"] {
         let output = Command::cargo_bin("graphhelm")
             .unwrap()
@@ -1414,15 +1444,16 @@ fn commits_that_reached_the_base_after_the_branch_was_cut_are_not_charged_to_it(
             .arg(repo.path())
             .arg("--card")
             .arg(&card)
+            .arg("--body")
+            .arg(&body)
+            .env_remove("GRAPHHELM_EXECUTION_ID")
+            .env_remove("GRAPHHELM_TOKEN_FILE")
+            .env_remove("GRAPHHELM_RUNTIME_URL")
             .output()
             .unwrap();
         let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(output.status.code(), Some(0), "{range}: {reply}");
-        assert_eq!(
-            codes(&reply),
-            vec!["keel.card.body_unread"],
-            "{range}: {reply}"
-        );
+        assert!(codes(&reply).is_empty(), "{range}: {reply}");
     }
 }
 
@@ -1563,9 +1594,10 @@ fn a_pr_body_without_a_filled_identity_line_warns_and_a_plain_card_does_not() {
     let (code, reply) = run(repo.path(), Some(&body));
     assert_eq!(code, 0, "{reply}");
     assert!(codes(&reply).is_empty(), "{reply}");
-    let (code, reply) = run(repo.path(), Some(&card(scratch.path(), &["src"])));
+    // A JSON card is never itself asked for an identity line: the body is what is read.
+    let (code, reply) = run_read_body(repo.path(), &card(scratch.path(), &["src"]));
     assert_eq!(code, 0, "{reply}");
-    assert_eq!(codes(&reply), vec!["keel.card.body_unread"], "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
 }
 
 /// The skills line is a warning on a markdown body only, and a byte-order mark in front of the
@@ -1755,7 +1787,7 @@ fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path(
         "exportedSymbols": ["added"], "journeys": ["checkout"],
     });
     fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
-    let (code, reply) = run(repo.path(), Some(&path));
+    let (code, reply) = run_read_body(repo.path(), &path);
     assert_eq!(code, 0, "{reply}");
     card["journeys"] = serde_json::json!(["../etc"]);
     fs::write(&path, serde_json::to_vec(&card).unwrap()).unwrap();
@@ -1796,12 +1828,9 @@ fn a_card_written_in_a_pr_body_reads_its_journeys_line() {
 fn a_diff_under_an_invariant_path_reports_its_class() {
     let repo = repository(&[("core/events/src/journal.rs", "pub fn x() {}\n")]);
     let scratch = tempfile::tempdir().unwrap();
-    let (code, reply) = run(
+    let (code, reply) = run_read_body(
         repo.path(),
-        Some(&card(
-            scratch.path(),
-            &["src", "core/events/src/journal.rs"],
-        )),
+        &card(scratch.path(), &["src", "core/events/src/journal.rs"]),
     );
     assert_eq!(code, 0, "warnings never refuse: {reply}");
     let found: Vec<&Value> = reply["diagnostics"]
@@ -2290,7 +2319,7 @@ fn the_plan_names_replayable_flows_and_a_card_naming_the_flow_covers_its_branche
         .unwrap(),
     )
     .unwrap();
-    let (code, reply) = run(root, Some(&card));
+    let (code, reply) = run_read_body(root, &card);
     assert_eq!(code, 0, "{reply}");
     assert!(
         !codes(&reply)

@@ -55,9 +55,8 @@ review subagents' cache writes there).
    reviewer never writes or restates the card.
    **A project whose card is a JSON file** passes the JSON card as `--card` and the saved body as
    `--body`: `graphhelm keel check --diff <base>..<head> --card <card>.json --body <body>.md`. A
-   warning `keel.card.body_unread` means the body rules (identity line, skills line, declared
-   skills) did not run: rerun with `--body` before approving; a clean result without `--body` says
-   nothing about the body.
+   blocking `keel.card.body_unread` means the body rules (identity line, skills line, declared
+   skills) did not run, and the check does not pass: rerun with `--body` before approving.
 3. **List only the values in `KEEL.md` that do not hold** on the diff, plus every value the
    card's risk row names, whether it holds or not. A value marked `to build` is checked by reading.
 4. **Check every exception** the change adds: is the reason true, and does it expire? Refuse one
@@ -71,9 +70,11 @@ review subagents' cache writes there).
    missing line is a finding. Your own verdict comment carries your `Skills:` line too, listing the
    skills loaded up to that comment; compare each `Skills:` line with the Skill calls made up to
    that point.
-   **Identity line.** A warning `keel.card.identity_line_missing` from the Keel check means the
-   body has no filled identity line (the form the brief gave), absent or still a template. It is a warning because a card file that is not a body cannot carry one; for a pull
-   request body it is a finding, and the reviewer asks the author to add the line before approving.
+   **Identity line.** `keel.card.identity_line_missing` from the Keel check means the body has no
+   filled identity line (the form the brief gave), absent or still a template. Read through
+   `--body` it blocks, and the reviewer asks the author to add the line before approving. For a
+   markdown card given without `--body` it is a warning, because a card file that is not a body
+   cannot carry one.
    **Skills line.** A warning `keel.card.skills_line_missing` means the body has no filled
    `Skills:` line (or `Skills usadas` heading with a name under it). Same reading: for a pull request
    body it is a finding, and the reviewer clears it before approving.

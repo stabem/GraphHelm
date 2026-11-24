@@ -561,6 +561,8 @@ impl Harness {
             .unwrap(),
         )
         .unwrap();
+        let body = self.scratch.path().join("pr-body.md");
+        std::fs::write(&body, "Session: Author [ref] \u{b7} Head: 0123abcd\n").unwrap();
         let mut command = graphhelm();
         command
             .args([
@@ -573,7 +575,9 @@ impl Harness {
             ])
             .arg(&self.project)
             .arg("--card")
-            .arg(&card);
+            .arg(&card)
+            .arg("--body")
+            .arg(&body);
         if with_records {
             command
                 .arg("--events")
@@ -611,6 +615,11 @@ fn keel_check_names_a_touched_journey_the_card_omits_and_a_replay_missing_at_the
     std::fs::write(harness.project.join("web/cart/Line.tsx"), "line 2").unwrap();
     git(&harness.project, &["commit", "-qam", "edit cart"]);
 
+    std::fs::write(
+        harness.scratch.path().join("pr-body.md"),
+        "Session: Author [ref] \u{b7} Head: 0123abcd\n",
+    )
+    .unwrap();
     let card = harness.scratch.path().join("plain-card.json");
     std::fs::write(
         &card,
@@ -631,6 +640,8 @@ fn keel_check_names_a_touched_journey_the_card_omits_and_a_replay_missing_at_the
         .arg(&harness.project)
         .arg("--card")
         .arg(&card)
+        .arg("--body")
+        .arg(harness.scratch.path().join("pr-body.md"))
         .output()
         .unwrap();
     let reply = envelope(&output);

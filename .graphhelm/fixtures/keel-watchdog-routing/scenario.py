@@ -139,8 +139,12 @@ def run_scenario() -> dict:
                                     "route-correction"),
             "reviewDraft": draft("draft-review", 1, "expectedHash", graph_hash, "route-review"),
         }), encoding="utf-8")
+        # A JSON card is refused until a pull request body is read, so each check gets one.
+        body = scratch / "pr-body.md"
+        body.write_text("Session: Contributor [fixture] · Head: 0123abcd\n", encoding="utf-8")
         blocked = cli(binary, "keel", "check", "--diff", "HEAD~1..HEAD", "--repo", str(repo),
-                      "--card", str(card(scratch / "card.json", ["src/lib.rs"])), *store, *keys,
+                      "--card", str(card(scratch / "card.json", ["src/lib.rs"])),
+                      "--body", str(body), *store, *keys,
                       "--route-proposal", str(binding), expect=(2,), keyed=True)
         finding = blocked["data"].get("routeProposal") or {}
         if finding.get("kind") != "keel.blocked":
@@ -182,7 +186,7 @@ def run_scenario() -> dict:
         passed = cli(binary, "keel", "check", "--diff", "HEAD~1..HEAD", "--repo", str(repo),
                      "--card", str(card(scratch / "card-fixed.json",
                                         ["src/lib.rs", "docs/notes.md"])),
-                     *store, *keys, "--route-proposal", str(binding), keyed=True)
+                     "--body", str(body), *store, *keys, "--route-proposal", str(binding), keyed=True)
         if (passed["data"].get("routeProposal") or {}).get("kind") != "keel.passed":
             raise AssertionError(f"corrected check did not pass: {passed}")
 

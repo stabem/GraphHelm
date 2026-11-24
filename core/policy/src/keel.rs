@@ -460,17 +460,27 @@ pub fn check_card(
     findings
 }
 
+/// Where the text the body rules read came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodySource {
+    /// Given with `--body`: the caller says it is a pull request body.
+    PullRequestBody,
+    /// A markdown card file, which the machine cannot tell from a body.
+    MarkdownCard,
+}
+
 /// `keel.card.identity_line_missing`: a pull request body must carry one filled
-/// `Session: <name> [ref] · Head: <sha8>` line. Absent, or still a `<...>` template, is a warning:
-/// the machine cannot tell a body that skipped the line from a card file that is not a body.
+/// `Session: <name> [ref] · Head: <sha8>` line. Absent, or still a `<...>` template, blocks when the
+/// text was given as a pull request body (`--body`); a markdown card file might not be a body, so
+/// there it stays a warning.
 #[must_use]
-pub fn check_identity_line(body: &str) -> Vec<Finding> {
+pub fn check_identity_line(body: &str, source: BodySource) -> Vec<Finding> {
     if body.lines().any(identity_line_is_filled) {
         return Vec::new();
     }
     vec![Finding {
         rule: "keel.card.identity_line_missing".into(),
-        blocking: false,
+        blocking: source == BodySource::PullRequestBody,
         path: Some("/card".into()),
         detail:
             "no filled `Session: <name> [ref] · Head: <sha8>` line; the identity line names the \
@@ -480,13 +490,13 @@ pub fn check_identity_line(body: &str) -> Vec<Finding> {
 }
 
 /// `keel.card.body_unread`: the card is a JSON file and no pull request body was given, so the
-/// body rules (identity line, skills line, declared skills) did not run. A warning, so a clean
+/// body rules (identity line, skills line, declared skills) did not run. Blocking, so a clean
 /// result is never read as "the body is fine".
 #[must_use]
 pub fn body_unread() -> Vec<Finding> {
     vec![Finding {
         rule: "keel.card.body_unread".into(),
-        blocking: false,
+        blocking: true,
         path: Some("/card".into()),
         detail: "the pull request body was not read, so its identity-line and skills-line rules \
                  did not run; save the body to a file and pass it with `--body <file>`"

@@ -75,6 +75,9 @@ def main() -> int:
             }
             card_path = repo / "card.json"
             card_path.write_text(json.dumps(card), encoding="utf-8")
+            # A JSON card is refused until a pull request body is read, so the check gets one.
+            body_path = repo / "pr-body.md"
+            body_path.write_text("Session: Contributor [fixture] · Head: 0123abcd\n", encoding="utf-8")
             result = run(
                 [
                     graphhelm(),
@@ -87,6 +90,8 @@ def main() -> int:
                     str(repo),
                     "--card",
                     str(card_path),
+                    "--body",
+                    str(body_path),
                 ],
                 repo,
             )

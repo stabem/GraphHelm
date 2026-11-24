@@ -18,10 +18,12 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 class Handler(BaseHTTPRequestHandler):
     seen: list = []
+    actors: list = []
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         Handler.seen.append((self.path, body))
+        Handler.actors.append(self.headers.get("X-GraphHelm-Actor"))
         reply = json.dumps({"ok": True, "data": {}}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(reply)))
@@ -105,6 +107,50 @@ class RecordBlockTest(unittest.TestCase):
         self.assertEqual(path, "/v1/executions/demo/signal")
         self.assertEqual(body["signal"]["type"], "keel.blocked")
         self.assertEqual(body["signal"]["source"], {"type": "node", "id": "implementation"})
+
+    def _post_with_env(self, extra: dict, lane_file: str | None = None, call: str = "block") -> str:
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        with tempfile.TemporaryDirectory() as tmp:
+            token = Path(tmp) / "t"
+            token.write_text("tok")
+            lanes = Path(tmp) / "lane-sessions"  # never the real home folder
+            lanes.mkdir()
+            if lane_file is not None:
+                (lanes / "s1.json").write_text(json.dumps({"actor": lane_file}))
+            env = {"GRAPHHELM_EXECUTION_ID": "demo", "GRAPHHELM_TOKEN_FILE": str(token),
+                   "GRAPHHELM_RUNTIME_URL": f"http://127.0.0.1:{server.server_port}",
+                   **extra}
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(keel_record.session_hook, "_lane_sessions_root", lambda: lanes):
+                for key in ("GRAPHHELM_NODE_ID", "GRAPHHELM_ACTOR"):
+                    if key not in extra:
+                        os.environ.pop(key, None)  # patch.dict restores them
+                if call == "check":
+                    envelope = {"data": {"recommendation": {"step": "review", "head": "abc", "findingIds": [],
+                                                            "paths": [], "applied": False}}}
+                    self.assertTrue(keel_record.record_check(envelope, {"session_id": "s1"}))
+                else:
+                    self.assertTrue(keel_record.record_block("pretool", "no card", {"session_id": "s1"}))
+        server.shutdown()
+        expected_tool = "keel-check" if call == "check" else "keel-pretool"
+        self.assertEqual(Handler.seen[-1][1]["signal"]["source"], {"type": "tool", "id": expected_tool})
+        return Handler.actors[-1]
+
+    def test_a_lane_session_sends_its_lane_as_actor_and_keeps_the_tool_as_source(self):
+        self.assertEqual(self._post_with_env({"GRAPHHELM_ACTOR": "lane-a"}), "lane-a")
+
+    def test_a_session_with_no_lane_keeps_the_tool_id_as_actor(self):
+        self.assertEqual(self._post_with_env({}), "keel-pretool")
+
+    def test_the_lane_file_of_the_session_is_the_actor_when_the_environment_names_none(self):
+        self.assertEqual(self._post_with_env({}, lane_file="lane-file"), "lane-file")
+
+    def test_the_check_recommendation_call_site_sends_the_lane_too(self):
+        self.assertEqual(self._post_with_env({"GRAPHHELM_ACTOR": "lane-a"}, call="check"), "lane-a")
+
+    def test_an_invalid_actor_in_the_environment_falls_back_to_the_tool_id(self):
+        self.assertEqual(self._post_with_env({"GRAPHHELM_ACTOR": "bad actor!"}, lane_file="lane-file"), "keel-pretool")
 
     def test_a_block_id_still_folds_the_timestamp_into_its_digest(self):
         import hashlib

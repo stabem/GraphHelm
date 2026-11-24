@@ -12,6 +12,9 @@ As `graphhelm` it records merges and closes of every lane's PR, and `--adopt-ope
 with that lane's own credential file; a lane without one is reported, never impersonated with the
 shared token). `--log` appends the reply to a file, for `pythonw` which has no console.
 
+A write the Runtime answers with an HTTP error costs that record, not the run (#3027): the reply
+lists it under `refused` (kind, taskId, pr, status, code) and the run exits 1 when any is listed.
+
 The CLI embeds this file, so it also works from an installed GraphHelm binary.
 """
 import argparse
@@ -299,7 +302,7 @@ def lane_credential(token_file, lane):
     return value if value and "\n" not in value else None
 
 
-def adopt_opened(base, token_file, execution, repo, unopened, prs):
+def adopt_opened(base, token_file, execution, repo, unopened, prs, report=None):
     """#1628: for each open claim with no `task.pr_opened` (`unopened`: taskId -> lane), the open PR
     whose `Closes #N` names its issue is recorded as opened, as the claim's lane. Returns
     {"opened": [pr...], "refused": [{"pr", "taskId", "message"}...]}."""
@@ -326,6 +329,7 @@ def adopt_opened(base, token_file, execution, repo, unopened, prs):
                 out["opened"].append(number)
             except (OSError, ValueError, KeyError) as error:
                 out["refused"].append({"pr": number, "taskId": task_id, "message": f"{type(error).__name__}: {error}"})
+                note_refusal(report, "pr_opened", task_id, error, number)
     return out
 
 
@@ -387,6 +391,42 @@ def post_closed(base, token, execution, task_id, repo, lane, fields):
         if error.code != 400:
             raise ValueError(f"Runtime refused task.closed: HTTP {error.code}") from error
         post_end(base, token, execution, "closed", task_id, repo, lane, fields)
+
+
+def diagnostic_code(http):
+    """The first diagnostic code of a refusal's JSON body, or None when the body carries none."""
+    try:
+        diagnostics = json.loads(http.read(65536) or b"{}").get("diagnostics", [])
+    except (OSError, ValueError, AttributeError):
+        return None
+    for item in diagnostics if isinstance(diagnostics, list) else []:
+        if isinstance(item, dict) and isinstance(item.get("code"), str):
+            return item["code"][:64]
+    return None
+
+
+def http_error(error):
+    """The HTTPError behind `error` (itself, or the cause `post_closed` wraps), else None."""
+    http = error if isinstance(error, urllib.error.HTTPError) else error.__cause__
+    return http if isinstance(http, urllib.error.HTTPError) else None
+
+
+def refused_record(kind, task_id, error, pr=None):
+    """The report of one write the Runtime refused: record kind, task id, PR, HTTP status (None
+    when the refusal came inside a 200 reply) and the first diagnostic code of the body. Never
+    carries the body text, a header or a token."""
+    http = http_error(error)
+    entry = {"kind": kind, "taskId": task_id, "status": http.code if http else None,
+             "code": diagnostic_code(http) if http else None}
+    if pr is not None:
+        entry["pr"] = pr
+    return entry
+
+
+def note_refusal(report, kind, task_id, error, pr=None):
+    """Adds the write `error` stands for to the run's `report` list when it is an HTTP refusal."""
+    if report is not None and http_error(error) is not None:
+        report.append(refused_record(kind, task_id, error, pr=pr))
 
 
 def heartbeat(base, token, credential, execution, task_id, repo, lane):
@@ -476,6 +516,7 @@ def reconcile(args):
     done = []
     closed = []
     unreadable = []
+    refused = []
     cursor_file = cursor_path(args.token_file, args.lane)
     pending = [pr for pr, (_, repo) in opened.items() if (repo, pr) not in finished]
     # #1520/#1544: at most MAX_PRS_PER_STOP unfinished PRs per Stop, rotating through the backlog
@@ -499,8 +540,12 @@ def reconcile(args):
             by = int(match.group(1)) if match else pr
             if args.lane is None:
                 continue
-            post_closed(args.url.rstrip("/"), credential(args.lane), args.execution, task_id, repo,
-                        args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+            try:
+                post_closed(args.url.rstrip("/"), credential(args.lane), args.execution, task_id, repo,
+                            args.lane, {"pr": pr, "reason": "superseded" if match else "abandoned", "by": by})
+            except (urllib.error.HTTPError, ValueError) as error:
+                refused.append(refused_record("closed", task_id, error, pr=pr))
+                continue
             closed.append(pr)
             continue
         if result.get("state") != "MERGED":
@@ -509,7 +554,11 @@ def reconcile(args):
             raise ValueError(f"PR {pr} has no confirmed merge commit")
         closes = [issue["number"] for issue in result.get("closingIssuesReferences") or []
                   if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
-        post(args.url.rstrip("/"), credential("graphhelm"), args.execution, pr, task_id, repo, sha, closes)
+        try:
+            post(args.url.rstrip("/"), credential("graphhelm"), args.execution, pr, task_id, repo, sha, closes)
+        except urllib.error.HTTPError as error:
+            refused.append(refused_record("merged", task_id, error, pr=pr))
+            continue
         done.append(pr)
     released = []
     beats = {"sent": [], "refused": []}
@@ -531,9 +580,13 @@ def reconcile(args):
             else:
                 beats["refused"].append({"issue": issue, "message": refusal})
             continue
-        post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "released", task_id, args.repo,
-                 args.lane, {"lane": args.lane, "claimSequence": outstanding[-1],
-                             "reason": "Issue closed" if result.get("state") == "CLOSED" else "Issue reassigned"})
+        try:
+            post_end(args.url.rstrip("/"), credential(args.lane), args.execution, "released", task_id, args.repo,
+                     args.lane, {"lane": args.lane, "claimSequence": outstanding[-1],
+                                 "reason": "Issue closed" if result.get("state") == "CLOSED" else "Issue reassigned"})
+        except urllib.error.HTTPError as error:
+            refused.append(refused_record("released", task_id, error))
+            continue
         released.append(issue)
     # #1193: every open pre-PR claim the Runtime's tasks fold reads as past its lease is released
     # as graphhelm, whichever lane holds it; the claim's lane is told by `releasedBy`.
@@ -546,10 +599,11 @@ def reconcile(args):
     # old (a lane's own release reaches only its latest claim). Before the lapse sweep, so a lease
     # that is both overdue and on a closed issue is released once, for the closed issue.
     done += record_unrecorded_merges(view, base, credential, args.execution, args.repo,
-                                     skip=set(batch))
-    ended = release_closed_issues(view, base, credential, args.execution, args.repo)
+                                     skip=set(batch), refused=refused)
+    ended = release_closed_issues(view, base, credential, args.execution, args.repo, report=refused)
     lapsed = release_overdue(view, base, credential, args.execution, args.repo,
-                             skip={(item["lane"], item["claimSequence"]) for item in ended["released"]})
+                             skip={(item["lane"], item["claimSequence"]) for item in ended["released"]},
+                             report=refused)
     reply = {}
     if getattr(args, "adopt_opened", False):
         unopened = {}
@@ -562,17 +616,20 @@ def reconcile(args):
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             prs = []
             reply["adoptError"] = f"{type(error).__name__}: {error}"
-        reply["adopted"] = adopt_opened(base, args.token_file, args.execution, args.repo, unopened, prs)
+        reply["adopted"] = adopt_opened(base, args.token_file, args.execution, args.repo, unopened, prs,
+                                        report=refused)
+    if refused:
+        reply["refused"] = refused
     return {**reply, "merged": done, "closed": closed, "released": released, "heartbeat": beats,
             "closedIssues": ended, "lapsed": lapsed, "stalled": stalled(view), "inspected": len(opened),
             "unreadable": unreadable}
 
 
-def record_unrecorded_merges(view, base, credential, execution, repo, lookup=None, skip=frozenset()):
+def record_unrecorded_merges(view, base, credential, execution, repo, lookup=None, skip=frozenset(), refused=None):
     """#2701: a task the tasks route shows with no merge sha, whose PR GitHub reports MERGED, gets
     its `task.merged` recorded as graphhelm. The pr_opened-driven pass above never reaches a task
     that has no readable `task.pr_opened`, so its BLOCK/review step stayed ready for days. `skip`
-    holds the PRs this run already read. At most MAX_PRS_PER_STOP PRs are read per run; an
+    holds the PRs this run already read; an HTTP refusal of the write is appended to `refused`. At most MAX_PRS_PER_STOP PRs are read per run; an
     unreadable one is left for the next run. Returns the PR numbers recorded."""
     lookup = lookup or (lambda pr, name: github(pr, name))
     tasks = view.get("tasks") if isinstance(view, dict) else None
@@ -600,6 +657,8 @@ def record_unrecorded_merges(view, base, credential, execution, repo, lookup=Non
                       if issue.get("repository", {}).get("nameWithOwner", repo) == repo]
             post(base, credential("graphhelm"), execution, pr, task_id, repo, sha, closes)
             recorded.append(pr)
+        except urllib.error.HTTPError as error:
+            note_refusal(refused, "merged", task_id, error, pr)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError):
             continue
     return recorded
@@ -617,7 +676,7 @@ def stalled(view):
     return [{key: item.get(key) for key in keep} for item in stalls if isinstance(item, dict)]
 
 
-def release_closed_issues(view, base, credential, execution, repo, lookup=None):
+def release_closed_issues(view, base, credential, execution, repo, lookup=None, report=None):
     """#1556: releases, as graphhelm, every lease the tasks route reports on an issue GitHub says
     is CLOSED, any lane, each naming its own claim sequence, with the reason recorded. The Runtime
     admits a graphhelm release of any still-open claim it names; a lane's own release stays
@@ -653,10 +712,11 @@ def release_closed_issues(view, base, credential, execution, repo, lookup=None):
             out["released"].append(entry)
         except (OSError, ValueError, KeyError) as error:
             out["refused"].append({**entry, "message": f"{type(error).__name__}: {error}"})
+            note_refusal(report, "released", task_id, error)
     return out
 
 
-def release_overdue(view, base, credential, execution, repo, skip=frozenset()):
+def release_overdue(view, base, credential, execution, repo, skip=frozenset(), report=None):
     """Releases, as graphhelm, each lease the tasks route reports overdue (#1193). Returns
     {"released": [...], "refused": [...]}; a route that does not serve leases (older Runtime)
     or could not be read yields empty lists, never an error, so the rest of the reconcile stands."""
@@ -680,6 +740,7 @@ def release_overdue(view, base, credential, execution, repo, skip=frozenset()):
             out["released"].append(entry)
         except (OSError, ValueError, KeyError) as error:
             out["refused"].append({**entry, "message": f"{type(error).__name__}: {error}"})
+            note_refusal(report, "released", task_id, error)
     return out
 
 
@@ -717,7 +778,13 @@ def main():
         # #1687: first, so a run the scheduler kills still leaves a start line with no end line.
         emit(f"tasks reconcile: start (runtime-timeout {args.runtime_timeout}, "
              f"run-budget {args.run_budget:g})", None)
-        emit(json.dumps(reconcile(args)), sys.stdout)
+        reply = reconcile(args)
+        emit(json.dumps(reply), sys.stdout)
+        if reply.get("refused"):
+            names = ", ".join(f"{item['kind']} {item['taskId']} PR {item.get('pr', '-')} HTTP {item['status']}"
+                              for item in reply["refused"])
+            emit(f"tasks reconcile: the Runtime refused {len(reply['refused'])} record(s): {names}", sys.stderr)
+            return 1  # a scheduler's last result shows it
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         emit(f"tasks reconcile: {error}", sys.stderr)
         return 1

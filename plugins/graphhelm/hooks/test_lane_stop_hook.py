@@ -1768,5 +1768,79 @@ class LaneStopTests(unittest.TestCase):
         self.assertFalse(lane_stop_hook.note_is_stale({}, now))
 
 
+class ReconcileRefusedRecordTests(unittest.TestCase):
+    """#3027: a Runtime that refuses one record with an HTTP error costs that record, not the run.
+    A stub Runtime on loopback answers 409 to the first write and 200 to the others; GitHub and the
+    journal are fixtures; the reconciler runs through main() with its --log."""
+
+    def run_against_stub(self, refuse_first):
+        folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        token = folder / "events.agent.graphhelm.token"
+        token.write_text("secret-token-value", encoding="utf-8")
+        log = folder / "sync.log"
+        written = []
+
+        class Stub(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                written.append(json.loads(body["signal"]["description"])["pr"])
+                refuse = refuse_first and len(written) == 1
+                payload = ({"ok": False, "diagnostics": [{"severity": "error", "code": "GHE003_STUB_CONFLICT",
+                                                          "message": "secret-token-value"}]}
+                           if refuse else {"ok": True})
+                self.send_response(409 if refuse else 200)
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode())
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        found = [("task.pr_opened", {"taskId": f"issue-{pr}", "pr": pr, "repo": "o/r", "lane": "x"}, {})
+                 for pr in (11, 12, 13)]
+        merged = {"state": "MERGED", "mergeCommit": {"oid": "a" * 40}, "mergedAt": "2026-01-01T00:00:00Z",
+                  "closingIssuesReferences": []}
+        argv = ["tasks_reconcile.py", "--execution", "gh-team", "--url", f"http://127.0.0.1:{server.server_port}",
+                "--token-file", str(token), "--repo", "o/r", "--lane", "graphhelm", "--log", str(log)]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+                mock.patch.object(tasks_reconcile, "records", return_value=found), \
+                mock.patch.object(tasks_reconcile, "github", return_value=merged), \
+                mock.patch.object(sys, "stdout", new=out), mock.patch.object(sys, "stderr", new=err):
+            code = tasks_reconcile.main()
+        return code, out.getvalue(), err.getvalue(), log.read_text(encoding="utf-8"), written
+
+    def test_one_refused_record_is_named_and_the_others_are_recorded(self):
+        code, out, err, log, written = self.run_against_stub(refuse_first=True)
+        self.assertEqual(written, [11, 12, 13])
+        reply = json.loads(out)
+        self.assertEqual(reply["merged"], [12, 13])
+        self.assertEqual(reply["refused"], [{"kind": "merged", "taskId": "issue-11", "status": 409,
+                                             "code": "GHE003_STUB_CONFLICT", "pr": 11}])
+        self.assertNotEqual(code, 0)
+        self.assertIn("GHE003_STUB_CONFLICT", log)
+        self.assertNotIn("secret-token-value", out + err + log)
+
+    def test_a_refused_release_is_also_listed_for_the_run_and_keeps_its_own_entry(self):
+        refusal = urllib.error.HTTPError("http://127.0.0.1/x", 409, "Conflict", {}, io.BytesIO(
+            b'{"diagnostics":[{"code":"GHE003_STUB_CONFLICT"}]}'))
+        view = {"leases": [{"lane": "codex-1", "taskId": "issue-5", "claimSequence": 3, "overdue": True}]}
+        report = []
+        with mock.patch.object(tasks_reconcile, "post_end", side_effect=refusal):
+            out = tasks_reconcile.release_overdue(view, "http://127.0.0.1:1", lambda actor: "t", "run",
+                                                  "o/r", report=report)
+        self.assertEqual(len(out["refused"]), 1)
+        self.assertEqual(report, [{"kind": "released", "taskId": "issue-5", "status": 409,
+                                   "code": "GHE003_STUB_CONFLICT"}])
+
+    def test_a_run_the_runtime_accepts_prints_no_refused_field_and_exits_zero(self):
+        code, out, _err, _log, _written = self.run_against_stub(refuse_first=False)
+        reply = json.loads(out)
+        self.assertEqual((code, reply["merged"], "refused" in reply), (0, [11, 12, 13], False))
+
+
 if __name__ == "__main__":
     unittest.main()

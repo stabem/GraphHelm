@@ -1865,6 +1865,41 @@ fn a_card_written_with_multiline_scope_lists_all_paths() {
 }
 
 #[test]
+fn a_scope_line_with_a_note_after_its_list_declares_only_the_list() {
+    let repo = repository(&[
+        ("src/lib.rs", "planned edit\n"),
+        ("other.rs", "untouched\n"),
+    ]);
+    let scratch = tempfile::tempdir().unwrap();
+    let body = scratch.path().join("pr-body.md");
+    fs::write(
+        &body,
+        "Promise: added() exists\nScope: src/lib.rs (without `other.rs`).\nProof: `cargo test`\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    // The note names `other.rs` as untouched; the changed `other.rs` is the one path outside the card.
+    assert_eq!(code, 2, "{reply}");
+    assert_eq!(reply["data"]["surface"]["cardScopePaths"], 1, "{reply}");
+    let outside: Vec<&str> = reply["data"]["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["rule"] == "keel.scope.path_outside_card")
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert_eq!(outside, vec!["other.rs"], "{reply}");
+    fs::write(
+        &body,
+        "Promise: added() exists\nScope: src/lib.rs. Nothing else is touched\nProof: `cargo test`\n",
+    )
+    .unwrap();
+    let (code, reply) = run(repo.path(), Some(&body));
+    assert_eq!(code, 3, "{reply}");
+    assert_eq!(codes(&reply), vec!["keel.card.list_unreadable"], "{reply}");
+}
+
+#[test]
 fn a_card_naming_journeys_validates_and_a_bad_journey_id_is_refused_at_its_path() {
     let repo = repository(&[]);
     let path = repo.path().join("card.json");

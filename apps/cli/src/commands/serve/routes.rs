@@ -2193,11 +2193,15 @@ pub(super) async fn requests(
                 // #2232: issues this run linked to requests other runs of the project recorded.
                 let elsewhere =
                     graphhelm_execution::requests::linked_elsewhere(&view.records, &view.tasks);
+                // #3018: issues with work in this run that no request names.
+                let unlinked =
+                    graphhelm_execution::requests::unlinked(&requests, &elsewhere, &view.tasks);
                 serde_json::json!({
                     "executionId": view.execution_id,
                     "headSequence": view.head_sequence,
                     "requests": requests,
                     "linkedElsewhere": elsewhere,
+                    "unlinked": unlinked,
                 })
             })
         })

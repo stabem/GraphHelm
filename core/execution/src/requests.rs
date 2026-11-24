@@ -221,6 +221,35 @@ pub fn linked_elsewhere(records: &[TaskEventRecord], tasks: &[TaskState]) -> Vec
     out
 }
 
+/// #3018: the issues with work recorded in this run (a task slice naming the issue) that no
+/// request of this run and no cross-run link names, by issue number, with the same slices a linked
+/// issue carries. The board uses it to show work whose ask was never recorded or linked.
+#[must_use]
+pub fn unlinked(
+    requests: &[RequestView],
+    elsewhere: &[ElsewhereLink],
+    tasks: &[TaskState],
+) -> Vec<RequestIssue> {
+    let linked = |issue: u64| {
+        requests
+            .iter()
+            .flat_map(|request| &request.issues)
+            .chain(elsewhere.iter().flat_map(|link| &link.issues))
+            .any(|row| row.issue == issue)
+    };
+    let mut issues: Vec<u64> = tasks
+        .iter()
+        .filter_map(|task| task.issue)
+        .filter(|&issue| !linked(issue))
+        .collect();
+    issues.sort_unstable();
+    issues.dedup();
+    issues
+        .into_iter()
+        .map(|issue| request_issue(issue, tasks))
+        .collect()
+}
+
 /// #1981: how many times one request is handed before only the owner's Hand off is left.
 pub const MAX_DISPATCH_ATTEMPTS: u32 = 3;
 

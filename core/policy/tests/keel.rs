@@ -891,6 +891,15 @@ fn declared_skills_skips_prose_after_the_list_and_a_not_used_line() {
         declared_skills("## Skills usadas\n- keel (first).\n- made-up-skill (second).\n"),
         ["keel", "made-up-skill"]
     );
+    // A list marker or an abbreviation is not a sentence end: the unloaded name is still declared.
+    for body in [
+        "## Skills used\n1. keel\n2. made-up-skill\n",
+        "Skills: e.g. keel, made-up-skill\n",
+    ] {
+        let names = declared_skills(body);
+        assert!(names.iter().any(|name| name == "keel"), "{body}");
+        assert!(names.iter().any(|name| name == "made-up-skill"), "{body}");
+    }
     // A listed name with no record keeps firing, known or not.
     let loaded: std::collections::BTreeSet<String> =
         ["keel:keel"].into_iter().map(String::from).collect();

@@ -611,14 +611,7 @@ pub fn declared_skills(body: &str) -> Vec<String> {
     }
     // A sentence ends the names on its own line: what follows `. ` is prose. The next line of the
     // block is a new list item and is read on its own.
-    let names_only = plain.lines().map(|line| {
-        let end = line
-            .char_indices()
-            .zip(line.chars().skip(1))
-            .find_map(|((at, c), next)| (c == '.' && matches!(next, ' ' | '\t')).then_some(at))
-            .unwrap_or(line.len());
-        &line[..end]
-    });
+    let names_only = plain.lines().map(|line| &line[..sentence_end(line)]);
     let mut names: Vec<String> = Vec::new();
     for token in names_only.flat_map(str::split_whitespace) {
         let token = token.trim_matches(|c: char| !c.is_ascii_alphanumeric());
@@ -670,6 +663,27 @@ fn is_key_line(text: &str) -> bool {
         key.starts_with(|c: char| c.is_ascii_uppercase())
             && key.chars().all(|c| c.is_ascii_alphabetic() || c == ' ')
     })
+}
+
+/// Where prose starts on a line: the first `.` followed by a space or tab that ends a word. A list
+/// marker (`1. keel`) and an abbreviation (`e.g. keel`) are not sentence ends, so the names after
+/// them are still read.
+fn sentence_end(line: &str) -> usize {
+    line.char_indices()
+        .zip(line.chars().skip(1))
+        .find_map(|((at, c), next)| {
+            if c != '.' || !matches!(next, ' ' | '\t') {
+                return None;
+            }
+            let word = line[..at]
+                .trim_end()
+                .rsplit(char::is_whitespace)
+                .next()
+                .unwrap_or("");
+            let marker = !word.is_empty() && word.chars().all(|w| w.is_ascii_digit());
+            (!marker && !word.contains('.')).then_some(at)
+        })
+        .unwrap_or(line.len())
 }
 
 /// `Não usadas nesta tarefa: ...`, `Not used: ...`, `Não carregadas: ...`: a label whose words

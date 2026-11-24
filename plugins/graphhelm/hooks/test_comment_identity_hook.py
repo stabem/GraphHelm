@@ -66,7 +66,7 @@ class Allowed(unittest.TestCase):
         for command in ("gh pr comment 5 --body-file -", "gh pr comment 5 --body-file /no/such/file.md",
                         'gh pr comment 5 --body "$(cat <<\'EOF\'\nx\nEOF\n)"', "gh pr comment 5",
                         "gh pr review 5 --approve", "gh pr comment 5 --body", "gh pr comment 'unterminated",
-                        "gh pr comment 5 --body-file $env:BODY"):
+                        "gh pr comment 5 --body-file $env:BODY", "echo gh pr comment 5 --body x"):
             with self.subTest(command=command):
                 self.assertEqual(run(command), "allow")
         self.assertEqual(subprocess.run([sys.executable, str(HOOK)], input=b"not json", capture_output=True,

@@ -52,7 +52,8 @@ def _is_comment_command(words: list[str]) -> bool:
 def _segments(tokens: list[str]) -> list[list[str]]:
     out: list[list[str]] = []
     for index, token in enumerate(tokens):
-        if token in ("gh", "gh.exe") and _is_comment_command(tokens[index:index + 3]):
+        starts_command = index == 0 or tokens[index - 1] in SEPARATORS or tokens[index - 1].endswith(";")
+        if starts_command and token in ("gh", "gh.exe") and _is_comment_command(tokens[index:index + 3]):
             end = index + 1
             while end < len(tokens) and tokens[end] not in SEPARATORS and not tokens[end].endswith(";"):
                 end += 1

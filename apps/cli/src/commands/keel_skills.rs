@@ -81,15 +81,22 @@ pub(super) fn loaded_skills(binding: &RuntimeBinding) -> LoadedSkills {
         "keel-check-skills".to_owned(),
     );
     match read_records(&client, &execution) {
-        Some(names) => LoadedSkills::Names(names),
+        // Events but not one `skill.loaded`: the host never ran the recorder, so no skill can be
+        // called not loaded.
+        Some((0, _)) => LoadedSkills::Unobserved(
+            "OBSERVER_MISSING: the execution has events but no skill.loaded record, so its host \
+             does not run the skill recorder (plugins/graphhelm/hooks/skill_record_hook.py)",
+        ),
+        Some((_, names)) => LoadedSkills::Names(names),
         None => LoadedSkills::Unobserved(
             "OBSERVER_MISSING: the Runtime did not give a complete skill.loaded list in time",
         ),
     }
 }
 
-/// `None` unless every page of events and every referenced evidence item was read.
-fn read_records(client: &ApiClient, execution: &str) -> Option<BTreeSet<String>> {
+/// `None` unless every page of events and every referenced evidence item was read. The count is
+/// the number of `skill.loaded` records seen.
+fn read_records(client: &ApiClient, execution: &str) -> Option<(usize, BTreeSet<String>)> {
     let started = Instant::now();
     let get = |path: &str| -> Option<serde_json::Value> {
         let left = DEADLINE.checked_sub(started.elapsed())?;
@@ -122,7 +129,8 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<BTreeSet<String>>
             after = after.max(event["sequence"].as_u64()?);
         }
         if after >= head {
-            return read_names(&get, execution, &evidence_ids);
+            let names = read_names(&get, execution, &evidence_ids)?;
+            return Some((evidence_ids.len(), names));
         }
         if events.is_empty() {
             return None;

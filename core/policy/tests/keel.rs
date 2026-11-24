@@ -847,3 +847,53 @@ fn a_declared_skill_without_a_loaded_record_warns_with_its_name_in_the_path() {
     let other = ["graphhelm:keel"].map(String::from).to_vec();
     assert_eq!(check_skills_loaded(&other, &loaded).len(), 1);
 }
+
+/// Contract: only the names the author declares as loaded are returned. Regression: prose after
+/// the list on the same line, or a "not used" line under the heading, became skill names.
+#[test]
+fn declared_skills_skips_prose_after_the_list_and_a_not_used_line() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    assert_eq!(
+        declared_skills(
+            "## Skills usadas\nkeel, graphhelm-implement, keel-exec, journey-prove, graphhelm-work (all loaded with the Skill tool in this task). Sem replay: o fluxo é rascunho.\n"
+        ),
+        [
+            "keel",
+            "graphhelm-implement",
+            "keel-exec",
+            "journey-prove",
+            "graphhelm-work"
+        ]
+    );
+    let body_two = "## Skills usadas\n`keel`, `graphhelm-implement`, `keel-exec`, `test-audit`, `modern-web-guidance`, `graphhelm-work`\nNão usadas nesta tarefa: `journey-prove` (OBSERVER_MISSING: jornada), `task-plan` (plano na issue).\n";
+    let declared = declared_skills(body_two);
+    assert_eq!(
+        declared,
+        [
+            "keel",
+            "graphhelm-implement",
+            "keel-exec",
+            "test-audit",
+            "modern-web-guidance",
+            "graphhelm-work"
+        ]
+    );
+    assert_eq!(
+        declared_skills("## Skills used\nkeel\nNot used: task-plan\n"),
+        ["keel"]
+    );
+    assert_eq!(
+        declared_skills("## Skills usadas\nkeel\nNão carregadas: task-plan\n"),
+        ["keel"]
+    );
+    // A listed name with no record keeps firing, known or not.
+    let loaded: std::collections::BTreeSet<String> =
+        ["keel:keel"].into_iter().map(String::from).collect();
+    let findings = check_skills_loaded(&declared_skills("Skills: keel, made-up-skill\n"), &loaded);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");
+    assert_eq!(
+        findings[0].path.as_deref(),
+        Some("/card/skills/made-up-skill")
+    );
+}

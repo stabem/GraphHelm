@@ -3,6 +3,7 @@
 Cost: reads the plugin files once and builds a throwaway git repository; offline.
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import plugin_shipped_digest as shipped  # noqa: E402
+
+
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 class ShippedDigests(unittest.TestCase):
@@ -29,7 +33,7 @@ class ChangeWithoutBump(unittest.TestCase):
             for manifest in manifests:
                 self.put(manifest, json.dumps({"version": "1.0.0"}))
             self.put(roots[0] + "skills/x/SKILL.md", "one\n")
-        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True)
+        subprocess.run(["git", "init", "-q"], cwd=self.repo, check=True, timeout=30, creationflags=NO_WINDOW)
         self.record = {g: {v: d} for g, (v, d) in shipped.current(self.repo).items()}
 
     def put(self, name, text):

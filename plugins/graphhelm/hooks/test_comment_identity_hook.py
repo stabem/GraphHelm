@@ -83,6 +83,21 @@ class Allowed(unittest.TestCase):
         self.assertEqual(run('git status && gh pr comment 5 --body "x"'), "deny")
         self.assertEqual(run('gh pr view 5; gh pr comment 5 --body "x"'), "deny")
 
+    def test_every_separator_starts_a_new_command(self):
+        post = 'gh pr comment 5 --body "x"'
+        for before in ("git status\n", "git status\r\n", "cd /x\n\n", "git status;", "git status ;", "ls&&",
+                       "ls ||", "ls|", "ls &", "(", "echo $(", "git log -n 1\r\ncd x\r\n"):
+            with self.subTest(before=before):
+                self.assertEqual(run(before + post), "deny")
+        self.assertEqual(run('echo "a;b\n&& c"\n' + post), "deny")
+
+    def test_gh_as_an_argument_or_in_a_quote_is_not_a_command(self):
+        text = "gh pr comment 5 --body x"
+        for command in (f"echo {text}", f"echo hi && echo {text}", f"echo hi\necho {text}", f"echo hi;echo {text}",
+                        f'echo "a\n{text}"', f"echo 'x;\n{text}'", f"git commit -m 'a; {text}'"):
+            with self.subTest(command=command):
+                self.assertEqual(run(command), "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,7 +16,8 @@ import sys
 
 SHELL_TOOLS = ("Bash", "PowerShell")
 READ_LIMIT = 4096
-SEPARATORS = {";", "&&", "||", "|", "&"}
+SEPARATOR_CHARS = ";&|()"
+SEPARATORS = set(SEPARATOR_CHARS)
 IDENTITY = re.compile(
     r"^Session: (?P<name>[^\[\]\n]*?\S) \[(?P<ref>[^\]\n]*\S)\](?: \([^)\n]*\))* · Head: "
     r"(?P<sha>[0-9A-Fa-f]{8,})(?![0-9A-Za-z_])")
@@ -36,8 +37,25 @@ def filled(body: str) -> bool:
     return False
 
 
+def _spaced(command: str) -> str:
+    """The command with every unquoted newline and operator turned into a separator token."""
+    out: list[str] = []
+    quote = ""
+    for char in command:
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        elif char in "\r\n":
+            char = " ; "
+        elif char in SEPARATOR_CHARS:
+            char = f" {char} "
+        out.append(char)
+    return "".join(out)
+
+
 def _tokens(command: str) -> list[str]:
-    lexer = shlex.shlex(command, posix=True)
+    lexer = shlex.shlex(_spaced(command), posix=True)
     lexer.whitespace_split = True
     lexer.escape = ""  # a Windows path keeps its backslashes
     lexer.commenters = ""
@@ -52,10 +70,10 @@ def _is_comment_command(words: list[str]) -> bool:
 def _segments(tokens: list[str]) -> list[list[str]]:
     out: list[list[str]] = []
     for index, token in enumerate(tokens):
-        starts_command = index == 0 or tokens[index - 1] in SEPARATORS or tokens[index - 1].endswith(";")
+        starts_command = index == 0 or tokens[index - 1] in SEPARATORS
         if starts_command and token in ("gh", "gh.exe") and _is_comment_command(tokens[index:index + 3]):
             end = index + 1
-            while end < len(tokens) and tokens[end] not in SEPARATORS and not tokens[end].endswith(";"):
+            while end < len(tokens) and tokens[end] not in SEPARATORS:
                 end += 1
             out.append(tokens[index:end])
     return out

@@ -136,6 +136,14 @@ class KeelStopHook(unittest.TestCase):
         self.assertEqual(result["decision"], "block")
         self.assertIn("keel-card.json", result["reason"])
 
+    def test_issue_branch_without_card_names_the_per_issue_card(self):
+        """#3029: on issue-<N> the message named the shared keel-card.json, so every PR rewrote it."""
+        git(self.repo, "checkout", "-qb", "issue-77-x")
+        self.code(20)
+        reason = self.run_hook()["reason"]
+        self.assertIn(".graphhelm/cards/issue-77.json", reason)
+        self.assertNotIn("keel-card.json", reason)
+
     def test_block_names_the_work_tree_it_checked(self):
         """#2731: a lane told 'no card' could not tell which directory was checked."""
         self.code(20)

@@ -2,7 +2,8 @@
 
 Runs before Edit, Write and MultiEdit. When the edit targets a file outside docs, and the branch's
 code change plus the lines this edit writes would pass the summary-only row of the Keel table, the
-edit is denied until `.graphhelm/keel-card.json` exists. Writing the card itself is always allowed.
+edit is denied until the card exists (`.graphhelm/cards/issue-<N>.json` on an issue-<N> branch,
+else `.graphhelm/keel-card.json`). Writing the card itself is always allowed.
 Once the card exists, an edit to a non-test file under the card's scopePaths is denied until the
 branch has a new or changed test file under those paths (test first). A card with
 `"testFirst": false` and a non-empty `testFirstReason` waives that check.
@@ -21,7 +22,7 @@ import sys
 
 import re
 
-from keel_stop_hook import (TRIVIAL_LINES, _git, _is_doc, _merge_base, card_path, code_lines_changed,
+from keel_stop_hook import (TRIVIAL_LINES, _git, _is_doc, _merge_base, card_path, card_to_write, code_lines_changed,
                             toplevel, untracked)
 
 TEST_NAME = re.compile(r"(^|/)(tests?/|test_[^/]*$|[^/]*_test\.[^/]+$|[^/]*\.(test|spec)\.[^/]+$)")
@@ -110,7 +111,7 @@ def decide(repo: Path, target: Path, tool_input: dict) -> str | None:
     if small and (is_test(relative) or not _denied_on_branch(repo)):
         return None
     return (f"Keel: this edit takes the branch past the summary-only row and there is no card at "
-            f"{card.as_posix()} in {repo.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
+            f"{card_to_write(repo, card).as_posix()} in {repo.as_posix()}. Write the card first (promise, scopePaths, proof; shape in "
             f"docs/keel/KEEL_CHECK.md), then edit {relative}.")
 
 

@@ -195,7 +195,9 @@ class KeelPreToolCardPath(unittest.TestCase):
     def test_issue_branch_without_any_card_still_denies(self):
         result = self.edit()
         self.assertEqual(result["permissionDecision"], "deny")
-        self.assertIn("keel-card.json", result["permissionDecisionReason"])
+        # #3029 break-once: naming the shared keel-card.json here made agents rewrite it.
+        self.assertIn(".graphhelm/cards/issue-1548.json", result["permissionDecisionReason"])
+        self.assertNotIn("keel-card.json", result["permissionDecisionReason"])
 
     def test_test_first_names_the_per_issue_card(self):
         # Break-once: with the fixed path the message names keel-card.json, so this fails.

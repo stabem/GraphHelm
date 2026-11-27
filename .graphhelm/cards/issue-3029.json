@@ -1,0 +1,14 @@
+{
+  "promise": "On an issue-<N> branch with no card, the Stop and PreTool no-card messages name .graphhelm/cards/issue-<N>.json, not the shared keel-card.json.",
+  "scopePaths": [
+    "plugins/graphhelm/hooks/keel_stop_hook.py",
+    "plugins/graphhelm/hooks/keel_pretool_hook.py",
+    "plugins/graphhelm/hooks/test_keel_stop_hook.py",
+    "plugins/graphhelm/hooks/test_keel_pretool_hook.py",
+    ".graphhelm/cards/issue-3029.json"
+  ],
+  "proof": "python -m pytest -q plugins/graphhelm/hooks/test_keel_stop_hook.py plugins/graphhelm/hooks/test_keel_pretool_hook.py plugins/graphhelm/hooks/test_review_stop_hook.py",
+  "exportedSymbols": [
+    "card_to_write"
+  ]
+}

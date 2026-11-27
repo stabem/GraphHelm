@@ -117,6 +117,8 @@ fn card(scope: &[&str], symbols: &[&str]) -> Card {
         exported_symbols: symbols.iter().map(|symbol| (*symbol).to_owned()).collect(),
         allowance: None,
         journeys: Vec::new(),
+        test_first: None,
+        test_first_reason: None,
     }
 }
 

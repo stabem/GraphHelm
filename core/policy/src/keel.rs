@@ -729,6 +729,11 @@ pub struct Card {
     /// Journey contract ids whose screens prove the promise (spec §6.3). Advisory only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub journeys: Vec<String>,
+    /// `false` with a reason waives the PreTool hook's test-first check (#3031). Not read here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_first: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_first_reason: Option<String>,
 }
 
 /// One path a diff touches, as read from its headers.

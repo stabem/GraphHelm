@@ -1228,6 +1228,26 @@ fn a_schema_invalid_card_is_rejected_with_the_failing_field_path() {
     assert_eq!(reply["diagnostics"][0]["source"], "keel-card");
 }
 
+/// #3031: the PreTool hook tells an agent to waive test-first with `testFirst: false` and a
+/// `testFirstReason`. Defect: the card schema refused both fields, so the card failed GHS002_SCHEMA.
+#[test]
+fn a_card_with_the_test_first_waiver_passes_the_schema() {
+    let repo = repository(&[]);
+    let scratch = tempfile::tempdir().unwrap();
+    let card = scratch.path().join("card.json");
+    fs::write(
+        &card,
+        br#"{"promise":"p","scopePaths":["src"],"proof":"cargo test","testFirst":false,"testFirstReason":"config only"}"#,
+    )
+    .unwrap();
+
+    let (_, reply) = run(repo.path(), Some(&card));
+    assert!(
+        !codes(&reply).contains(&"GHS002_SCHEMA".to_owned()),
+        "{reply}"
+    );
+}
+
 /// #1333: `--prove-new-tests` on a fix whose inline `mod tests` adds one test that detects the bug
 /// and one that asserts its own arithmetic. Only the second is a signal, the checkout is untouched,
 /// and no proving worktree outlives the command.

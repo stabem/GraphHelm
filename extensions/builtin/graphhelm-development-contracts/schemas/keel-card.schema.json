@@ -48,6 +48,14 @@
       },
       "description": "Journey contracts (`.graphhelm/journeys/<contractId>.json`) that prove the promise. keel check reports, without blocking, a screen the card's scope touches whose journey has no fresh capture at the head (keel.journey.no_fresh_capture)."
     },
+    "testFirst": {
+      "type": "boolean",
+      "description": "false, with a non-empty testFirstReason, waives the PreTool hook's test-first check (no source edit in scope before a test in scope changes). keel check does not read it (#3031)."
+    },
+    "testFirstReason": {
+      "type": "string",
+      "description": "Why the change has no testable behavior; required by the hook for the testFirst waiver."
+    },
     "allowance": {
       "$ref": "#/$defs/surfaceBudget",
       "description": "Surface declared at planning time, added to keel.yaml `surface` and capped by `maxAllowance`."

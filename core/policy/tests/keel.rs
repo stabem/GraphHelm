@@ -593,6 +593,8 @@ fn card(scope: &[&str]) -> graphhelm_policy::keel::Card {
         exported_symbols: vec!["added".into()],
         allowance: None,
         journeys: Vec::new(),
+        test_first: None,
+        test_first_reason: None,
     }
 }
 

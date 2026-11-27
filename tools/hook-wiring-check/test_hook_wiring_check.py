@@ -52,6 +52,25 @@ class HookWiringCheck(unittest.TestCase):
         code, out = run(json.dumps({"hooks": hooks}))
         self.assertEqual((code, out), (0, ""))
 
+    def test_matcher_that_does_not_cover_the_shipped_one_is_missing(self):
+        def wired(matcher):
+            return json.dumps({"hooks": {"PreToolUse": [{"matcher": matcher, "hooks": [
+                {"type": "command", "command": "python /x/comment_identity_hook.py"}]}]}})
+        needle = "script=comment_identity_hook.py"
+        self.assertIn(needle, run(wired("Edit"))[1])
+        self.assertIn(needle, run(wired("Bash"))[1])
+        for covering in ("Bash|PowerShell", "PowerShell|Bash|Edit", "", "*"):
+            self.assertNotIn(needle, run(wired(covering))[1])
+
+    def test_shipped_entry_without_a_python_script_is_listed_by_command(self):
+        fake = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "node lock.js"}]}]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "hooks.json"
+            manifest.write_text(json.dumps(fake), encoding="utf-8")
+            self.assertEqual(run("{}", manifest)[1].strip(), "missing: event=Stop matcher=- script=node lock.js")
+            wired = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "node lock.js"}]}]}})
+            self.assertEqual(run(wired, manifest), (0, ""))
+
     def test_list_comes_from_the_shipped_manifest(self):
         fake = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python new_lock_hook.py"}]}]}}
         with tempfile.TemporaryDirectory() as tmp:

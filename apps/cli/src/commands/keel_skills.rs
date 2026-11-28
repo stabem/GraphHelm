@@ -167,10 +167,15 @@ fn read_records_content(
         if results.len() != batch.len() {
             return None;
         }
-        for (item, (_, actor, sequence, recorded_at)) in results.iter().zip(batch) {
+        for item in results {
             if item["status"] != "available" {
                 return None;
             }
+            // Each result is matched to its event by the evidence id it carries, never by
+            // position; a result for an id that was not asked for leaves the list incomplete.
+            let (_, actor, sequence, recorded_at) = batch
+                .iter()
+                .find(|(id, ..)| item["evidenceId"].as_str() == Some(id.as_str()))?;
             // A record that does not carry the hook's `Skill loaded: <name>` text names no skill.
             let signal: serde_json::Value = serde_json::from_str(item["content"].as_str()?).ok()?;
             let Some(name) = signal["description"]

@@ -1696,24 +1696,32 @@ fn runtime_with_stream(stream: &[StubEvent]) -> String {
         .iter()
         .enumerate()
         .map(|(index, event)| {
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "sequence": index + 1,
                 "actor": {"type": "agent", "id": event.actor},
                 "occurredAt": if event.old { "2020-01-01T00:00:00Z" } else { "2100-01-01T00:00:00Z" },
                 "kind": {"type": "signal_recorded", "data": {"kind": event.kind}},
                 "evidenceRefs": [{"evidenceId": format!("signal-{index}")}],
-            })
+            });
+            // An empty actor stands for an event the Runtime sent without one.
+            if event.actor.is_empty() {
+                value.as_object_mut().unwrap().remove("actor");
+            }
+            value
         })
         .collect();
+    // Answered in reverse order: a reader must pair results to events by evidence id.
     let results: Vec<Value> = stream
         .iter()
-        .filter_map(|event| event.skill.as_ref())
-        .map(|(session, name)| {
+        .enumerate()
+        .rev()
+        .filter_map(|(index, event)| event.skill.as_ref().map(|skill| (index, skill)))
+        .map(|(index, (session, name))| {
             let content = serde_json::json!({
                 "description": format!("Skill loaded: {name}"),
                 "evidence": [format!("skill: {name}"), format!("session: {session}")],
             });
-            serde_json::json!({"status": "available", "content": content.to_string()})
+            serde_json::json!({"status": "available", "evidenceId": format!("signal-{index}"), "content": content.to_string()})
         })
         .collect();
     let events_reply =
@@ -1988,6 +1996,19 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
     // The ref also matches the session id the record carries.
     let reply = run_stream("s2", &[StubEvent::skill("author", "s2", "keel:keel")]);
     assert!(codes(&reply).is_empty(), "{reply}");
+    // An event without a writer makes the history incomplete: unobserved, never a verdict.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel"),
+            StubEvent::other("", "pr_opened"),
+        ],
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
+    assert_eq!(
+        reply["data"]["skillsObserver"]["state"], "unobserved",
+        "{reply}"
+    );
     // A ref no event carries is reported, and no skill is called unloaded.
     let reply = run_stream("ghost", &[StubEvent::skill("author", "s1", "keel:keel")]);
     assert_eq!(

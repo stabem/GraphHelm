@@ -1,0 +1,15 @@
+{
+  "promise": "keel check counts a declared skill as loaded only when a skill.loaded record made by the lane the identity line's ref names exists at or after that lane's newest task.claimed (or, with no claim, the start of its newest session); an unknown or missing ref is reported as keel.card.identity_ref_unknown; no binding or no skill.loaded record stays unobserved.",
+  "scopePaths": [
+    "core/policy/src/keel.rs",
+    "core/policy/tests/keel.rs",
+    "apps/cli/src/commands/keel_skills.rs",
+    "apps/cli/src/commands/keel.rs",
+    "apps/cli/tests/keel_check.rs",
+    "docs/keel/KEEL_CHECK.md",
+    ".graphhelm/cards/issue-3037.json"
+  ],
+  "proof": "cargo +1.97.1 test --locked -p graphhelm-policy --test keel and -p graphhelm-cli --test keel_check: new tests red on the parent commit (other lane, older task, unknown ref) and green here; fmt, clippy on both crates, workspace source guard",
+  "exportedSymbols": ["SkillRecord", "SkillHistory", "identity_ref"],
+  "journeys": []
+}

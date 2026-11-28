@@ -1074,6 +1074,52 @@ fn a_matching_head_does_not_adopt_a_claim_of_another_issue() {
     assert!(check_skills_loaded(&declared, &history, Some("author"), own).is_empty());
 }
 
+/// Contract (#3039): loads made before the lane's previous claim were made for that task, and a
+/// claim with no issue falls back to the newest claim. Regression (BLOCK on 257d6753): the
+/// session reach-back walked past the earlier claim, so issue 1's load counted for issue 2.
+#[test]
+fn loads_before_the_lanes_previous_claim_belong_to_the_previous_task() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel\n");
+    let task = TaskRef {
+        head: None,
+        issues: &[2],
+    };
+    // Load at 10, claim of issue 1 at 11, claim of issue 2 at 20, nothing loaded after.
+    let history = history_of(
+        &[("author", "keel:keel", 10)],
+        &[("author", 11, Some(1)), ("author", 20, Some(2))],
+        &[],
+    );
+    let findings = check_skills_loaded(&declared, &history, Some("author"), task);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    // The same load made between the two claims is this task's.
+    let between = history_of(
+        &[("author", "keel:keel", 15)],
+        &[("author", 11, Some(1)), ("author", 20, Some(2))],
+        &[],
+    );
+    assert!(check_skills_loaded(&declared, &between, Some("author"), task).is_empty());
+    // A claim with no issue after a claim for another issue: it could be this task's, so it
+    // anchors as the newest claim and the load between the two counts (as KEEL_CHECK.md says).
+    let unnamed = history_of(
+        &[("author", "keel:keel", 9)],
+        &[("author", 5, Some(1)), ("author", 10, None)],
+        &[],
+    );
+    assert!(check_skills_loaded(&declared, &unnamed, Some("author"), task).is_empty());
+}
+
+/// A closing keyword inside a longer word closes nothing.
+#[test]
+fn a_closing_keyword_inside_a_word_closes_nothing() {
+    use graphhelm_policy::keel::closing_issues;
+    assert!(closing_issues("prefix #12\ndisclose #5").is_empty());
+    let mut found = closing_issues("(Fixes #12) and Closes #3");
+    found.sort_unstable();
+    assert_eq!(found, vec![3, 12]);
+}
+
 /// A body's closing keywords name the issues; other numbers do not.
 #[test]
 fn closing_issues_reads_the_closing_keywords_only() {

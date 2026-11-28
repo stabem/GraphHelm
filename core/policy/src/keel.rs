@@ -684,8 +684,18 @@ pub fn closing_issues(body: &str) -> Vec<u64> {
         let lower = line.to_ascii_lowercase();
         for word in ["close", "fix", "resolve"] {
             let mut rest = lower.as_str();
+            let mut seen = 0;
             while let Some(at) = rest.find(word) {
+                // A keyword inside a longer word (`prefix #12`) closes nothing.
+                let inside_word = lower[..seen + at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                seen += at + word.len();
                 rest = &rest[at + word.len()..];
+                if inside_word {
+                    continue;
+                }
                 let after = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic());
                 let after = after.strip_prefix(':').unwrap_or(after).trim_start();
                 let digits: String = after
@@ -783,15 +793,33 @@ fn task_start(history: &SkillHistory, identity: &str, task: TaskRef<'_>) -> u64 
         })
         .map(|claim| claim.sequence)
         .min();
-    // Claims that name an issue, none of them this task's: the lane did not claim it here.
+    // Every claim of the lane names an issue, none of them this task's: the lane did not claim it
+    // here. A claim with no issue could be this task's, so it falls back to the newest claim.
     let claimed_elsewhere = !task.issues.is_empty()
         && by_pr.is_none()
         && by_issue.is_none()
-        && own_claims.iter().any(|claim| claim.issue.is_some());
+        && !own_claims.is_empty()
+        && own_claims.iter().all(|claim| claim.issue.is_some());
     if claimed_elsewhere {
         return u64::MAX;
     }
     let claim = by_pr.or(by_issue).or(newest);
+    // The loads before the claim belong to this task only back to the lane's previous claim of
+    // another task: they were made for that one.
+    let chosen_issue = claim.and_then(|claim| {
+        own_claims
+            .iter()
+            .find(|c| c.sequence == claim)
+            .and_then(|c| c.issue)
+    });
+    let previous = claim.and_then(|claim| {
+        own_claims
+            .iter()
+            .filter(|c| c.sequence < claim && (chosen_issue.is_none() || c.issue != chosen_issue))
+            .map(|c| c.sequence)
+            .max()
+    });
+    let floor = previous.unwrap_or(0);
     let made: Vec<&SkillRecord> = history
         .records
         .iter()
@@ -799,12 +827,14 @@ fn task_start(history: &SkillHistory, identity: &str, task: TaskRef<'_>) -> u64 
         .collect();
     let last_before = made
         .iter()
-        .filter(|record| claim.is_none_or(|claim| record.sequence < claim))
+        .filter(|record| {
+            record.sequence >= floor && claim.is_none_or(|claim| record.sequence < claim)
+        })
         .max_by_key(|record| record.sequence);
     let session_start = last_before.and_then(|last| {
         last.session.as_ref()?;
         made.iter()
-            .filter(|record| record.session == last.session)
+            .filter(|record| record.session == last.session && record.sequence >= floor)
             .map(|record| record.sequence)
             .min()
     });

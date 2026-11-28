@@ -107,7 +107,7 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
     };
     let events_path = segment_path(&["v1", "executions", execution, "events"]);
     // (evidence id, actor, sequence) of each `skill.loaded` event, in order.
-    let mut pending: Vec<(String, String, u64)> = Vec::new();
+    let mut pending: Vec<(String, String, u64, i64)> = Vec::new();
     let mut history = SkillHistory::default();
     let mut after = 0_u64;
     for _ in 0..MAX_PAGES {
@@ -122,6 +122,9 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
         }
         for event in events {
             let sequence = event["sequence"].as_u64()?;
+            let recorded_at = chrono::DateTime::parse_from_rfc3339(event["occurredAt"].as_str()?)
+                .ok()?
+                .timestamp();
             // An event whose writer cannot be named leaves the history incomplete.
             let actor = event["actor"]["id"].as_str()?;
             history.actors.insert(actor.to_owned());
@@ -130,7 +133,7 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
                     Some("skill.loaded") => {
                         // A record whose content cannot be named leaves the list incomplete.
                         let id = event["evidenceRefs"][0]["evidenceId"].as_str()?;
-                        pending.push((id.to_owned(), actor.to_owned(), sequence));
+                        pending.push((id.to_owned(), actor.to_owned(), sequence, recorded_at));
                     }
                     Some("task.claimed") => history.claims.push((actor.to_owned(), sequence)),
                     _ => {}
@@ -152,19 +155,19 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
 fn read_records_content(
     get: &dyn Fn(&str) -> Option<serde_json::Value>,
     execution: &str,
-    pending: &[(String, String, u64)],
+    pending: &[(String, String, u64, i64)],
 ) -> Option<Vec<SkillRecord>> {
     let evidence_path = segment_path(&["v1", "executions", execution, "evidence"]);
     let mut records = Vec::new();
     for batch in pending.chunks(EVIDENCE_BATCH) {
-        let ids: Vec<&str> = batch.iter().map(|(id, _, _)| id.as_str()).collect();
+        let ids: Vec<&str> = batch.iter().map(|(id, ..)| id.as_str()).collect();
         let ids = serde_json::to_string(&ids).ok()?;
         let reply = get(&format!("{evidence_path}?ids={}", query_value(&ids)))?;
         let results = reply["results"].as_array()?;
         if results.len() != batch.len() {
             return None;
         }
-        for (item, (_, actor, sequence)) in results.iter().zip(batch) {
+        for (item, (_, actor, sequence, recorded_at)) in results.iter().zip(batch) {
             if item["status"] != "available" {
                 return None;
             }
@@ -191,6 +194,7 @@ fn read_records_content(
                 session: line("session: "),
                 agent: line("agent: "),
                 sequence: *sequence,
+                recorded_at: *recorded_at,
             });
         }
     }

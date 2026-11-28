@@ -1656,6 +1656,8 @@ struct StubEvent {
     actor: String,
     kind: String,
     skill: Option<(String, String)>,
+    /// Recorded long before any test repository's commits.
+    old: bool,
 }
 
 impl StubEvent {
@@ -1664,7 +1666,14 @@ impl StubEvent {
             actor: actor.into(),
             kind: "skill.loaded".into(),
             skill: Some((session.into(), name.into())),
+            old: false,
         }
+    }
+
+    /// The same event, recorded years before the work under check began.
+    fn old(mut self) -> Self {
+        self.old = true;
+        self
     }
 
     fn other(actor: &str, kind: &str) -> Self {
@@ -1672,6 +1681,7 @@ impl StubEvent {
             actor: actor.into(),
             kind: kind.into(),
             skill: None,
+            old: false,
         }
     }
 }
@@ -1689,6 +1699,7 @@ fn runtime_with_stream(stream: &[StubEvent]) -> String {
             serde_json::json!({
                 "sequence": index + 1,
                 "actor": {"type": "agent", "id": event.actor},
+                "occurredAt": if event.old { "2020-01-01T00:00:00Z" } else { "2100-01-01T00:00:00Z" },
                 "kind": {"type": "signal_recorded", "data": {"kind": event.kind}},
                 "evidenceRefs": [{"evidenceId": format!("signal-{index}")}],
             })
@@ -1950,6 +1961,21 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
         ],
     );
     assert!(codes(&reply).is_empty(), "{reply}");
+    // Only records from before this work began, with no claim for it: the measured case.
+    let reply = run_stream(
+        "author",
+        &[StubEvent::skill("author", "s1", "keel:keel").old()],
+    );
+    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
+    // The same with an older claim before them.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::other("author", "task.claimed").old(),
+            StubEvent::skill("author", "s1", "keel:keel").old(),
+        ],
+    );
+    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
     // No claim at all: the lane's newest session is the task.
     let reply = run_stream(
         "author",

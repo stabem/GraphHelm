@@ -639,6 +639,8 @@ pub struct SkillRecord {
     pub session: Option<String>,
     pub agent: Option<String>,
     pub sequence: u64,
+    /// When the Runtime recorded it, in seconds since the Unix epoch.
+    pub recorded_at: i64,
 }
 
 /// What an execution holds that the skills check reads: every `skill.loaded` record, every
@@ -707,12 +709,17 @@ fn task_start(history: &SkillHistory, identity: &str) -> u64 {
 /// when the declared name has no namespace and equals the record name's last segment (`keel` is
 /// `keel:keel`). With no ref, or a ref no event of the execution carries, one
 /// `keel.card.identity_ref_unknown` finding is returned and no per-skill finding, since the skills
-/// cannot be attributed. Pure: the records are read by the caller.
+/// cannot be attributed. `since` is when the pull request's work began (the merge-base commit's
+/// time, seconds since the epoch): a record made before it is an older task's, whatever the lane
+/// did since, so a lane with only old records is told so. A rebase moves `since` forward and can
+/// warn on a skill loaded before it; a stale base can let an older record pass. Pure: the records
+/// are read by the caller.
 #[must_use]
 pub fn check_skills_loaded(
     declared: &[String],
     history: &SkillHistory,
     identity: Option<&str>,
+    since: Option<i64>,
 ) -> Vec<Finding> {
     let known = identity.filter(|id| {
         history.actors.contains(*id) || history.records.iter().any(|record| record.made_by(id))
@@ -732,7 +739,11 @@ pub fn check_skills_loaded(
     let loaded: Vec<&str> = history
         .records
         .iter()
-        .filter(|record| record.made_by(identity) && record.sequence >= start)
+        .filter(|record| {
+            record.made_by(identity)
+                && record.sequence >= start
+                && since.is_none_or(|since| record.recorded_at >= since)
+        })
         .map(|record| record.name.as_str())
         .collect();
     declared

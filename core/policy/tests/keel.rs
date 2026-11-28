@@ -831,21 +831,143 @@ fn a_declared_skill_without_a_loaded_record_warns_with_its_name_in_the_path() {
     );
     assert!(declared_skills("Skills: none\n").is_empty());
 
-    let loaded: std::collections::BTreeSet<String> = ["keel:keel", "keel:implement"]
-        .into_iter()
-        .map(String::from)
-        .collect();
+    let loaded = history_of(
+        &[("2ba4e9", "keel:keel", 1), ("2ba4e9", "keel:implement", 2)],
+        &[],
+    );
+    let lane = Some("2ba4e9");
     // Declared and loaded: exact, or bare against a namespaced record.
-    assert!(check_skills_loaded(&declared[..2], &loaded).is_empty());
+    assert!(check_skills_loaded(&declared[..2], &loaded, lane).is_empty());
     // Declared and not loaded: one warning per skill, the name in the path.
-    let findings = check_skills_loaded(&declared, &loaded);
+    let findings = check_skills_loaded(&declared, &loaded, lane);
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");
     assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel-exec"));
     assert!(!findings[0].blocking);
     // A namespaced declaration is not satisfied by another namespace.
     let other = ["graphhelm:keel"].map(String::from).to_vec();
-    assert_eq!(check_skills_loaded(&other, &loaded).len(), 1);
+    assert_eq!(check_skills_loaded(&other, &loaded, lane).len(), 1);
+}
+
+/// A history of `(actor, skill, sequence)` records and `(actor, sequence)` claims; each record's
+/// session is the actor's name, so the sessions of two lanes never coincide.
+fn history_of(
+    records: &[(&str, &str, u64)],
+    claims: &[(&str, u64)],
+) -> graphhelm_policy::keel::SkillHistory {
+    use graphhelm_policy::keel::{SkillHistory, SkillRecord};
+    SkillHistory {
+        records: records
+            .iter()
+            .map(|(actor, name, sequence)| SkillRecord {
+                name: (*name).into(),
+                actor: (*actor).into(),
+                session: Some(format!("session-of-{actor}-{}", sequence / 100)),
+                agent: None,
+                sequence: *sequence,
+            })
+            .collect(),
+        claims: claims.iter().map(|(a, s)| ((*a).into(), *s)).collect(),
+        actors: records
+            .iter()
+            .map(|r| r.0)
+            .chain(claims.iter().map(|c| c.0))
+            .map(String::from)
+            .collect(),
+    }
+}
+
+/// Contract (#3037): a declared skill counts only when the lane the identity line names loaded it
+/// during this task. Regression: the union over every lane and day passed any skill anyone ever
+/// loaded.
+#[test]
+fn a_declared_skill_counts_only_when_the_named_lane_loaded_it_during_this_task() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    // Another lane loaded both; the named lane has records of its own for something else.
+    let other_lane = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("reviewer", "keel:keel", 11),
+            ("reviewer", "keel:keel-exec", 12),
+        ],
+        &[],
+    );
+    let findings = check_skills_loaded(&declared, &other_lane, Some("author"));
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel-exec"));
+    // The same lane loaded them, but before its newest claim (an older task).
+    let older = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 11),
+        ],
+        &[("author", 50)],
+    );
+    assert_eq!(
+        check_skills_loaded(&declared, &older, Some("author")).len(),
+        2
+    );
+    // Loaded after the claim: no finding.
+    let during = history_of(
+        &[
+            ("author", "keel:keel", 51),
+            ("author", "keel:keel-exec", 52),
+        ],
+        &[("author", 50)],
+    );
+    assert!(check_skills_loaded(&declared, &during, Some("author")).is_empty());
+    // A claim by another lane does not move this lane's start.
+    let foreign_claim = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 11),
+        ],
+        &[("reviewer", 50)],
+    );
+    assert!(check_skills_loaded(&declared, &foreign_claim, Some("author")).is_empty());
+}
+
+/// Contract (#3037): with no `task.claimed` record the task starts with the lane's newest session.
+#[test]
+fn without_a_claim_the_task_starts_with_the_lanes_newest_session() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    // `history_of` gives sequences 10 and 250 different sessions: only the newest session counts.
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 250),
+        ],
+        &[],
+    );
+    let findings = check_skills_loaded(&declared, &history, Some("author"));
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel"));
+}
+
+/// Contract (#3037): an identity ref no event carries, or no ref at all, is reported once under
+/// its own code and no skill is called unloaded; a ref is read as the last `[...]` before `Head:`.
+#[test]
+fn an_identity_ref_with_no_record_is_reported_not_passed() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills, identity_ref};
+    let history = history_of(&[("author", "keel:keel", 10)], &[]);
+    let declared = declared_skills("Skills: keel\n");
+    for lane in [Some("ghost"), None] {
+        let findings = check_skills_loaded(&declared, &history, lane);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].rule, "keel.card.identity_ref_unknown");
+        assert_eq!(findings[0].path.as_deref(), Some("/card/identity"));
+        assert!(!findings[0].blocking);
+    }
+    assert_eq!(
+        identity_ref(
+            "Session: Ronda (zuvemo) [local_143fe79a] (keel-author subagent) · Head: 0123abcd\n"
+        )
+        .as_deref(),
+        Some("local_143fe79a")
+    );
+    assert_eq!(identity_ref("Session: Author · Head: 0123abcd\n"), None);
 }
 
 /// Contract: only the names the author declares as loaded are returned. Regression: prose after
@@ -901,9 +1023,12 @@ fn declared_skills_skips_prose_after_the_list_and_a_not_used_line() {
         assert!(names.iter().any(|name| name == "made-up-skill"), "{body}");
     }
     // A listed name with no record keeps firing, known or not.
-    let loaded: std::collections::BTreeSet<String> =
-        ["keel:keel"].into_iter().map(String::from).collect();
-    let findings = check_skills_loaded(&declared_skills("Skills: keel, made-up-skill\n"), &loaded);
+    let loaded = history_of(&[("2ba4e9", "keel:keel", 1)], &[]);
+    let findings = check_skills_loaded(
+        &declared_skills("Skills: keel, made-up-skill\n"),
+        &loaded,
+        Some("2ba4e9"),
+    );
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");
     assert_eq!(

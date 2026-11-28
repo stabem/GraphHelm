@@ -1640,36 +1640,73 @@ fn runtime_with_loaded_skills(names: &[&str]) -> String {
 }
 
 /// Like `runtime_with_loaded_skills`, with `other_events` records of another kind after them.
+/// The skills are loaded by lane `2ba4e9`, the identity ref of the bodies in these tests.
 fn runtime_with_events(names: &[&str], other_events: usize) -> String {
+    let mut stream: Vec<StubEvent> = names
+        .iter()
+        .map(|name| StubEvent::skill("2ba4e9", "s1", name))
+        .collect();
+    stream.extend((0..other_events).map(|_| StubEvent::other("someone-else", "task.claimed")));
+    runtime_with_stream(&stream)
+}
+
+/// One event of the stub Runtime's stream: who wrote it, its kind and, for `skill.loaded`, the
+/// skill and the session in its evidence.
+struct StubEvent {
+    actor: String,
+    kind: String,
+    skill: Option<(String, String)>,
+}
+
+impl StubEvent {
+    fn skill(actor: &str, session: &str, name: &str) -> Self {
+        Self {
+            actor: actor.into(),
+            kind: "skill.loaded".into(),
+            skill: Some((session.into(), name.into())),
+        }
+    }
+
+    fn other(actor: &str, kind: &str) -> Self {
+        Self {
+            actor: actor.into(),
+            kind: kind.into(),
+            skill: None,
+        }
+    }
+}
+
+/// Serves `stream` the way the Runtime's events route replies (sequences from 1, actor on each
+/// event) and the evidence of its `skill.loaded` records, on a loopback port.
+fn runtime_with_stream(stream: &[StubEvent]) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
-    let events: Vec<Value> = names
+    let events: Vec<Value> = stream
         .iter()
         .enumerate()
-        .map(|(index, _)| {
+        .map(|(index, event)| {
             serde_json::json!({
                 "sequence": index + 1,
-                "kind": {"type": "signal_recorded", "data": {"kind": "skill.loaded"}},
+                "actor": {"type": "agent", "id": event.actor},
+                "kind": {"type": "signal_recorded", "data": {"kind": event.kind}},
                 "evidenceRefs": [{"evidenceId": format!("signal-{index}")}],
             })
         })
-        .chain((0..other_events).map(|index| {
-            serde_json::json!({
-                "sequence": names.len() + index + 1,
-                "kind": {"type": "signal_recorded", "data": {"kind": "task.claimed"}},
-                "evidenceRefs": [{"evidenceId": format!("other-{index}")}],
-            })
-        }))
         .collect();
-    let results: Vec<Value> = names
+    let results: Vec<Value> = stream
         .iter()
-        .map(|name| {
-            let content = serde_json::json!({"description": format!("Skill loaded: {name}")});
+        .filter_map(|event| event.skill.as_ref())
+        .map(|(session, name)| {
+            let content = serde_json::json!({
+                "description": format!("Skill loaded: {name}"),
+                "evidence": [format!("skill: {name}"), format!("session: {session}")],
+            });
             serde_json::json!({"status": "available", "content": content.to_string()})
         })
         .collect();
-    let events_reply = serde_json::json!({"ok": true, "data": {"events": events, "head": names.len() + other_events}});
+    let events_reply =
+        serde_json::json!({"ok": true, "data": {"events": events, "head": stream.len()}});
     let evidence_reply = serde_json::json!({"ok": true, "data": {"results": results}});
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -1844,6 +1881,95 @@ fn a_not_used_line_under_the_skills_names_declares_nothing_and_an_unloaded_name_
         reply["diagnostics"][0]["path"],
         "/card/skills/made-up-skill"
     );
+}
+
+/// Contract (#3037): a declared skill passes only when the lane the identity line's ref names
+/// loaded it during this task. Regression: a skill any lane loaded on any day passed every body.
+/// Cost: one loopback stub thread per case and short CLI processes; no real Runtime.
+#[test]
+fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
+    let repo = repository(&[("src/lib.rs", "planned edit\n")]);
+    let scratch = tempfile::tempdir().unwrap();
+    let token = scratch.path().join("agent.token");
+    fs::write(&token, "a".repeat(64)).unwrap();
+    let run_stream = |reference: &str, stream: &[StubEvent]| {
+        let body = scratch.path().join("pr-body.md");
+        fs::write(
+            &body,
+            format!(
+                "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nSession: Author [{reference}] \u{b7} Head: 0123abcd\nSkills: keel\n"
+            ),
+        )
+        .unwrap();
+        let url = runtime_with_stream(stream);
+        let output = Command::cargo_bin("graphhelm")
+            .unwrap()
+            .args([
+                "--json",
+                "keel",
+                "check",
+                "--diff",
+                "HEAD~1..HEAD",
+                "--repo",
+            ])
+            .arg(repo.path())
+            .arg("--card")
+            .arg(&body)
+            .args(["--runtime-url", &url, "--runtime-execution", "ex1"])
+            .arg("--runtime-token-file")
+            .arg(&token)
+            .output()
+            .unwrap();
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    // Loaded only by another lane of the same execution.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::skill("reviewer", "s9", "keel:keel"),
+            StubEvent::other("author", "pr_opened"),
+        ],
+    );
+    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
+    // Loaded by the same lane only before its newest claim: an older task.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel"),
+            StubEvent::other("author", "task.claimed"),
+            StubEvent::skill("reviewer", "s9", "keel:keel"),
+        ],
+    );
+    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
+    // Loaded by the same lane after its claim.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::other("author", "task.claimed"),
+            StubEvent::skill("author", "s2", "keel:keel"),
+        ],
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // No claim at all: the lane's newest session is the task.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel-exec"),
+            StubEvent::skill("author", "s2", "keel:keel"),
+        ],
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // The ref also matches the session id the record carries.
+    let reply = run_stream("s2", &[StubEvent::skill("author", "s2", "keel:keel")]);
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // A ref no event carries is reported, and no skill is called unloaded.
+    let reply = run_stream("ghost", &[StubEvent::skill("author", "s1", "keel:keel")]);
+    assert_eq!(
+        codes(&reply),
+        vec!["keel.card.identity_ref_unknown"],
+        "{reply}"
+    );
+    assert_eq!(reply["diagnostics"][0]["path"], "/card/identity", "{reply}");
 }
 
 #[test]

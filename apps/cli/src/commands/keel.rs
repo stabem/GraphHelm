@@ -424,9 +424,13 @@ pub(super) fn check(
         let declared = policy_keel::declared_skills(text);
         if !declared.is_empty() {
             match super::keel_skills::loaded_skills(&runtime) {
-                super::keel_skills::LoadedSkills::Names(loaded) => report
-                    .findings
-                    .extend(policy_keel::check_skills_loaded(&declared, &loaded)),
+                super::keel_skills::LoadedSkills::History(history) => {
+                    report.findings.extend(policy_keel::check_skills_loaded(
+                        &declared,
+                        &history,
+                        policy_keel::identity_ref(text).as_deref(),
+                    ));
+                }
                 super::keel_skills::LoadedSkills::Unobserved(reason) => {
                     skills_unobserved = Some(reason);
                 }

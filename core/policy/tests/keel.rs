@@ -967,6 +967,23 @@ fn a_later_claim_of_the_same_lane_does_not_hide_this_tasks_loads() {
     assert!(check_skills_loaded(&declared, &history, Some("author"), Some(5)).is_empty());
 }
 
+/// Contract (#3039): a lane whose only claim is older than the work, and which then loaded skills in
+/// two sessions, keeps both sessions. Regression: the old claim was dropped and only the newest
+/// session counted.
+#[test]
+fn a_claim_older_than_the_work_still_anchors_the_task() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 110),
+            ("author", "keel:keel-exec", 250),
+        ],
+        &[("author", 5)],
+    );
+    assert!(check_skills_loaded(&declared, &history, Some("author"), Some(100)).is_empty());
+}
+
 /// Contract (#3037): a lane whose only records are older than the pull request's work is told the
 /// skill was not loaded, with or without an older claim before them. Regression: the lane's own
 /// newest session or claim was taken as "this task", so old records passed.

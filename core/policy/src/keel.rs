@@ -683,30 +683,35 @@ pub fn identity_ref(body: &str) -> Option<String> {
 /// session of the newest record before that claim. With no claim, the start is the first record of
 /// the session of the lane's newest `skill.loaded` record.
 fn task_start(history: &SkillHistory, identity: &str, since: Option<i64>) -> u64 {
-    let own_claims = history
+    let own_claims: Vec<&(String, u64, i64)> = history
         .claims
         .iter()
-        .filter(|(actor, ..)| actor == identity);
+        .filter(|(actor, ..)| actor == identity)
+        .collect();
+    let newest = own_claims.iter().map(|(_, sequence, _)| *sequence).max();
     let claim = match since {
+        // Every claim older than the work: the newest is the nearest one before it.
         Some(since) => own_claims
+            .iter()
             .filter(|(_, _, at)| *at >= since)
             .map(|(_, sequence, _)| *sequence)
-            .min(),
-        None => own_claims.map(|(_, sequence, _)| *sequence).max(),
+            .min()
+            .or(newest),
+        None => newest,
     };
     let made: Vec<&SkillRecord> = history
         .records
         .iter()
         .filter(|record| record.made_by(identity))
         .collect();
-    let newest = made
+    let last_before = made
         .iter()
         .filter(|record| claim.is_none_or(|claim| record.sequence < claim))
         .max_by_key(|record| record.sequence);
-    let session_start = newest.and_then(|newest| {
-        newest.session.as_ref()?;
+    let session_start = last_before.and_then(|last| {
+        last.session.as_ref()?;
         made.iter()
-            .filter(|record| record.session == newest.session)
+            .filter(|record| record.session == last.session)
             .map(|record| record.sequence)
             .min()
     });
@@ -719,8 +724,7 @@ fn task_start(history: &SkillHistory, identity: &str, since: Option<i64>) -> u64
 
 /// `keel.card.skill_not_loaded`: a declared skill the identity line's lane did not load for this
 /// task. A record counts when the identity line's `ref` equals its actor, session or agent and it
-/// is at or after `task_start`, which includes skills loaded just before the task's claim and
-/// excludes nothing a later claim of the same lane did. A declared name matches a record's name when they are equal, or
+/// is at or after `task_start`. A declared name matches a record's name when they are equal, or
 /// when the declared name has no namespace and equals the record name's last segment (`keel` is
 /// `keel:keel`). With no ref, or a ref no event of the execution carries, one
 /// `keel.card.identity_ref_unknown` finding is returned and no per-skill finding, since the skills

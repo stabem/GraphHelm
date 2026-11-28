@@ -2,7 +2,8 @@
 
 Runs on the host's Stop event. It looks at the branch's change against its merge base with the
 default branch. A change in the "summary only" row of the Keel table (docs, or a few changed
-lines) passes. Anything larger needs a card at `.graphhelm/keel-card.json`
+lines) passes. Anything larger needs a card at `.graphhelm/cards/issue-<N>.json` on an issue-<N> branch,
+else `.graphhelm/keel-card.json`
 (`schemas/keel-card.schema.json`), and when the `graphhelm` CLI is on PATH the card must pass
 `graphhelm keel check`. The hook blocks once; when the host reports `stop_hook_active` it lets
 the turn end, so an agent can never loop on it. Any failure of the hook itself lets the turn end.
@@ -119,6 +120,16 @@ def card_path(repo: Path, base: str | None = None, others: str | None = None) ->
     if (repo / CARD).is_file() or not dirs or (branch and not match):
         return CARD  # a plain feature branch keeps the legacy card, with no extra git call
     return _changed_card(repo, match.group(1) if match else None, base, others) or CARD
+
+
+def card_to_write(repo: Path, rel: Path) -> Path:
+    """#3029: the card a "no card" message names. On an issue-<N> branch with no legacy card, the
+    per-issue card, never the shared keel-card.json that every branch would then rewrite."""
+    if rel != CARD or (repo / CARD).is_file():
+        return rel
+    dirs = git_dirs(repo)
+    match = ISSUE_BRANCH.match((read_branch(dirs) if dirs else None) or "")
+    return Path(".graphhelm") / "cards" / f"issue-{match.group(1)}.json" if match else rel
 
 
 def _changed_card(repo: Path, issue: str | None, base: str | None, others: str | None) -> Path | None:
@@ -367,7 +378,7 @@ def decide(repo: Path, payload: dict | None = None) -> str | None:
     card = repo / rel
     if not card.is_file():
         return (f"Keel: this branch changes code past the summary-only row, and there is no card at "
-                f"{rel.as_posix()} in {repo.as_posix()}. Write the card (promise, scopePaths, proof; shape in "
+                f"{card_to_write(repo, rel).as_posix()} in {repo.as_posix()}. Write the card (promise, scopePaths, proof; shape in "
                 f"docs/keel/KEEL_CHECK.md), run its proof, then finish.")
     cli = shutil.which("graphhelm")
     if cli is None:

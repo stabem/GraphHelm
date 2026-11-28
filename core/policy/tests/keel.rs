@@ -1050,12 +1050,13 @@ fn a_matching_head_does_not_adopt_a_claim_of_another_issue() {
     let history = history_of(
         &[
             ("author", "keel:keel", 310),
-            ("author", "keel:keel-exec", 311),
+            ("author", "keel:keel-exec", 315),
         ],
         &[("author", 5, Some(2389))],
         &[
-            ("author", 320, "11111111"),
-            ("author", 330, "22222222"),
+            ("author", 312, "11111111"),
+            ("author", 320, "22222222"),
+            ("author", 330, "33333333"),
             ("author", 340, "0123abcd"),
         ],
     );

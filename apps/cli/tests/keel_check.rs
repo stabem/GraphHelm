@@ -2027,6 +2027,22 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
         ],
     );
     assert_eq!(codes(&reply).len(), 2, "{reply}");
+    // Shape A: an old claim for another issue, loads made later in one session, other pull
+    // requests opened between and after them, then the pull request of this head, whose body
+    // closes an issue the lane never claimed. The head match must not adopt the old claim.
+    let reply = run_skills(
+        "author",
+        "keel, keel-exec",
+        &[
+            StubEvent::claimed("author", 9),
+            StubEvent::skill("author", "s3", "keel:keel"),
+            StubEvent::pr_opened("author", "11111111"),
+            StubEvent::skill("author", "s3", "keel:keel-exec"),
+            StubEvent::pr_opened("author", "22222222"),
+            StubEvent::pr_opened("author", "{head}"),
+        ],
+    );
+    assert_eq!(codes(&reply).len(), 2, "{reply}");
     // Loaded only by another lane of the same execution.
     let reply = run_stream(
         "author",

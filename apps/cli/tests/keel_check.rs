@@ -1646,8 +1646,8 @@ fn runtime_with_events(names: &[&str], other_events: usize) -> String {
         .iter()
         .map(|name| StubEvent::skill("2ba4e9", "s1", name))
         .collect();
-    stream.extend((0..other_events).map(|_| StubEvent::other("someone-else", "task.claimed")));
-    runtime_with_stream(&stream)
+    stream.extend((0..other_events).map(|_| StubEvent::other("someone-else", "task.heartbeat")));
+    runtime_with_stream(&stream, "")
 }
 
 /// One event of the stub Runtime's stream: who wrote it, its kind and, for `skill.loaded`, the
@@ -1658,6 +1658,9 @@ struct StubEvent {
     skill: Option<(String, String)>,
     /// Recorded long before any test repository's commits.
     old: bool,
+    /// For `task.claimed` and `task.pr_opened`: the JSON the task recorder writes as description;
+    /// `{head}` stands for the head of the repository under check.
+    doc: Option<String>,
 }
 
 impl StubEvent {
@@ -1667,13 +1670,36 @@ impl StubEvent {
             kind: "skill.loaded".into(),
             skill: Some((session.into(), name.into())),
             old: false,
+            doc: None,
         }
     }
 
-    /// The same event, recorded years before the work under check began.
+    /// The same event, recorded years before the branch's base commit.
     fn old(mut self) -> Self {
         self.old = true;
         self
+    }
+
+    fn claimed(actor: &str, issue: u64) -> Self {
+        Self {
+            actor: actor.into(),
+            kind: "task.claimed".into(),
+            skill: None,
+            old: false,
+            doc: Some(format!(
+                "{{\"issue\":{issue},\"branch\":\"issue-{issue}-x\"}}"
+            )),
+        }
+    }
+
+    fn pr_opened(actor: &str, head_sha: &str) -> Self {
+        Self {
+            actor: actor.into(),
+            kind: "task.pr_opened".into(),
+            skill: None,
+            old: false,
+            doc: Some(format!("{{\"pr\":1,\"headSha\":\"{head_sha}\"}}")),
+        }
     }
 
     fn other(actor: &str, kind: &str) -> Self {
@@ -1682,13 +1708,14 @@ impl StubEvent {
             kind: kind.into(),
             skill: None,
             old: false,
+            doc: None,
         }
     }
 }
 
 /// Serves `stream` the way the Runtime's events route replies (sequences from 1, actor on each
 /// event) and the evidence of its `skill.loaded` records, on a loopback port.
-fn runtime_with_stream(stream: &[StubEvent]) -> String {
+fn runtime_with_stream(stream: &[StubEvent], head_sha: &str) -> String {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -1715,12 +1742,20 @@ fn runtime_with_stream(stream: &[StubEvent]) -> String {
         .iter()
         .enumerate()
         .rev()
-        .filter_map(|(index, event)| event.skill.as_ref().map(|skill| (index, skill)))
-        .map(|(index, (session, name))| {
-            let content = serde_json::json!({
-                "description": format!("Skill loaded: {name}"),
-                "evidence": [format!("skill: {name}"), format!("session: {session}")],
-            });
+        .filter(|(_, event)| {
+            event.skill.is_some()
+                || matches!(event.kind.as_str(), "task.claimed" | "task.pr_opened")
+        })
+        .map(|(index, event)| {
+            let content = match &event.skill {
+                Some((session, name)) => serde_json::json!({
+                    "description": format!("Skill loaded: {name}"),
+                    "evidence": [format!("skill: {name}"), format!("session: {session}")],
+                }),
+                None => serde_json::json!({
+                    "description": event.doc.clone().unwrap_or_else(|| "{}".into()).replace("{head}", head_sha),
+                }),
+            };
             serde_json::json!({"status": "available", "evidenceId": format!("signal-{index}"), "content": content.to_string()})
         })
         .collect();
@@ -1911,16 +1946,25 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
     let scratch = tempfile::tempdir().unwrap();
     let token = scratch.path().join("agent.token");
     fs::write(&token, "a".repeat(64)).unwrap();
-    let run_stream = |reference: &str, stream: &[StubEvent]| {
+    let head_sha = {
+        let head = graphhelm_process::command("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8(head.stdout).unwrap().trim().to_owned()
+    };
+    let run_skills = |reference: &str, skills: &str, stream: &[StubEvent]| {
         let body = scratch.path().join("pr-body.md");
         fs::write(
             &body,
             format!(
-                "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nSession: Author [{reference}] \u{b7} Head: 0123abcd\nSkills: keel\n"
+                "Promise: x\nScope: `src/lib.rs`\nProof: `cargo test`\nCloses #7\nSession: Author [{reference}] \u{b7} Head: 0123abcd\nSkills: {skills}\n"
             ),
         )
         .unwrap();
-        let url = runtime_with_stream(stream);
+        let url = runtime_with_stream(stream, &head_sha);
         let output = Command::cargo_bin("graphhelm")
             .unwrap()
             .args([
@@ -1941,6 +1985,48 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
             .unwrap();
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
+    let run_stream = |reference: &str, stream: &[StubEvent]| run_skills(reference, "keel", stream);
+    // Contract (#3039), shape B measured on a real execution: the lane loaded its skills, claimed,
+    // opened the pull request, and later claimed another task in a new session. The branch's base
+    // commit is newer than the first claim and the loads, so nothing may be bounded by commit
+    // time. Regression: the base time dropped the loads and the claim that belong to the task.
+    let reply = run_skills(
+        "author",
+        "keel, keel-exec",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel").old(),
+            StubEvent::skill("author", "s1", "keel:keel-exec").old(),
+            StubEvent::claimed("author", 7).old(),
+            StubEvent::pr_opened("author", "{head}").old(),
+            StubEvent::skill("author", "s2", "keel:keel"),
+            StubEvent::claimed("author", 8),
+        ],
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // Shape C: one skill loaded long before the others, one session, the base commit between them.
+    let reply = run_skills(
+        "author",
+        "keel, keel-exec, graphhelm-work",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel").old(),
+            StubEvent::skill("author", "s1", "keel:keel-exec"),
+            StubEvent::skill("author", "s1", "graphhelm:graphhelm-work"),
+            StubEvent::claimed("author", 7),
+        ],
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // A lane with no record for the task still gets one finding per skill: it claimed and loaded
+    // for another issue only.
+    let reply = run_skills(
+        "author",
+        "keel, keel-exec",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel"),
+            StubEvent::skill("author", "s1", "keel:keel-exec"),
+            StubEvent::claimed("author", 9),
+        ],
+    );
+    assert_eq!(codes(&reply).len(), 2, "{reply}");
     // Loaded only by another lane of the same execution.
     let reply = run_stream(
         "author",
@@ -1955,19 +2041,7 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
         "author",
         &[
             StubEvent::skill("author", "s1", "keel:keel"),
-            StubEvent::other("author", "task.claimed"),
-        ],
-    );
-    assert!(codes(&reply).is_empty(), "{reply}");
-    // The lane claimed another task afterwards, in a new session: this task's load still counts.
-    let reply = run_stream(
-        "author",
-        &[
-            StubEvent::skill("author", "s1", "keel:keel"),
-            StubEvent::other("author", "task.claimed"),
-            StubEvent::other("author", "pr_opened"),
-            StubEvent::skill("author", "s2", "keel:keel-exec"),
-            StubEvent::other("author", "task.claimed"),
+            StubEvent::claimed("author", 7),
         ],
     );
     assert!(codes(&reply).is_empty(), "{reply}");
@@ -1975,23 +2049,18 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
     let reply = run_stream(
         "author",
         &[
-            StubEvent::other("author", "task.claimed"),
+            StubEvent::claimed("author", 7),
             StubEvent::skill("author", "s2", "keel:keel"),
         ],
     );
     assert!(codes(&reply).is_empty(), "{reply}");
-    // Only records from before this work began, with no claim for it: the measured case.
-    let reply = run_stream(
-        "author",
-        &[StubEvent::skill("author", "s1", "keel:keel").old()],
-    );
-    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
-    // The same with an older claim before them.
+    // Only records of an older task: its claim names another issue and its pull request another head.
     let reply = run_stream(
         "author",
         &[
-            StubEvent::other("author", "task.claimed").old(),
-            StubEvent::skill("author", "s1", "keel:keel").old(),
+            StubEvent::skill("author", "s1", "keel:keel"),
+            StubEvent::claimed("author", 5),
+            StubEvent::pr_opened("author", "00000000"),
         ],
     );
     assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");

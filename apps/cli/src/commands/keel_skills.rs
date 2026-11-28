@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use graphhelm_policy::keel::{SkillHistory, SkillRecord};
+use graphhelm_policy::keel::{PrOpened, SkillHistory, SkillRecord, TaskClaim};
 use zeroize::Zeroizing;
 
 use super::mcp::client::{ApiClient, TokenSource, is_loopback_url};
@@ -106,8 +106,8 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
         }
     };
     let events_path = segment_path(&["v1", "executions", execution, "events"]);
-    // (evidence id, actor, sequence) of each `skill.loaded` event, in order.
-    let mut pending: Vec<(String, String, u64, i64)> = Vec::new();
+    // The evidence of each `skill.loaded`, `task.claimed` and `task.pr_opened` event, in order.
+    let mut pending: Vec<Pending> = Vec::new();
     let mut history = SkillHistory::default();
     let mut after = 0_u64;
     for _ in 0..MAX_PAGES {
@@ -122,31 +122,31 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
         }
         for event in events {
             let sequence = event["sequence"].as_u64()?;
-            let recorded_at = chrono::DateTime::parse_from_rfc3339(event["occurredAt"].as_str()?)
-                .ok()?
-                .timestamp();
             // An event whose writer cannot be named leaves the history incomplete.
             let actor = event["actor"]["id"].as_str()?;
             history.actors.insert(actor.to_owned());
             if event["kind"]["type"] == "signal_recorded" {
-                match event["kind"]["data"]["kind"].as_str() {
-                    Some("skill.loaded") => {
-                        // A record whose content cannot be named leaves the list incomplete.
-                        let id = event["evidenceRefs"][0]["evidenceId"].as_str()?;
-                        pending.push((id.to_owned(), actor.to_owned(), sequence, recorded_at));
-                    }
-                    Some("task.claimed") => {
-                        history
-                            .claims
-                            .push((actor.to_owned(), sequence, recorded_at));
-                    }
-                    _ => {}
+                let kind = match event["kind"]["data"]["kind"].as_str() {
+                    Some("skill.loaded") => Some(Kind::Skill),
+                    Some("task.claimed") => Some(Kind::Claim),
+                    Some("task.pr_opened") => Some(Kind::PrOpened),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    // A record whose content cannot be named leaves the history incomplete.
+                    let id = event["evidenceRefs"][0]["evidenceId"].as_str()?;
+                    pending.push(Pending {
+                        id: id.to_owned(),
+                        actor: actor.to_owned(),
+                        sequence,
+                        kind,
+                    });
                 }
             }
             after = after.max(sequence);
         }
         if after >= head {
-            history.records = read_records_content(&get, execution, &pending)?;
+            read_records_content(&get, execution, &pending, &mut history)?;
             return Some(history);
         }
         if events.is_empty() {
@@ -156,15 +156,29 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
     None
 }
 
+enum Kind {
+    Skill,
+    Claim,
+    PrOpened,
+}
+
+struct Pending {
+    id: String,
+    actor: String,
+    sequence: u64,
+    kind: Kind,
+}
+
+/// Fills `history` from the evidence of each pending event; `None` unless all of it was read.
 fn read_records_content(
     get: &dyn Fn(&str) -> Option<serde_json::Value>,
     execution: &str,
-    pending: &[(String, String, u64, i64)],
-) -> Option<Vec<SkillRecord>> {
+    pending: &[Pending],
+    history: &mut SkillHistory,
+) -> Option<()> {
     let evidence_path = segment_path(&["v1", "executions", execution, "evidence"]);
-    let mut records = Vec::new();
     for batch in pending.chunks(EVIDENCE_BATCH) {
-        let ids: Vec<&str> = batch.iter().map(|(id, ..)| id.as_str()).collect();
+        let ids: Vec<&str> = batch.iter().map(|item| item.id.as_str()).collect();
         let ids = serde_json::to_string(&ids).ok()?;
         let reply = get(&format!("{evidence_path}?ids={}", query_value(&ids)))?;
         let results = reply["results"].as_array()?;
@@ -177,11 +191,40 @@ fn read_records_content(
             }
             // Each result is matched to its event by the evidence id it carries, never by
             // position; a result for an id that was not asked for leaves the list incomplete.
-            let (_, actor, sequence, recorded_at) = batch
+            let event = batch
                 .iter()
-                .find(|(id, ..)| item["evidenceId"].as_str() == Some(id.as_str()))?;
-            // A record that does not carry the hook's `Skill loaded: <name>` text names no skill.
+                .find(|event| item["evidenceId"].as_str() == Some(event.id.as_str()))?;
             let signal: serde_json::Value = serde_json::from_str(item["content"].as_str()?).ok()?;
+            // A task record's description is the JSON the task recorder wrote; fields it lacks
+            // stay unnamed, and the check then falls back to the lane's newest claim.
+            let task_doc = || -> serde_json::Value {
+                signal["description"]
+                    .as_str()
+                    .and_then(|text| serde_json::from_str(text).ok())
+                    .unwrap_or_default()
+            };
+            match event.kind {
+                Kind::Claim => {
+                    history.claims.push(TaskClaim {
+                        actor: event.actor.clone(),
+                        sequence: event.sequence,
+                        issue: task_doc()["issue"].as_u64(),
+                    });
+                    continue;
+                }
+                Kind::PrOpened => {
+                    if let Some(head_sha) = task_doc()["headSha"].as_str() {
+                        history.pr_opens.push(PrOpened {
+                            actor: event.actor.clone(),
+                            sequence: event.sequence,
+                            head_sha: head_sha.to_owned(),
+                        });
+                    }
+                    continue;
+                }
+                Kind::Skill => {}
+            }
+            // A record that does not carry the hook's `Skill loaded: <name>` text names no skill.
             let Some(name) = signal["description"]
                 .as_str()
                 .and_then(|text| text.strip_prefix("Skill loaded: "))
@@ -197,15 +240,14 @@ fn read_records_content(
                     .find_map(|text| text.strip_prefix(key))
                     .map(|value| value.trim().to_owned())
             };
-            records.push(SkillRecord {
+            history.records.push(SkillRecord {
                 name: name.trim().to_owned(),
-                actor: actor.clone(),
+                actor: event.actor.clone(),
                 session: line("session: "),
                 agent: line("agent: "),
-                sequence: *sequence,
-                recorded_at: *recorded_at,
+                sequence: event.sequence,
             });
         }
     }
-    Some(records)
+    Some(())
 }

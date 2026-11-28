@@ -1192,7 +1192,7 @@
           "id": "schema/keel-card",
           "kind": "schema",
           "path": "schemas/keel-card.schema.json",
-          "sha256": "sha256:158ce06ebfd4cf876686c7e62905fb4a26a085bc3a1c702a58a2e35b818cbcd9",
+          "sha256": "sha256:c34b51f96d9a1c6b12591e7a0af41174770e8505ac7d2ec2edbfb89183018943",
           "effects": [],
           "permissions": [],
           "requires": {

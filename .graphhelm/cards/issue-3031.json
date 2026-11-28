@@ -1,0 +1,14 @@
+{
+  "promise": "A card with the PreTool hook's testFirst:false + testFirstReason waiver passes graphhelm keel check's schema (no GHS002_SCHEMA).",
+  "scopePaths": [
+    "extensions/builtin/graphhelm-development-contracts/schemas/keel-card.schema.json",
+    "core/policy/src/keel.rs",
+    "core/policy/tests/keel.rs",
+    "tools/pathogens/src/keel_scope.rs",
+    "apps/cli/tests/keel_check.rs",
+    ".graphhelm/cards/issue-3031.json",
+    "extensions/builtin/graphhelm-development-contracts/extension.json",
+    "core/protocols/tests/fixtures/canonical-goldens/graphhelm-development-contracts.json"
+  ],
+  "proof": "cargo +1.97.1 test --locked -p graphhelm-cli --test cli -- keel_check::"
+}

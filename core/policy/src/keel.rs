@@ -737,7 +737,9 @@ fn sha_names(recorded: &str, head: &str) -> bool {
 }
 
 /// Where "this task" starts for an identity, as an execution sequence. The claim that opened the
-/// task is the newest claim of the lane before the `task.pr_opened` that names the range head; else
+/// task is the newest claim of the lane before the `task.pr_opened` that names the range head,
+/// among the claims that name an issue the body closes (or no issue; every claim when the body
+/// closes none); other pull requests the lane opened in between do not end the task; else
 /// the lane's earliest claim of an issue the body closes; else, when the lane's claims name issues
 /// and none is this one, nothing starts (no load counts); else its newest claim. Later claims
 /// belong to later tasks and never move the start. A lane loads its skills just before it claims,
@@ -759,9 +761,15 @@ fn task_start(history: &SkillHistory, identity: &str, task: TaskRef<'_>) -> u64 
             .map(|open| open.sequence)
             .max()
     });
+    // A claim that names an issue the body does not close is another task's claim, even when it
+    // is the newest one before the matching `task.pr_opened`.
     let by_pr = opened.and_then(|opened| {
         own_claims
             .iter()
+            .filter(|claim| {
+                task.issues.is_empty()
+                    || claim.issue.is_none_or(|issue| task.issues.contains(&issue))
+            })
             .map(|claim| claim.sequence)
             .filter(|sequence| *sequence < opened)
             .max()
@@ -777,7 +785,7 @@ fn task_start(history: &SkillHistory, identity: &str, task: TaskRef<'_>) -> u64 
         .min();
     // Claims that name an issue, none of them this task's: the lane did not claim it here.
     let claimed_elsewhere = !task.issues.is_empty()
-        && opened.is_none()
+        && by_pr.is_none()
         && by_issue.is_none()
         && own_claims.iter().any(|claim| claim.issue.is_some());
     if claimed_elsewhere {

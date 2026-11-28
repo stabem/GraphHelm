@@ -1039,6 +1039,40 @@ fn a_lane_with_only_another_tasks_records_is_flagged() {
     assert!(check_skills_loaded(&declared, &history, Some("author"), own).is_empty());
 }
 
+/// Contract (#3039): a pull request opened by the lane does not make the lane's newest earlier
+/// claim this task's claim when that claim names another issue. Regression (measured shape A): the
+/// head sha match took an old claim of another issue, so loads made days later for other work
+/// counted and the finding went away.
+#[test]
+fn a_matching_head_does_not_adopt_a_claim_of_another_issue() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 310),
+            ("author", "keel:keel-exec", 311),
+        ],
+        &[("author", 5, Some(2389))],
+        &[
+            ("author", 320, "11111111"),
+            ("author", 330, "22222222"),
+            ("author", 340, "0123abcd"),
+        ],
+    );
+    let task = TaskRef {
+        head: Some("0123abcd99999999999999999999999999999999"),
+        issues: &[2557],
+    };
+    let findings = check_skills_loaded(&declared, &history, Some("author"), task);
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    // The body closes the issue the lane claimed: the claim is this task's, and the loads count.
+    let own = TaskRef {
+        head: task.head,
+        issues: &[2389],
+    };
+    assert!(check_skills_loaded(&declared, &history, Some("author"), own).is_empty());
+}
+
 /// A body's closing keywords name the issues; other numbers do not.
 #[test]
 fn closing_issues_reads_the_closing_keywords_only() {

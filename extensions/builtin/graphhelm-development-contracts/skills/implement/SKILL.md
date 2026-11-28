@@ -30,7 +30,8 @@ load it first. This skill adds what to do around them.
 
 - Reads the task's `keel.plan` record (or the card in the PR body): paths, promise, proof, skills.
 - Records the Keel card as a `keel.card` signal (shape: `docs/keel/RECORDS.md`) when working in a
-  GraphHelm execution; outside one, `.graphhelm/keel-card.json`.
+  GraphHelm execution; outside one, `.graphhelm/cards/issue-<N>.json` (the issue of your
+  `issue-<N>-...` branch; never the shared `.graphhelm/keel-card.json`).
 - Records the task steps it owns, one command each, signed as your own lane (from a GraphHelm
   checkout; `docs/process/DELIVERY.md` "Task records" has the token and the defaults):
   - on taking the issue: `python tools/task-record/task_record.py --lane <you> claimed --issue <N> --branch <branch>`
@@ -48,7 +49,8 @@ load it first. This skill adds what to do around them.
 ## Method
 
 **Before the first code edit, write the card.** Outside an execution, create
-`.graphhelm/keel-card.json` with the Write tool (not a shell command), with the three required
+`.graphhelm/cards/issue-<N>.json` (N = your branch's issue; the hooks read it first, #1548) with
+the Write tool (not a shell command), with the three required
 fields: `{"promise": "<one sentence>", "scopePaths": ["<file or dir>"], "proof": "<command>"}`
 (full shape: `docs/keel/KEEL_CHECK.md`). Edit code with Edit or Write, not shell scripts: the Keel
 edit gate sees only those.

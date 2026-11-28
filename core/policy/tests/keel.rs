@@ -854,6 +854,7 @@ fn a_declared_skill_without_a_loaded_record_warns_with_its_name_in_the_path() {
 fn history_of(
     records: &[(&str, &str, u64)],
     claims: &[(&str, u64)],
+    // A claim is recorded at the time of its sequence, like the records.
 ) -> graphhelm_policy::keel::SkillHistory {
     use graphhelm_policy::keel::{SkillHistory, SkillRecord};
     SkillHistory {
@@ -868,7 +869,10 @@ fn history_of(
                 recorded_at: i64::try_from(*sequence).unwrap(),
             })
             .collect(),
-        claims: claims.iter().map(|(a, s)| ((*a).into(), *s)).collect(),
+        claims: claims
+            .iter()
+            .map(|(a, s)| ((*a).into(), *s, i64::try_from(*s).unwrap()))
+            .collect(),
         actors: records
             .iter()
             .map(|r| r.0)
@@ -897,16 +901,16 @@ fn a_declared_skill_counts_only_when_the_named_lane_loaded_it_during_this_task()
     let findings = check_skills_loaded(&declared, &other_lane, Some("author"), None);
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel-exec"));
-    // The same lane loaded them, but before its newest claim (an older task).
+    // Loaded before the work began, with an older claim: an older task.
     let older = history_of(
         &[
             ("author", "keel:keel", 10),
             ("author", "keel:keel-exec", 11),
         ],
-        &[("author", 50)],
+        &[("author", 5)],
     );
     assert_eq!(
-        check_skills_loaded(&declared, &older, Some("author"), None).len(),
+        check_skills_loaded(&declared, &older, Some("author"), Some(40)).len(),
         2
     );
     // Loaded after the claim: no finding.
@@ -927,6 +931,40 @@ fn a_declared_skill_counts_only_when_the_named_lane_loaded_it_during_this_task()
         &[("reviewer", 50)],
     );
     assert!(check_skills_loaded(&declared, &foreign_claim, Some("author"), None).is_empty());
+}
+
+/// Contract (#3039): skills a lane loads in one session just before it claims the task count for
+/// that task. Regression: the start was the claim itself, so every one of them was reported.
+#[test]
+fn skills_loaded_just_before_the_claim_count_for_the_task() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 11),
+        ],
+        &[("author", 50)],
+    );
+    assert!(check_skills_loaded(&declared, &history, Some("author"), None).is_empty());
+    assert!(check_skills_loaded(&declared, &history, Some("author"), Some(5)).is_empty());
+}
+
+/// Contract (#3039): a later claim of the same lane belongs to a later task and does not take this
+/// task's loads away. Regression: the newest claim of the lane was the start.
+#[test]
+fn a_later_claim_of_the_same_lane_does_not_hide_this_tasks_loads() {
+    use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 11),
+            ("author", "keel:keel", 210),
+        ],
+        &[("author", 50), ("author", 300)],
+    );
+    assert!(check_skills_loaded(&declared, &history, Some("author"), Some(5)).is_empty());
 }
 
 /// Contract (#3037): a lane whose only records are older than the pull request's work is told the

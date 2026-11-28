@@ -644,11 +644,12 @@ pub struct SkillRecord {
 }
 
 /// What an execution holds that the skills check reads: every `skill.loaded` record, every
-/// `task.claimed` record as (actor, sequence), and every actor id that wrote any event.
+/// `task.claimed` record as (actor, sequence, recorded-at seconds), and every actor id that wrote
+/// any event.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SkillHistory {
     pub records: Vec<SkillRecord>,
-    pub claims: Vec<(String, u64)>,
+    pub claims: Vec<(String, u64, i64)>,
     pub actors: BTreeSet<String>,
 }
 
@@ -675,37 +676,51 @@ pub fn identity_ref(body: &str) -> Option<String> {
     (!found.is_empty()).then(|| found.to_owned())
 }
 
-/// Where "this task" starts for an identity, as an execution sequence: its newest `task.claimed`
-/// record; with none, the first record of the session of its newest `skill.loaded` record. A task
-/// with no claim record still has a start, and a rebase of the branch does not move it.
-fn task_start(history: &SkillHistory, identity: &str) -> u64 {
-    if let Some(claim) = history
+/// Where "this task" starts for an identity, as an execution sequence. The claim that opened the
+/// task is the lane's earliest `task.claimed` made since the work began (`since`), or its newest
+/// when `since` is unknown; later claims belong to later tasks and never move the start. A lane
+/// loads its skills just before it claims, so the start reaches back to the first record of the
+/// session of the newest record before that claim. With no claim, the start is the first record of
+/// the session of the lane's newest `skill.loaded` record.
+fn task_start(history: &SkillHistory, identity: &str, since: Option<i64>) -> u64 {
+    let own_claims = history
         .claims
         .iter()
-        .filter(|(actor, _)| actor == identity)
-        .map(|(_, sequence)| *sequence)
-        .max()
-    {
-        return claim;
-    }
+        .filter(|(actor, ..)| actor == identity);
+    let claim = match since {
+        Some(since) => own_claims
+            .filter(|(_, _, at)| *at >= since)
+            .map(|(_, sequence, _)| *sequence)
+            .min(),
+        None => own_claims.map(|(_, sequence, _)| *sequence).max(),
+    };
     let made: Vec<&SkillRecord> = history
         .records
         .iter()
         .filter(|record| record.made_by(identity))
         .collect();
-    let Some(newest) = made.iter().max_by_key(|record| record.sequence) else {
-        return 0;
-    };
-    made.iter()
-        .filter(|record| record.session == newest.session)
-        .map(|record| record.sequence)
-        .min()
-        .unwrap_or(0)
+    let newest = made
+        .iter()
+        .filter(|record| claim.is_none_or(|claim| record.sequence < claim))
+        .max_by_key(|record| record.sequence);
+    let session_start = newest.and_then(|newest| {
+        newest.session.as_ref()?;
+        made.iter()
+            .filter(|record| record.session == newest.session)
+            .map(|record| record.sequence)
+            .min()
+    });
+    match (claim, session_start) {
+        (Some(claim), Some(start)) => claim.min(start),
+        (Some(claim), None) => claim,
+        (None, start) => start.unwrap_or(0),
+    }
 }
 
 /// `keel.card.skill_not_loaded`: a declared skill the identity line's lane did not load for this
 /// task. A record counts when the identity line's `ref` equals its actor, session or agent and it
-/// is at or after `task_start`. A declared name matches a record's name when they are equal, or
+/// is at or after `task_start`, which includes skills loaded just before the task's claim and
+/// excludes nothing a later claim of the same lane did. A declared name matches a record's name when they are equal, or
 /// when the declared name has no namespace and equals the record name's last segment (`keel` is
 /// `keel:keel`). With no ref, or a ref no event of the execution carries, one
 /// `keel.card.identity_ref_unknown` finding is returned and no per-skill finding, since the skills
@@ -735,7 +750,7 @@ pub fn check_skills_loaded(
                 .into(),
         }];
     };
-    let start = task_start(history, identity);
+    let start = task_start(history, identity, since);
     let loaded: Vec<&str> = history
         .records
         .iter()

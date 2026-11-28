@@ -135,7 +135,11 @@ fn read_records(client: &ApiClient, execution: &str) -> Option<SkillHistory> {
                         let id = event["evidenceRefs"][0]["evidenceId"].as_str()?;
                         pending.push((id.to_owned(), actor.to_owned(), sequence, recorded_at));
                     }
-                    Some("task.claimed") => history.claims.push((actor.to_owned(), sequence)),
+                    Some("task.claimed") => {
+                        history
+                            .claims
+                            .push((actor.to_owned(), sequence, recorded_at));
+                    }
                     _ => {}
                 }
             }

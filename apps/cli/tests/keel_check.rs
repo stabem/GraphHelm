@@ -1950,16 +1950,27 @@ fn a_declared_skill_must_be_loaded_by_the_named_lane_during_this_task() {
         ],
     );
     assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
-    // Loaded by the same lane only before its newest claim: an older task.
+    // Loaded by the same lane just before its claim: the task's own load.
     let reply = run_stream(
         "author",
         &[
             StubEvent::skill("author", "s1", "keel:keel"),
             StubEvent::other("author", "task.claimed"),
-            StubEvent::skill("reviewer", "s9", "keel:keel"),
         ],
     );
-    assert_eq!(codes(&reply), vec!["keel.card.skill_not_loaded"], "{reply}");
+    assert!(codes(&reply).is_empty(), "{reply}");
+    // The lane claimed another task afterwards, in a new session: this task's load still counts.
+    let reply = run_stream(
+        "author",
+        &[
+            StubEvent::skill("author", "s1", "keel:keel"),
+            StubEvent::other("author", "task.claimed"),
+            StubEvent::other("author", "pr_opened"),
+            StubEvent::skill("author", "s2", "keel:keel-exec"),
+            StubEvent::other("author", "task.claimed"),
+        ],
+    );
+    assert!(codes(&reply).is_empty(), "{reply}");
     // Loaded by the same lane after its claim.
     let reply = run_stream(
         "author",

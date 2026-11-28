@@ -1,0 +1,14 @@
+{
+  "promise": "keel check counts a declared skill as loaded when the lane the identity line names loaded it for this task: loads just before the task's claim count, and a later claim of the same lane does not move the task's start; other lanes' loads, older tasks' loads, no binding and no skill.loaded record behave as in #3037.",
+  "scopePaths": [
+    "core/policy/src/keel.rs",
+    "core/policy/tests/keel.rs",
+    "apps/cli/src/commands/keel_skills.rs",
+    "apps/cli/tests/keel_check.rs",
+    "docs/keel/KEEL_CHECK.md",
+    ".graphhelm/cards/issue-3039.json"
+  ],
+  "proof": "cargo +1.97.1 test --locked -p graphhelm-policy --test keel and -p graphhelm-cli --test cli keel_check; the two new policy tests red when the start is the claim itself or the newest claim; fmt, clippy on both crates, workspace source guard",
+  "exportedSymbols": [],
+  "journeys": []
+}

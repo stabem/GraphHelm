@@ -630,17 +630,127 @@ pub fn declared_skills(body: &str) -> Vec<String> {
     names
 }
 
-/// `keel.card.skill_not_loaded`: a declared skill the Runtime holds no `skill.loaded` record for.
-/// A declared name matches a loaded one when they are equal, or when the declared name has no
-/// namespace and equals the loaded name's last segment (`keel` is `keel:keel`). Pure: the declared
-/// and loaded sets are the only inputs; the records are read by the caller.
+/// One `skill.loaded` record: the skill, who recorded it and where in the execution's order.
+/// `session` and `agent` come from the record's evidence lines; either may be absent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillRecord {
+    pub name: String,
+    pub actor: String,
+    pub session: Option<String>,
+    pub agent: Option<String>,
+    pub sequence: u64,
+    /// When the Runtime recorded it, in seconds since the Unix epoch.
+    pub recorded_at: i64,
+}
+
+/// What an execution holds that the skills check reads: every `skill.loaded` record, every
+/// `task.claimed` record as (actor, sequence), and every actor id that wrote any event.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SkillHistory {
+    pub records: Vec<SkillRecord>,
+    pub claims: Vec<(String, u64)>,
+    pub actors: BTreeSet<String>,
+}
+
+impl SkillRecord {
+    fn made_by(&self, identity: &str) -> bool {
+        self.actor == identity
+            || self.session.as_deref() == Some(identity)
+            || self.agent.as_deref() == Some(identity)
+    }
+}
+
+/// The ref of the first filled identity line: the last `[...]` before `Head:`, so a session name
+/// that holds parentheses or brackets of its own does not hide it. `None` when the line has none.
 #[must_use]
-pub fn check_skills_loaded(declared: &[String], loaded: &BTreeSet<String>) -> Vec<Finding> {
+pub fn identity_ref(body: &str) -> Option<String> {
+    let line = body
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .find(|line| identity_line_is_filled(line))?;
+    let before_head = line.split_once("Head:")?.0;
+    let close = before_head.rfind(']')?;
+    let open = before_head[..close].rfind('[')?;
+    let found = before_head[open + 1..close].trim();
+    (!found.is_empty()).then(|| found.to_owned())
+}
+
+/// Where "this task" starts for an identity, as an execution sequence: its newest `task.claimed`
+/// record; with none, the first record of the session of its newest `skill.loaded` record. A task
+/// with no claim record still has a start, and a rebase of the branch does not move it.
+fn task_start(history: &SkillHistory, identity: &str) -> u64 {
+    if let Some(claim) = history
+        .claims
+        .iter()
+        .filter(|(actor, _)| actor == identity)
+        .map(|(_, sequence)| *sequence)
+        .max()
+    {
+        return claim;
+    }
+    let made: Vec<&SkillRecord> = history
+        .records
+        .iter()
+        .filter(|record| record.made_by(identity))
+        .collect();
+    let Some(newest) = made.iter().max_by_key(|record| record.sequence) else {
+        return 0;
+    };
+    made.iter()
+        .filter(|record| record.session == newest.session)
+        .map(|record| record.sequence)
+        .min()
+        .unwrap_or(0)
+}
+
+/// `keel.card.skill_not_loaded`: a declared skill the identity line's lane did not load for this
+/// task. A record counts when the identity line's `ref` equals its actor, session or agent and it
+/// is at or after `task_start`. A declared name matches a record's name when they are equal, or
+/// when the declared name has no namespace and equals the record name's last segment (`keel` is
+/// `keel:keel`). With no ref, or a ref no event of the execution carries, one
+/// `keel.card.identity_ref_unknown` finding is returned and no per-skill finding, since the skills
+/// cannot be attributed. `since` is when the pull request's work began (the merge-base commit's
+/// time, seconds since the epoch): a record made before it is an older task's, whatever the lane
+/// did since, so a lane with only old records is told so. A rebase moves `since` forward and can
+/// warn on a skill loaded before it; a stale base can let an older record pass. Pure: the records
+/// are read by the caller.
+#[must_use]
+pub fn check_skills_loaded(
+    declared: &[String],
+    history: &SkillHistory,
+    identity: Option<&str>,
+    since: Option<i64>,
+) -> Vec<Finding> {
+    let known = identity.filter(|id| {
+        history.actors.contains(*id) || history.records.iter().any(|record| record.made_by(id))
+    });
+    let Some(identity) = known else {
+        return vec![Finding {
+            rule: "keel.card.identity_ref_unknown".into(),
+            blocking: false,
+            path: Some("/card/identity".into()),
+            detail: "the identity line's `[ref]` is missing, or no record of the execution was \
+                     made by it, so the skills line cannot be checked against its lane; write the \
+                     ref of the session that loaded the skills"
+                .into(),
+        }];
+    };
+    let start = task_start(history, identity);
+    let loaded: Vec<&str> = history
+        .records
+        .iter()
+        .filter(|record| {
+            record.made_by(identity)
+                && record.sequence >= start
+                && since.is_none_or(|since| record.recorded_at >= since)
+        })
+        .map(|record| record.name.as_str())
+        .collect();
     declared
         .iter()
         .filter(|name| {
             !loaded.iter().any(|record| {
-                record == *name
+                *record == name.as_str()
                     || (!name.contains(':') && record.rsplit(':').next() == Some(name.as_str()))
             })
         })
@@ -649,8 +759,9 @@ pub fn check_skills_loaded(declared: &[String], loaded: &BTreeSet<String>) -> Ve
             blocking: false,
             path: Some(format!("/card/skills/{name}")),
             detail: format!(
-                "the skills line names `{name}`, and the execution has no `skill.loaded` record \
-                 for it; list only skills this session loaded through the Skill tool"
+                "the skills line names `{name}`, and the lane the identity line names has no \
+                 `skill.loaded` record for it in this task; list only skills this session loaded \
+                 through the Skill tool"
             ),
         })
         .collect()

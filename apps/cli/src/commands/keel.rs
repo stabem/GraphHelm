@@ -424,9 +424,28 @@ pub(super) fn check(
         let declared = policy_keel::declared_skills(text);
         if !declared.is_empty() {
             match super::keel_skills::loaded_skills(&runtime) {
-                super::keel_skills::LoadedSkills::Names(loaded) => report
-                    .findings
-                    .extend(policy_keel::check_skills_loaded(&declared, &loaded)),
+                super::keel_skills::LoadedSkills::History(history) => {
+                    // The merge-base commit's time is when this work began; unreadable means no
+                    // time bound, not a warning.
+                    let mut show = graphhelm_process::command("git");
+                    show.arg("-C")
+                        .arg(repo)
+                        .args(["show", "-s", "--format=%ct", &merge_base])
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped());
+                    let since =
+                        match graphhelm_process_tree::run_bounded(show, Duration::from_secs(10)) {
+                            Ok(Some((true, text, _))) => text.trim().parse::<i64>().ok(),
+                            _ => None,
+                        };
+                    report.findings.extend(policy_keel::check_skills_loaded(
+                        &declared,
+                        &history,
+                        policy_keel::identity_ref(text).as_deref(),
+                        since,
+                    ));
+                }
                 super::keel_skills::LoadedSkills::Unobserved(reason) => {
                     skills_unobserved = Some(reason);
                 }

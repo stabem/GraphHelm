@@ -834,28 +834,31 @@ fn a_declared_skill_without_a_loaded_record_warns_with_its_name_in_the_path() {
     let loaded = history_of(
         &[("2ba4e9", "keel:keel", 1), ("2ba4e9", "keel:implement", 2)],
         &[],
+        &[],
     );
     let lane = Some("2ba4e9");
     // Declared and loaded: exact, or bare against a namespaced record.
-    assert!(check_skills_loaded(&declared[..2], &loaded, lane, None).is_empty());
+    assert!(check_skills_loaded(&declared[..2], &loaded, lane, NO_TASK).is_empty());
     // Declared and not loaded: one warning per skill, the name in the path.
-    let findings = check_skills_loaded(&declared, &loaded, lane, None);
+    let findings = check_skills_loaded(&declared, &loaded, lane, NO_TASK);
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");
     assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel-exec"));
     assert!(!findings[0].blocking);
     // A namespaced declaration is not satisfied by another namespace.
     let other = ["graphhelm:keel"].map(String::from).to_vec();
-    assert_eq!(check_skills_loaded(&other, &loaded, lane, None).len(), 1);
+    assert_eq!(check_skills_loaded(&other, &loaded, lane, NO_TASK).len(), 1);
 }
 
-/// A history of `(actor, skill, sequence)` records and `(actor, sequence)` claims; each record's
-/// session is the actor's name, so the sessions of two lanes never coincide.
+/// A history of `(actor, skill, sequence)` records, `(actor, sequence, issue)` claims and
+/// `(actor, sequence, head sha)` pull request openings; each record's session is the actor's name
+/// and the hundred its sequence falls in, so two lanes' sessions never coincide.
 fn history_of(
     records: &[(&str, &str, u64)],
-    claims: &[(&str, u64)],
+    claims: &[(&str, u64, Option<u64>)],
+    opens: &[(&str, u64, &str)],
 ) -> graphhelm_policy::keel::SkillHistory {
-    use graphhelm_policy::keel::{SkillHistory, SkillRecord};
+    use graphhelm_policy::keel::{PrOpened, SkillHistory, SkillRecord, TaskClaim};
     SkillHistory {
         records: records
             .iter()
@@ -865,18 +868,38 @@ fn history_of(
                 session: Some(format!("session-of-{actor}-{}", sequence / 100)),
                 agent: None,
                 sequence: *sequence,
-                recorded_at: i64::try_from(*sequence).unwrap(),
             })
             .collect(),
-        claims: claims.iter().map(|(a, s)| ((*a).into(), *s)).collect(),
+        claims: claims
+            .iter()
+            .map(|(actor, sequence, issue)| TaskClaim {
+                actor: (*actor).into(),
+                sequence: *sequence,
+                issue: *issue,
+            })
+            .collect(),
+        pr_opens: opens
+            .iter()
+            .map(|(actor, sequence, head_sha)| PrOpened {
+                actor: (*actor).into(),
+                sequence: *sequence,
+                head_sha: (*head_sha).into(),
+            })
+            .collect(),
         actors: records
             .iter()
             .map(|r| r.0)
             .chain(claims.iter().map(|c| c.0))
+            .chain(opens.iter().map(|o| o.0))
             .map(String::from)
             .collect(),
     }
 }
+
+const NO_TASK: graphhelm_policy::keel::TaskRef<'static> = graphhelm_policy::keel::TaskRef {
+    head: None,
+    issues: &[],
+};
 
 /// Contract (#3037): a declared skill counts only when the lane the identity line names loaded it
 /// during this task. Regression: the union over every lane and day passed any skill anyone ever
@@ -893,61 +916,219 @@ fn a_declared_skill_counts_only_when_the_named_lane_loaded_it_during_this_task()
             ("reviewer", "keel:keel-exec", 12),
         ],
         &[],
+        &[],
     );
-    let findings = check_skills_loaded(&declared, &other_lane, Some("author"), None);
+    let findings = check_skills_loaded(&declared, &other_lane, Some("author"), NO_TASK);
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel-exec"));
-    // The same lane loaded them, but before its newest claim (an older task).
-    let older = history_of(
-        &[
-            ("author", "keel:keel", 10),
-            ("author", "keel:keel-exec", 11),
-        ],
-        &[("author", 50)],
-    );
-    assert_eq!(
-        check_skills_loaded(&declared, &older, Some("author"), None).len(),
-        2
-    );
     // Loaded after the claim: no finding.
     let during = history_of(
         &[
             ("author", "keel:keel", 51),
             ("author", "keel:keel-exec", 52),
         ],
-        &[("author", 50)],
+        &[("author", 50, None)],
+        &[],
     );
-    assert!(check_skills_loaded(&declared, &during, Some("author"), None).is_empty());
+    assert!(check_skills_loaded(&declared, &during, Some("author"), NO_TASK).is_empty());
     // A claim by another lane does not move this lane's start.
     let foreign_claim = history_of(
         &[
             ("author", "keel:keel", 10),
             ("author", "keel:keel-exec", 11),
         ],
-        &[("reviewer", 50)],
+        &[("reviewer", 50, None)],
+        &[],
     );
-    assert!(check_skills_loaded(&declared, &foreign_claim, Some("author"), None).is_empty());
+    assert!(check_skills_loaded(&declared, &foreign_claim, Some("author"), NO_TASK).is_empty());
 }
 
-/// Contract (#3037): a lane whose only records are older than the pull request's work is told the
-/// skill was not loaded, with or without an older claim before them. Regression: the lane's own
-/// newest session or claim was taken as "this task", so old records passed.
+/// Contract (#3039): skills a lane loads in one session just before it claims the task count for
+/// that task. Regression: the start was the claim itself, so every one of them was reported.
 #[test]
-fn a_lane_with_only_records_older_than_the_work_is_flagged() {
+fn skills_loaded_just_before_the_claim_count_for_the_task() {
     use graphhelm_policy::keel::{check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 11),
+        ],
+        &[("author", 50, None)],
+        &[],
+    );
+    assert!(check_skills_loaded(&declared, &history, Some("author"), NO_TASK).is_empty());
+}
+
+/// Contract (#3039): the task is named by the pull request's head sha and the issues the body
+/// closes, so a later claim of the same lane does not take this task's loads away. Regression:
+/// the newest claim of the lane was the start.
+#[test]
+fn a_later_claim_of_the_same_lane_does_not_hide_this_tasks_loads() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    // The measured shape B: loads, claim, pull request opened, then another task in a new session.
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 11),
+            ("author", "keel:keel", 210),
+        ],
+        &[("author", 50, Some(7)), ("author", 300, Some(8))],
+        &[("author", 60, "0123abcd")],
+    );
+    let by_head = TaskRef {
+        head: Some("0123abcd99999999999999999999999999999999"),
+        issues: &[],
+    };
+    assert!(check_skills_loaded(&declared, &history, Some("author"), by_head).is_empty());
+    // With no pull request record, the issue the body closes names the claim.
+    let by_issue = TaskRef {
+        head: Some("ffffffff"),
+        issues: &[7],
+    };
+    assert!(check_skills_loaded(&declared, &history, Some("author"), by_issue).is_empty());
+}
+
+/// Contract (#3039): the loads of one session before the claim all count, however long they took
+/// and whatever time the branch's base commit has. Regression: a commit-time bound cut the session
+/// in two (measured shape C).
+#[test]
+fn a_session_loading_in_two_stretches_before_the_claim_counts_whole() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec, graphhelm-work\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 10),
+            ("author", "keel:keel-exec", 20),
+            ("author", "graphhelm:graphhelm-work", 30),
+        ],
+        &[("author", 50, Some(7))],
+        &[],
+    );
+    let task = TaskRef {
+        head: Some("0123abcd"),
+        issues: &[7],
+    };
+    assert!(check_skills_loaded(&declared, &history, Some("author"), task).is_empty());
+}
+
+/// Contract (#3037): a lane whose only records belong to another task is told the skill was not
+/// loaded: its claims name other issues, or the pull request opened is another head.
+#[test]
+fn a_lane_with_only_another_tasks_records_is_flagged() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
     let declared = declared_skills("Skills: keel\n");
-    // `history_of` records at the time of the sequence: the work began at 100.
-    let no_claim = history_of(&[("author", "keel:keel", 10)], &[]);
-    let findings = check_skills_loaded(&declared, &no_claim, Some("author"), Some(100));
+    let history = history_of(
+        &[("author", "keel:keel", 10)],
+        &[("author", 50, Some(7))],
+        &[("author", 60, "aaaaaaaa")],
+    );
+    let task = TaskRef {
+        head: Some("bbbbbbbb"),
+        issues: &[8],
+    };
+    let findings = check_skills_loaded(&declared, &history, Some("author"), task);
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");
-    let old_claim = history_of(&[("author", "keel:keel", 10)], &[("author", 5)]);
-    assert_eq!(
-        check_skills_loaded(&declared, &old_claim, Some("author"), Some(100)).len(),
-        1
+    // The same lane, the same records, and the body closes the issue it claimed: it counts.
+    let own = TaskRef {
+        head: Some("bbbbbbbb"),
+        issues: &[7],
+    };
+    assert!(check_skills_loaded(&declared, &history, Some("author"), own).is_empty());
+}
+
+/// Contract (#3039): a pull request opened by the lane does not make the lane's newest earlier
+/// claim this task's claim when that claim names another issue. Regression (measured shape A): the
+/// head sha match took an old claim of another issue, so loads made days later for other work
+/// counted and the finding went away.
+#[test]
+fn a_matching_head_does_not_adopt_a_claim_of_another_issue() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel, keel-exec\n");
+    let history = history_of(
+        &[
+            ("author", "keel:keel", 310),
+            ("author", "keel:keel-exec", 315),
+        ],
+        &[("author", 5, Some(2389))],
+        &[
+            ("author", 312, "11111111"),
+            ("author", 320, "22222222"),
+            ("author", 330, "33333333"),
+            ("author", 340, "0123abcd"),
+        ],
     );
-    let fresh = history_of(&[("author", "keel:keel", 110)], &[("author", 105)]);
-    assert!(check_skills_loaded(&declared, &fresh, Some("author"), Some(100)).is_empty());
+    let task = TaskRef {
+        head: Some("0123abcd99999999999999999999999999999999"),
+        issues: &[2557],
+    };
+    let findings = check_skills_loaded(&declared, &history, Some("author"), task);
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    // The body closes the issue the lane claimed: the claim is this task's, and the loads count.
+    let own = TaskRef {
+        head: task.head,
+        issues: &[2389],
+    };
+    assert!(check_skills_loaded(&declared, &history, Some("author"), own).is_empty());
+}
+
+/// Contract (#3039): loads made before the lane's previous claim were made for that task, and a
+/// claim with no issue falls back to the newest claim. Regression (BLOCK on 257d6753): the
+/// session reach-back walked past the earlier claim, so issue 1's load counted for issue 2.
+#[test]
+fn loads_before_the_lanes_previous_claim_belong_to_the_previous_task() {
+    use graphhelm_policy::keel::{TaskRef, check_skills_loaded, declared_skills};
+    let declared = declared_skills("Skills: keel\n");
+    let task = TaskRef {
+        head: None,
+        issues: &[2],
+    };
+    // Load at 10, claim of issue 1 at 11, claim of issue 2 at 20, nothing loaded after.
+    let history = history_of(
+        &[("author", "keel:keel", 10)],
+        &[("author", 11, Some(1)), ("author", 20, Some(2))],
+        &[],
+    );
+    let findings = check_skills_loaded(&declared, &history, Some("author"), task);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    // The same load made between the two claims is this task's.
+    let between = history_of(
+        &[("author", "keel:keel", 15)],
+        &[("author", 11, Some(1)), ("author", 20, Some(2))],
+        &[],
+    );
+    assert!(check_skills_loaded(&declared, &between, Some("author"), task).is_empty());
+    // A claim with no issue after a claim for another issue: it could be this task's, so it
+    // anchors as the newest claim and the load between the two counts (as KEEL_CHECK.md says).
+    let unnamed = history_of(
+        &[("author", "keel:keel", 9)],
+        &[("author", 5, Some(1)), ("author", 10, None)],
+        &[],
+    );
+    assert!(check_skills_loaded(&declared, &unnamed, Some("author"), task).is_empty());
+}
+
+/// A closing keyword inside a longer word closes nothing.
+#[test]
+fn a_closing_keyword_inside_a_word_closes_nothing() {
+    use graphhelm_policy::keel::closing_issues;
+    assert!(closing_issues("prefix #12\ndisclose #5").is_empty());
+    let mut found = closing_issues("(Fixes #12) and Closes #3");
+    found.sort_unstable();
+    assert_eq!(found, vec![3, 12]);
+}
+
+/// A body's closing keywords name the issues; other numbers do not.
+#[test]
+fn closing_issues_reads_the_closing_keywords_only() {
+    use graphhelm_policy::keel::closing_issues;
+    assert_eq!(
+        closing_issues("Fixes #12\nSee #99\ncloses: #3, resolved #4"),
+        vec![12, 3, 4]
+    );
+    assert!(closing_issues("Promise: see #5").is_empty());
 }
 
 /// Contract (#3037): with no `task.claimed` record the task starts with the lane's newest session.
@@ -962,8 +1143,9 @@ fn without_a_claim_the_task_starts_with_the_lanes_newest_session() {
             ("author", "keel:keel-exec", 250),
         ],
         &[],
+        &[],
     );
-    let findings = check_skills_loaded(&declared, &history, Some("author"), None);
+    let findings = check_skills_loaded(&declared, &history, Some("author"), NO_TASK);
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].path.as_deref(), Some("/card/skills/keel"));
 }
@@ -973,10 +1155,10 @@ fn without_a_claim_the_task_starts_with_the_lanes_newest_session() {
 #[test]
 fn an_identity_ref_with_no_record_is_reported_not_passed() {
     use graphhelm_policy::keel::{check_skills_loaded, declared_skills, identity_ref};
-    let history = history_of(&[("author", "keel:keel", 10)], &[]);
+    let history = history_of(&[("author", "keel:keel", 10)], &[], &[]);
     let declared = declared_skills("Skills: keel\n");
     for lane in [Some("ghost"), None] {
-        let findings = check_skills_loaded(&declared, &history, lane, None);
+        let findings = check_skills_loaded(&declared, &history, lane, NO_TASK);
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].rule, "keel.card.identity_ref_unknown");
         assert_eq!(findings[0].path.as_deref(), Some("/card/identity"));
@@ -1045,12 +1227,12 @@ fn declared_skills_skips_prose_after_the_list_and_a_not_used_line() {
         assert!(names.iter().any(|name| name == "made-up-skill"), "{body}");
     }
     // A listed name with no record keeps firing, known or not.
-    let loaded = history_of(&[("2ba4e9", "keel:keel", 1)], &[]);
+    let loaded = history_of(&[("2ba4e9", "keel:keel", 1)], &[], &[]);
     let findings = check_skills_loaded(
         &declared_skills("Skills: keel, made-up-skill\n"),
         &loaded,
         Some("2ba4e9"),
-        None,
+        NO_TASK,
     );
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].rule, "keel.card.skill_not_loaded");

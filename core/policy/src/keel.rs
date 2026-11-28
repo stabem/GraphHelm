@@ -639,17 +639,80 @@ pub struct SkillRecord {
     pub session: Option<String>,
     pub agent: Option<String>,
     pub sequence: u64,
-    /// When the Runtime recorded it, in seconds since the Unix epoch.
-    pub recorded_at: i64,
 }
 
-/// What an execution holds that the skills check reads: every `skill.loaded` record, every
-/// `task.claimed` record as (actor, sequence), and every actor id that wrote any event.
+/// A `task.claimed` record: who claimed, where in the order, and the issue its description names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskClaim {
+    pub actor: String,
+    pub sequence: u64,
+    pub issue: Option<u64>,
+}
+
+/// A `task.pr_opened` record: who opened, where in the order, and the head sha it names (full or
+/// abbreviated).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrOpened {
+    pub actor: String,
+    pub sequence: u64,
+    pub head_sha: String,
+}
+
+/// What an execution holds that the skills check reads: every `skill.loaded`, `task.claimed` and
+/// `task.pr_opened` record, and every actor id that wrote any event.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SkillHistory {
     pub records: Vec<SkillRecord>,
-    pub claims: Vec<(String, u64)>,
+    pub claims: Vec<TaskClaim>,
+    pub pr_opens: Vec<PrOpened>,
     pub actors: BTreeSet<String>,
+}
+
+/// What names the task under check, with no clock: the sha the range ends at and the issues the
+/// pull request body closes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TaskRef<'a> {
+    pub head: Option<&'a str>,
+    pub issues: &'a [u64],
+}
+
+/// The issue numbers a body closes: `Closes #N`, `Fixes #N`, `Resolves #N` and their other forms.
+#[must_use]
+pub fn closing_issues(body: &str) -> Vec<u64> {
+    let mut found = Vec::new();
+    for line in body.lines() {
+        let lower = line.to_ascii_lowercase();
+        for word in ["close", "fix", "resolve"] {
+            let mut rest = lower.as_str();
+            let mut seen = 0;
+            while let Some(at) = rest.find(word) {
+                // A keyword inside a longer word (`prefix #12`) closes nothing.
+                let inside_word = lower[..seen + at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+                seen += at + word.len();
+                rest = &rest[at + word.len()..];
+                if inside_word {
+                    continue;
+                }
+                let after = rest.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+                let after = after.strip_prefix(':').unwrap_or(after).trim_start();
+                let digits: String = after
+                    .strip_prefix('#')
+                    .unwrap_or("")
+                    .chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                if let Ok(number) = digits.parse::<u64>()
+                    && !found.contains(&number)
+                {
+                    found.push(number);
+                }
+            }
+        }
+    }
+    found
 }
 
 impl SkillRecord {
@@ -675,32 +738,111 @@ pub fn identity_ref(body: &str) -> Option<String> {
     (!found.is_empty()).then(|| found.to_owned())
 }
 
-/// Where "this task" starts for an identity, as an execution sequence: its newest `task.claimed`
-/// record; with none, the first record of the session of its newest `skill.loaded` record. A task
-/// with no claim record still has a start, and a rebase of the branch does not move it.
-fn task_start(history: &SkillHistory, identity: &str) -> u64 {
-    if let Some(claim) = history
+/// Two shas name the same commit when one is a prefix of the other and both have 7 or more digits.
+fn sha_names(recorded: &str, head: &str) -> bool {
+    let (recorded, head) = (recorded.trim(), head.trim());
+    recorded.len() >= 7
+        && head.len() >= 7
+        && (head.starts_with(recorded) || recorded.starts_with(head))
+}
+
+/// Where "this task" starts for an identity, as an execution sequence. The claim that opened the
+/// task is the newest claim of the lane before the `task.pr_opened` that names the range head,
+/// among the claims that name an issue the body closes (or no issue; every claim when the body
+/// closes none); other pull requests the lane opened in between do not end the task; else
+/// the lane's earliest claim of an issue the body closes; else, when the lane's claims name issues
+/// and none is this one, nothing starts (no load counts); else its newest claim. Later claims
+/// belong to later tasks and never move the start. A lane loads its skills just before it claims,
+/// so the start reaches back to the first record of the session of the newest record before that
+/// claim. With no claim, the start is the first record of the session of the lane's newest
+/// `skill.loaded` record.
+fn task_start(history: &SkillHistory, identity: &str, task: TaskRef<'_>) -> u64 {
+    let own_claims: Vec<&TaskClaim> = history
         .claims
         .iter()
-        .filter(|(actor, _)| actor == identity)
-        .map(|(_, sequence)| *sequence)
-        .max()
-    {
-        return claim;
+        .filter(|claim| claim.actor == identity)
+        .collect();
+    let newest = own_claims.iter().map(|claim| claim.sequence).max();
+    let opened = task.head.and_then(|head| {
+        history
+            .pr_opens
+            .iter()
+            .filter(|open| open.actor == identity && sha_names(&open.head_sha, head))
+            .map(|open| open.sequence)
+            .max()
+    });
+    // A claim that names an issue the body does not close is another task's claim, even when it
+    // is the newest one before the matching `task.pr_opened`.
+    let by_pr = opened.and_then(|opened| {
+        own_claims
+            .iter()
+            .filter(|claim| {
+                task.issues.is_empty()
+                    || claim.issue.is_none_or(|issue| task.issues.contains(&issue))
+            })
+            .map(|claim| claim.sequence)
+            .filter(|sequence| *sequence < opened)
+            .max()
+    });
+    let by_issue = own_claims
+        .iter()
+        .filter(|claim| {
+            claim
+                .issue
+                .is_some_and(|issue| task.issues.contains(&issue))
+        })
+        .map(|claim| claim.sequence)
+        .min();
+    // Every claim of the lane names an issue, none of them this task's: the lane did not claim it
+    // here. A claim with no issue could be this task's, so it falls back to the newest claim.
+    let claimed_elsewhere = !task.issues.is_empty()
+        && by_pr.is_none()
+        && by_issue.is_none()
+        && !own_claims.is_empty()
+        && own_claims.iter().all(|claim| claim.issue.is_some());
+    if claimed_elsewhere {
+        return u64::MAX;
     }
+    let claim = by_pr.or(by_issue).or(newest);
+    // The loads before the claim belong to this task only back to the lane's previous claim of
+    // another task: they were made for that one.
+    let chosen_issue = claim.and_then(|claim| {
+        own_claims
+            .iter()
+            .find(|c| c.sequence == claim)
+            .and_then(|c| c.issue)
+    });
+    let previous = claim.and_then(|claim| {
+        own_claims
+            .iter()
+            .filter(|c| c.sequence < claim && (chosen_issue.is_none() || c.issue != chosen_issue))
+            .map(|c| c.sequence)
+            .max()
+    });
+    let floor = previous.unwrap_or(0);
     let made: Vec<&SkillRecord> = history
         .records
         .iter()
         .filter(|record| record.made_by(identity))
         .collect();
-    let Some(newest) = made.iter().max_by_key(|record| record.sequence) else {
-        return 0;
-    };
-    made.iter()
-        .filter(|record| record.session == newest.session)
-        .map(|record| record.sequence)
-        .min()
-        .unwrap_or(0)
+    let last_before = made
+        .iter()
+        .filter(|record| {
+            record.sequence >= floor && claim.is_none_or(|claim| record.sequence < claim)
+        })
+        .max_by_key(|record| record.sequence);
+    let session_start = last_before.and_then(|last| {
+        last.session.as_ref()?;
+        made.iter()
+            .filter(|record| record.session == last.session && record.sequence >= floor)
+            .map(|record| record.sequence)
+            .min()
+    });
+    match (claim, session_start) {
+        (Some(claim), Some(start)) => claim.min(start),
+        (Some(claim), None) => claim,
+        (None, start) => start.unwrap_or(0),
+    }
 }
 
 /// `keel.card.skill_not_loaded`: a declared skill the identity line's lane did not load for this
@@ -709,17 +851,15 @@ fn task_start(history: &SkillHistory, identity: &str) -> u64 {
 /// when the declared name has no namespace and equals the record name's last segment (`keel` is
 /// `keel:keel`). With no ref, or a ref no event of the execution carries, one
 /// `keel.card.identity_ref_unknown` finding is returned and no per-skill finding, since the skills
-/// cannot be attributed. `since` is when the pull request's work began (the merge-base commit's
-/// time, seconds since the epoch): a record made before it is an older task's, whatever the lane
-/// did since, so a lane with only old records is told so. A rebase moves `since` forward and can
-/// warn on a skill loaded before it; a stale base can let an older record pass. Pure: the records
-/// are read by the caller.
+/// cannot be attributed. `task` names the task with no clock (see `task_start`); no commit time
+/// bounds anything, since a branch cut from or rebased onto a newer base is younger than its own
+/// claim. Pure: the records are read by the caller.
 #[must_use]
 pub fn check_skills_loaded(
     declared: &[String],
     history: &SkillHistory,
     identity: Option<&str>,
-    since: Option<i64>,
+    task: TaskRef<'_>,
 ) -> Vec<Finding> {
     let known = identity.filter(|id| {
         history.actors.contains(*id) || history.records.iter().any(|record| record.made_by(id))
@@ -735,15 +875,11 @@ pub fn check_skills_loaded(
                 .into(),
         }];
     };
-    let start = task_start(history, identity);
+    let start = task_start(history, identity, task);
     let loaded: Vec<&str> = history
         .records
         .iter()
-        .filter(|record| {
-            record.made_by(identity)
-                && record.sequence >= start
-                && since.is_none_or(|since| record.recorded_at >= since)
-        })
+        .filter(|record| record.made_by(identity) && record.sequence >= start)
         .map(|record| record.name.as_str())
         .collect();
     declared
